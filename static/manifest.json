@@ -1,0 +1,16 @@
+{
+  "name": "Movie Streamer & Recommender",
+  "short_name": "Movies",
+  "description": "Smart Home Movie Companion & Recommender",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f1015",
+  "theme_color": "#1a1c24",
+  "icons": [
+    {
+      "src": "/static/icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

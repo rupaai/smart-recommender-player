@@ -1,0 +1,33 @@
+# Smart Movie Streamer & Recommender Configuration
+
+# Folders to scan for media files (can be multiple paths)
+media_folders:
+  - /Users/labibarupty/Movies
+
+# TMDB region for release info (e.g., GB, US)
+region: GB
+
+# Supported video file extensions
+supported_extensions:
+  - .mkv
+  - .mp4
+  - .avi
+  - .mov
+  - .m4v
+  - .webm
+
+# Database file location
+database_path: catalogue.db
+
+# Recommender preferences
+recommender:
+  default_top_n: 5
+  exclude_watched: true
+  enable_tier2_profiling: true
+
+# qBittorrent configuration
+qbittorrent:
+  host: "localhost"
+  port: 8080
+  username: "admin"
+  password: "adminadmin"

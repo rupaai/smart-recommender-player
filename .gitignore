@@ -1,0 +1,17 @@
+# Environments
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local credentials
+# Note: Keep your .env private with your TMDB key
+.env
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

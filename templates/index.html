@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Smart Movie Companion</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon">🍿</span>
+        <h1 class="brand-title">CouchCinema</h1>
+      </div>
+      <div class="header-status">
+        <div id="jellyfinStatus" class="status-pill">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Checking TV...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button id="tabDiscover" class="tab-btn active" onclick="switchTab('discover')">
+        🍿 Recommender
+      </button>
+      <button id="tabHistory" class="tab-btn" onclick="switchTab('history')">
+        ⭐ Taste & History
+      </button>
+    </nav>
+
+    <!-- Active "Currently Watching" Banner -->
+    <div id="watchingBanner" class="watching-banner" style="display: none;">
+      <img id="watchingPoster" class="watching-poster" src="" alt="Poster">
+      <div class="watching-info">
+        <div class="watching-label">
+          <span>● NOW WATCHING</span>
+        </div>
+        <div id="watchingTitle" class="watching-title">Movie Title</div>
+        <div class="watching-actions">
+          <button class="btn-finish" onclick="openFeedbackModal()">Finished Watching ✨</button>
+          <button class="btn-cancel-watch" onclick="cancelWatch()">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Discover View -->
+    <main id="discoverView">
+      <div class="section-title">
+        <span>How are you feeling tonight?</span>
+      </div>
+
+      <!-- Mood Grid -->
+      <div id="moodGrid" class="mood-grid">
+        <!-- Rendered by JS -->
+      </div>
+
+      <!-- Voice & Natural Language Bar -->
+      <div class="search-voice-bar">
+        <input type="text" id="queryInput" class="search-input" placeholder="Or speak/type what you feel like...">
+        <button id="micBtn" class="btn-mic" onclick="toggleVoiceSearch()" title="Dictate with voice">🎙️</button>
+      </div>
+
+      <!-- Narrowing Filters -->
+      <div class="filter-row">
+        <button class="chip active" data-filter="era" data-val="" onclick="setFilter(this)">Any Era</button>
+        <button class="chip" data-filter="era" data-val="modern" onclick="setFilter(this)">Modern (2015+)</button>
+        <button class="chip" data-filter="era" data-val="2000s" onclick="setFilter(this)">2000s</button>
+        <button class="chip" data-filter="era" data-val="classic" onclick="setFilter(this)">Classic</button>
+      </div>
+
+      <div class="filter-row">
+        <button class="chip active" data-filter="duration" data-val="" onclick="setFilter(this)">Any Length</button>
+        <button class="chip" data-filter="duration" data-val="short" onclick="setFilter(this)">&lt; 105 min</button>
+        <button class="chip" data-filter="duration" data-val="standard" onclick="setFilter(this)">105-140 min</button>
+        <button class="chip" data-filter="duration" data-val="epic" onclick="setFilter(this)">&gt; 140 min</button>
+      </div>
+
+      <!-- Recommend CTA -->
+      <button id="recommendBtn" class="btn-recommend" onclick="fetchRecommendations()">
+        <span>✨ Find Movie for Tonight</span>
+      </button>
+
+      <!-- Results Container -->
+      <div id="resultsContainer" class="results-container">
+        <!-- Movie cards rendered dynamically -->
+      </div>
+    </main>
+
+    <!-- History View -->
+    <section id="historyView" style="display: none;">
+      <!-- Taste Profile Card -->
+      <div class="taste-card">
+        <h3 style="font-size: 16px; margin-bottom: 4px;">🧠 What Your System Learned</h3>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Based on movies you gave a high rating to:</p>
+        <div id="tasteGenresContainer" class="taste-tag-container"></div>
+        <div id="tasteKeywordsContainer" class="taste-tag-container" style="margin-top: 8px;"></div>
+      </div>
+
+      <div class="section-title">
+        <span>Watch History</span>
+      </div>
+      <div id="historyList">
+        <!-- History items rendered dynamically -->
+      </div>
+    </section>
+  </div>
+
+  <!-- Post-Watch Rating & Feedback Modal -->
+  <div id="feedbackModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalMovieTitle" class="modal-title">Rate Movie</h3>
+        <p class="modal-subtitle">How was your movie night?</p>
+      </div>
+
+      <!-- 10 Interactive Stars -->
+      <div id="starSelector" class="star-selector">
+        <!-- 10 stars populated by JS -->
+      </div>
+      <div id="starLabel" class="star-value-label">Select your rating</div>
+
+      <!-- Voice / Text Feedback Input -->
+      <div class="review-input-wrapper">
+        <textarea id="reviewNotesInput" class="review-textarea" placeholder="Speak or write your quick thoughts / vibe..."></textarea>
+        <button id="modalMicBtn" class="review-mic-btn" onclick="toggleModalVoice()" title="Dictate review">🎙️</button>
+      </div>
+
+      <button class="btn-submit-review" onclick="submitFeedback()">
+        Save to History & Train Recommender 🚀
+      </button>
+    </div>
+  </div>
+
+  <!-- Video Playback Modal -->
+  <div id="playerModal" class="modal-overlay" onclick="closePlayerModal(event)">
+    <div class="modal-content" style="padding: 16px; background: #000;" onclick="event.stopPropagation()">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 id="playerMovieTitle" style="font-size: 16px;">Now Playing</h3>
+        <button onclick="closePlayerModal()" style="background: none; border: none; color: #fff; font-size: 22px; cursor: pointer;">✕</button>
+      </div>
+      <video id="videoPlayer" controls playsinline style="width: 100%; border-radius: 8px; background: #111; max-height: 55vh;"></video>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
