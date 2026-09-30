@@ -9,16 +9,19 @@ Features a **Mobile-First PWA**, a **Direct Search & Download Subsystem** for in
 ## 🌟 Key Features
 
 1. **Dual Discovery Modes:**
-   - ⚡ **Direct Download Tab:** Search for *any* movie title across verified public endpoints (YTS & Apibay), view resolution badges (`4K`, `1080p`, `720p`), file sizes, and seed counts. Sort by smallest size for rapid streaming or highest quality.
+   - ⚡ **Direct Download Tab:** Search for *any* movie **or TV show** across verified public endpoints (YTS & Apibay), view resolution badges (`4K`, `1080p`, `720p`), file sizes, and seed counts. Sort by smallest size for rapid streaming or highest quality. A 🎬/📺 toggle switches between Movies and TV Shows everywhere.
    - 🍿 **Smart Mood Recommender:** Suggests films using mood-to-genre maps, runtime/era narrowing, personal taste scores learned from past ratings ($\ge 7.0$), and baseline rating rules ($\ge 6.0$). Query context with keywords like *"guilty pleasure"*, *"so bad it's good"*, or *"cringe"* automatically suppresses the rating floor!
 2. **Non-Blocking Background Downloader:**
    - Downloads launch via `asyncio.create_task()` so HTTP API responses return immediately.
+   - **Cancelable:** any in-flight download can be cancelled (`POST /api/torrent/cancel`) — the torrent is removed from the session and partial staging files are purged automatically.
    - Real-time in-place progress transformation powered by **1-second HTTP polling** on `/api/torrent/status/{movie_id}`.
    - Monitors download speed (MB/s), downloaded bytes, and percentage.
    - Automatically aborts fake/shortcut links ($< 500\text{ MB}$) and dead torrents ($0$ seeds).
 3. **Automated Jellyfin Organization:**
    - Upon $100\%$ download completion, extracts the largest video file (`.mkv`, `.mp4`, `.avi`, `.mov`).
-   - Cleans and relocates files into standard Jellyfin format: `/Movies/Movie Title (Year)/Movie Title (Year).ext`.
+   - Cleans and relocates files into standard Jellyfin format:
+     - Movies: `/Movies/Movie Title (Year)/Movie Title (Year).ext`
+     - TV Shows: `/Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` (season/episode auto-detected from the release name).
    - Registers local sources directly into SQLite (`media_sources` table).
    - Automatically pings Jellyfin's `/Library/Refresh` API to rescan libraries.
 4. **Standalone Decoupled Training Module (`/training`):**
@@ -243,9 +246,10 @@ cp model.onnx ../models/model.onnx
 | `GET` | `/api/status` | Jellyfin online status, LAN IP & catalogue stats |
 | `GET` | `/api/moods` | Returns 8 mood mappings and sub-moods |
 | `POST` | `/api/recommend` | Runs mood filtering + taste scoring + rating rules |
-| `POST` | `/api/torrent/search` | Body: `{ query, sort_by_size: bool }`. Searches YTS & Apibay |
-| `POST` | `/api/torrent/download` | Body: `{ magnet_link, movie_id, movie_title }`. Starts non-blocking download |
+| `POST` | `/api/torrent/search` | Body: `{ query, sort_by_size, media_type }`. Searches YTS (movies) & Apibay (movies/TV) |
+| `POST` | `/api/torrent/download` | Body: `{ magnet_link, movie_id, movie_title, media_type }`. Starts non-blocking download |
 | `GET` | `/api/torrent/status/{movie_id}` | Live progress polled every 1s (percentage, speed, bytes) |
+| `POST` | `/api/torrent/cancel` | Body: `{ movie_id }`. Cancels the download and purges partial staging files |
 | `POST` | `/api/sync` | Scans media folders and enriches new titles via TMDB |
 | `GET` | `/api/stream/{item_id}` | Returns Jellyfin streaming details |
 | `GET` | `/api/watch/current` | Active watching session status |
@@ -253,7 +257,6 @@ cp model.onnx ../models/model.onnx
 | `POST` | `/api/watch/finish` | Completes watch session with 1-10 star rating & notes |
 | `POST` | `/api/watch/cancel` | Cancels active watch session |
 | `GET` | `/api/history` | Fetches watch history and learned genre/keyword profile |
-| `WS` | `/ws/progress` | Optional WebSocket feed for real-time broadcast updates |
 
 ---
 
@@ -262,7 +265,7 @@ cp model.onnx ../models/model.onnx
 1. Install [Jellyfin](https://jellyfin.org/) on your Raspberry Pi, Mac, or server.
 2. In the Jellyfin web dashboard, add a Movie Library pointing to your `media_folders` directory (e.g., `/Users/labibarupty/Movies`).
 3. Set your Jellyfin API key and URL in `.env`.
-4. When downloads complete, files are automatically formatted into `/Movies/Movie Title (Year)/Movie Title (Year).ext` and Jellyfin is told to refresh. The new movie appears on your TV screen within seconds!
+4. When downloads complete, files are automatically formatted into Jellyfin's standard structure — Movies: `/Movies/Movie Title (Year)/Movie Title (Year).ext`, TV Shows: `/Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` — and Jellyfin is told to refresh. The new title appears on your TV screen within seconds!
 
 ---
 
