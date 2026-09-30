@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0b0c10">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Smart Movie Companion</title>
+  <title>Smart Movie & TV Companion</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -31,6 +31,9 @@
       <button id="tabDiscover" class="tab-btn active" onclick="switchTab('discover')">
         🍿 Recommender
       </button>
+      <button id="tabDirect" class="tab-btn" onclick="switchTab('direct')">
+        ⚡ Direct Download
+      </button>
       <button id="tabHistory" class="tab-btn" onclick="switchTab('history')">
         ⭐ Taste & History
       </button>
@@ -51,8 +54,14 @@
       </div>
     </div>
 
-    <!-- Discover View -->
+    <!-- Discover / Recommender View -->
     <main id="discoverView">
+      <!-- Media Type Toggle (Movies vs TV Shows) -->
+      <div class="media-type-toggle-row">
+        <button id="recTypeMovieBtn" class="media-toggle-btn active" onclick="setRecMediaType('movie')">🎬 Movies</button>
+        <button id="recTypeTvBtn" class="media-toggle-btn" onclick="setRecMediaType('tv')">📺 TV Shows</button>
+      </div>
+
       <div class="section-title">
         <span>How are you feeling tonight?</span>
       </div>
@@ -62,44 +71,139 @@
         <!-- Rendered by JS -->
       </div>
 
-      <!-- Voice & Natural Language Bar -->
-      <div class="search-voice-bar">
-        <input type="text" id="queryInput" class="search-input" placeholder="Or speak/type what you feel like...">
+      <!-- Sub-Moods / Specific Vibes (Dynamically shown based on selected mood) -->
+      <div id="submoodSection" class="submood-section" style="display: none;">
+        <span class="filter-label">Narrow Vibe:</span>
+        <div id="submoodChips" class="filter-row submood-row">
+          <!-- Rendered by JS -->
+        </div>
+      </div>
+
+      <!-- Free-text description: movies you loved, a story idea, a vibe -->
+      <div class="search-voice-bar describe-bar">
+        <textarea id="queryInput" class="describe-input" rows="2" placeholder="Describe what you want — movies you loved, a story idea, a vibe... anything (e.g. 'Something like Interstellar but funnier')"></textarea>
         <button id="micBtn" class="btn-mic" onclick="toggleVoiceSearch()" title="Dictate with voice">🎙️</button>
       </div>
 
-      <!-- Narrowing Filters -->
-      <div class="filter-row">
-        <button class="chip active" data-filter="era" data-val="" onclick="setFilter(this)">Any Era</button>
-        <button class="chip" data-filter="era" data-val="modern" onclick="setFilter(this)">Modern (2015+)</button>
-        <button class="chip" data-filter="era" data-val="2000s" onclick="setFilter(this)">2000s</button>
-        <button class="chip" data-filter="era" data-val="classic" onclick="setFilter(this)">Classic</button>
+      <!-- Genre Overrides / Specific Taste Filter -->
+      <div class="filter-group">
+        <div class="filter-group-header">
+          <span class="filter-label">Include Specific Genres:</span>
+          <button class="btn-text-link" onclick="clearSelectedGenres()">Reset</button>
+        </div>
+        <div id="genreChips" class="filter-row genre-row">
+          <button class="chip" data-genre="Action" onclick="toggleGenreFilter(this)">💥 Action</button>
+          <button class="chip" data-genre="Sci-Fi" onclick="toggleGenreFilter(this)">🚀 Sci-Fi</button>
+          <button class="chip" data-genre="Comedy" onclick="toggleGenreFilter(this)">😂 Comedy</button>
+          <button class="chip" data-genre="Drama" onclick="toggleGenreFilter(this)">🎭 Drama</button>
+          <button class="chip" data-genre="Thriller" onclick="toggleGenreFilter(this)">🔪 Thriller</button>
+          <button class="chip" data-genre="Horror" onclick="toggleGenreFilter(this)">👻 Horror</button>
+          <button class="chip" data-genre="Romance" onclick="toggleGenreFilter(this)">❤️ Romance</button>
+          <button class="chip" data-genre="Animation" onclick="toggleGenreFilter(this)">🎨 Animation</button>
+          <button class="chip" data-genre="Mystery" onclick="toggleGenreFilter(this)">🕵️ Mystery</button>
+          <button class="chip" data-genre="Documentary" onclick="toggleGenreFilter(this)">🌍 Documentary</button>
+        </div>
       </div>
 
-      <div class="filter-row">
-        <button class="chip active" data-filter="duration" data-val="" onclick="setFilter(this)">Any Length</button>
-        <button class="chip" data-filter="duration" data-val="short" onclick="setFilter(this)">&lt; 105 min</button>
-        <button class="chip" data-filter="duration" data-val="standard" onclick="setFilter(this)">105-140 min</button>
-        <button class="chip" data-filter="duration" data-val="epic" onclick="setFilter(this)">&gt; 140 min</button>
+      <!-- Era Narrowing -->
+      <div class="filter-group">
+        <span class="filter-label">Release Era:</span>
+        <div class="filter-row">
+          <button class="chip active" data-filter="era" data-val="" onclick="setFilter(this)">Any Era</button>
+          <button class="chip" data-filter="era" data-val="modern" onclick="setFilter(this)">Modern (2015+)</button>
+          <button class="chip" data-filter="era" data-val="2000s" onclick="setFilter(this)">2000s</button>
+          <button class="chip" data-filter="era" data-val="classic" onclick="setFilter(this)">Classic</button>
+        </div>
+      </div>
+
+      <!-- Runtime Narrowing (Movies) -->
+      <div class="filter-group" id="durationFilterGroup">
+        <span class="filter-label">Duration:</span>
+        <div class="filter-row">
+          <button class="chip active" data-filter="duration" data-val="" onclick="setFilter(this)">Any Length</button>
+          <button class="chip" data-filter="duration" data-val="short" onclick="setFilter(this)">&lt; 105 min</button>
+          <button class="chip" data-filter="duration" data-val="standard" onclick="setFilter(this)">105-140 min</button>
+          <button class="chip" data-filter="duration" data-val="epic" onclick="setFilter(this)">&gt; 140 min</button>
+        </div>
+      </div>
+
+      <!-- Rating Threshold & Watch Status Filters -->
+      <div class="filter-group">
+        <span class="filter-label">Quality Threshold & Status:</span>
+        <div class="filter-row">
+          <button class="chip active" data-filter="minRating" data-val="default" onclick="setMinRatingFilter(this)">Standard (6.0+)</button>
+          <button class="chip" data-filter="minRating" data-val="7.0" onclick="setMinRatingFilter(this)">High Rating (7.0+)</button>
+          <button class="chip" data-filter="minRating" data-val="8.0" onclick="setMinRatingFilter(this)">Masterpieces (8.0+)</button>
+          <button class="chip" data-filter="minRating" data-val="0.0" onclick="setMinRatingFilter(this)">Any Rating</button>
+          <button id="includeWatchedBtn" class="chip" onclick="toggleIncludeWatched()">Include Watched</button>
+        </div>
       </div>
 
       <!-- Recommend CTA -->
       <button id="recommendBtn" class="btn-recommend" onclick="fetchRecommendations()">
-        <span>✨ Find Movie for Tonight</span>
+        <span>✨ Find Recommendation for Tonight</span>
       </button>
 
       <!-- Results Container -->
       <div id="resultsContainer" class="results-container">
-        <!-- Movie cards rendered dynamically -->
+        <!-- Rendered dynamically -->
       </div>
     </main>
+
+    <!-- Direct Download View -->
+    <section id="directView" style="display: none;">
+      <!-- Media Type Toggle (Movies vs TV Shows) -->
+      <div class="media-type-toggle-row">
+        <button id="directTypeMovieBtn" class="media-toggle-btn active" onclick="setDirectMediaType('movie')">🎬 Movies</button>
+        <button id="directTypeTvBtn" class="media-toggle-btn" onclick="setDirectMediaType('tv')">📺 TV Shows</button>
+      </div>
+
+      <div class="section-title">
+        <span>Direct Search & Download</span>
+        <span class="section-subtitle">Inspect seeds, size & quality · 1-click grab · Cancel anytime</span>
+      </div>
+
+      <!-- Direct Search Input -->
+      <div class="search-voice-bar direct-search-bar">
+        <input type="text" id="directQueryInput" class="search-input" placeholder="Search any movie title (e.g. Inception, Dune 2024)..." onkeydown="if(event.key==='Enter') executeDirectSearch()">
+        <button id="directSearchBtn" class="btn-search-action" onclick="executeDirectSearch()">
+          <span>Search 🚀</span>
+        </button>
+      </div>
+
+      <!-- Sort Options -->
+      <div class="direct-controls-row">
+        <span class="control-label">Order by:</span>
+        <div class="sort-chip-group">
+          <button id="sortSmallestBtn" class="chip active" onclick="setDirectSort(true)">⚡ Smallest File (Fast Download)</button>
+          <button id="sortQualityBtn" class="chip" onclick="setDirectSort(false)">💎 Highest Quality / Seeds</button>
+        </div>
+      </div>
+
+      <!-- Active Downloads Monitor (with Cancel buttons) -->
+      <div id="activeDownloadsContainer" class="active-downloads-card" style="display: none;">
+        <div class="active-downloads-header">
+          <span>⚡ Active Downloads</span>
+        </div>
+        <div id="activeDownloadsList" class="active-downloads-list"></div>
+      </div>
+
+      <!-- Search Results Area -->
+      <div id="directResultsContainer" class="results-container direct-results">
+        <div class="empty-state">
+          <p style="font-size: 32px; margin-bottom: 8px;">🔍</p>
+          <p style="font-weight: 600;">Search for any title to inspect torrents</p>
+          <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Results check YTS and Apibay with verified seeds and size indicators.</p>
+        </div>
+      </div>
+    </section>
 
     <!-- History View -->
     <section id="historyView" style="display: none;">
       <!-- Taste Profile Card -->
       <div class="taste-card">
         <h3 style="font-size: 16px; margin-bottom: 4px;">🧠 What Your System Learned</h3>
-        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Based on movies you gave a high rating to:</p>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Based on movies & shows you gave a high rating to (≥ 7.0):</p>
         <div id="tasteGenresContainer" class="taste-tag-container"></div>
         <div id="tasteKeywordsContainer" class="taste-tag-container" style="margin-top: 8px;"></div>
       </div>
@@ -118,7 +222,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h3 id="modalMovieTitle" class="modal-title">Rate Movie</h3>
-        <p class="modal-subtitle">How was your movie night?</p>
+        <p class="modal-subtitle">How was your watch experience?</p>
       </div>
 
       <!-- 10 Interactive Stars -->

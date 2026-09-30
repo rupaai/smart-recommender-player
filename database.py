@@ -319,7 +319,7 @@ class DatabaseManager:
                        (SELECT user_rating FROM watch_history wh WHERE wh.media_item_id = mi.id ORDER BY watched_at DESC LIMIT 1) as user_rating,
                        (SELECT watched_at FROM watch_history wh WHERE wh.media_item_id = mi.id ORDER BY watched_at DESC LIMIT 1) as last_watched_at
                 FROM media_items mi
-                JOIN media_sources ms ON ms.media_item_id = mi.id
+                LEFT JOIN media_sources ms ON ms.media_item_id = mi.id
                 WHERE mi.media_type = ?
                   AND mi.rating >= ?
             """
@@ -346,6 +346,21 @@ class DatabaseManager:
                     filtered.append(item)
 
             return filtered
+
+    def get_reference_titles(self) -> List[Dict[str, Any]]:
+        """Returns lightweight title/genre/keyword metadata for every catalogue
+        item (including watched ones). Used by the recommender to detect
+        titles the user mentions inside free-text descriptions."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, title, release_year, media_type, genres,
+                       tier2_keywords, overview
+                FROM media_items;
+                """
+            )
+            return [dict(r) for r in cursor.fetchall()]
 
     def record_watch(
         self,
@@ -537,3 +552,31 @@ class DatabaseManager:
                 """,
                 (new_path, source_id)
             )
+
+    def get_or_create_media_item(
+        self,
+        title: str,
+        release_year: Optional[int] = None,
+        media_type: str = "movie",
+    ) -> int:
+        """Finds or creates a media item stub, returning its ID."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if release_year:
+                cursor.execute(
+                    "SELECT id FROM media_items WHERE LOWER(title) = LOWER(?) AND release_year = ? AND media_type = ? LIMIT 1;",
+                    (title, release_year, media_type),
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM media_items WHERE LOWER(title) = LOWER(?) AND media_type = ? LIMIT 1;",
+                    (title, media_type),
+                )
+            row = cursor.fetchone()
+            if row:
+                return row["id"]
+            cursor.execute(
+                "INSERT INTO media_items (media_type, title, release_year) VALUES (?, ?, ?);",
+                (media_type, title, release_year),
+            )
+            return cursor.lastrowid

@@ -1,33 +1,31 @@
 """
 FastAPI Server for Smart Movie Streamer & Mobile PWA (server.py)
-Provides REST API endpoints and serves the mobile-first cinema companion.
+Provides REST API endpoints, background downloads, cancellation, and serves the mobile-first cinema companion.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 from typing import Any, Dict, List, Optional
 
-import asyncio
 import requests
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from ws_manager import manager
 
 from database import DatabaseManager
 from enricher import TMDBEnricher
-from recommender import MoodRecommender
 from scanner import LocalFileScanner
-from torrent_searcher import TorrentSearcher
-from torrent_downloader import TorrentDownloader
+from services.recommender_service import MOOD_MAPPINGS, RecommenderService
+from services.torrent_service import TorrentDownloader, TorrentSearcher, downloads_store
 
 load_dotenv()
 api_key = os.getenv("TMDB_API_KEY", "").strip()
@@ -41,13 +39,20 @@ if os.path.exists(CONFIG_PATH):
 
 db_path = config.get("database_path", "catalogue.db")
 db = DatabaseManager(db_path)
-recommender = MoodRecommender(db_manager=db, api_key=api_key)
+
+recommender_cfg = config.get("recommender", {})
+enable_tier2 = recommender_cfg.get("enable_tier2_profiling", True)
+recommender_service = RecommenderService(
+    db_manager=db,
+    api_key=api_key,
+    enable_tier2=enable_tier2,
+)
+
+# Create torrent services
 torrent_searcher = TorrentSearcher(config)
-torrent_downloader = TorrentDownloader(config)
+torrent_downloader = TorrentDownloader(config, db_manager=db)
 
-app = FastAPI(title="Smart Movie Streamer & Recommender", version="0.1.0")
-
-# WebSocket manager imported from ws_manager.py
+app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.3.0")
 
 # Enable CORS
 app.add_middleware(
@@ -100,6 +105,10 @@ class RecommendRequest(BaseModel):
     top_n: int = 4
     include_watched: bool = False
     query: Optional[str] = None
+    media_type: str = "movie"  # 'movie' or 'tv'
+    sub_mood: Optional[str] = None
+    genres: Optional[List[str]] = None
+    min_rating: Optional[float] = None
 
 
 class StartWatchRequest(BaseModel):
@@ -114,6 +123,23 @@ class FinishWatchRequest(BaseModel):
 
 class CancelWatchRequest(BaseModel):
     session_id: int
+
+
+class TorrentSearchRequest(BaseModel):
+    query: str
+    sort_by_size: bool = True
+    media_type: str = "movie"  # 'movie' or 'tv'
+
+
+class TorrentDownloadRequest(BaseModel):
+    magnet_link: str
+    movie_id: Optional[int] = None
+    movie_title: str
+    media_type: str = "movie"  # 'movie' or 'tv'
+
+
+class TorrentCancelRequest(BaseModel):
+    movie_id: int
 
 
 # --- Routes ---
@@ -144,43 +170,34 @@ async def get_status() -> Dict[str, Any]:
 
 @app.get("/api/moods")
 async def get_moods() -> List[Dict[str, Any]]:
-    """Returns available mood options for the interactive picker."""
+    """Returns available mood options including sub-moods for the interactive picker."""
     moods_list = []
-    for mood_id, info in recommender.MOOD_MAPPINGS.items():
+    for mood_id, info in MOOD_MAPPINGS.items():
         moods_list.append({
             "id": mood_id,
             "name": info["name"],
             "vibe": info["vibe"],
             "genres": info["genres"],
+            "submoods": info.get("submoods", []),
         })
     return moods_list
 
 
 @app.post("/api/recommend")
 async def get_recommendations(req: RecommendRequest) -> List[Dict[str, Any]]:
-    """Runs recommendation pipeline with dynamic Tier 2 deep profiling."""
-    results = recommender.recommend(
+    """Runs recommendation pipeline with dynamic Tier 2 deep profiling, taste scoring, and extra filters."""
+    results = recommender_service.recommend(
         mood_id=req.mood_id,
         exclude_watched=not req.include_watched,
         era_preference=req.era,
         duration_preference=req.duration,
         top_n=req.top_n,
+        sub_mood=req.sub_mood,
+        query=req.query,
+        media_type=req.media_type,
+        genres_override=req.genres,
+        min_rating_override=req.min_rating,
     )
-
-    # Filter further by voice/text query if provided
-    if req.query and req.query.strip():
-        q = req.query.lower().strip()
-        matched = []
-        for item in results:
-            text_corpus = (
-                f"{item.get('title', '')} {item.get('overview', '')} "
-                f"{item.get('genres', '')} {item.get('tier2_keywords', '')}"
-            ).lower()
-            if any(term in text_corpus for term in q.split()):
-                matched.append(item)
-        if matched:
-            results = matched
-
     return results
 
 
@@ -193,15 +210,14 @@ async def get_current_watch() -> Dict[str, Any]:
 
 @app.get("/api/stream/{item_id}")
 async def stream_media(item_id: int) -> Dict[str, Any]:
-    """Returns the Jellyfin playback URL for the selected movie."""
+    """Returns the Jellyfin playback URL for the selected movie or episode."""
     item = db.get_item_by_id(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
     file_path = item["sources"][0]["file_path"]
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk.")
-    
-    # Construct Jellyfin URL
+
     local_ip = get_local_ip()
     file_name = os.path.basename(file_path)
     jellyfin_url = f"http://{local_ip}:8096/web/index.html#!/details?filename={file_name}"
@@ -247,20 +263,60 @@ async def get_history() -> Dict[str, Any]:
     }
 
 
-@app.websocket("/ws/progress")
-async def websocket_progress(websocket: WebSocket):
-    await manager.connect(websocket)
-    try:
-        while True:
-            await asyncio.sleep(1)  # Keep connection alive
-    except Exception:
-        manager.disconnect(websocket)
-
 @app.post("/api/torrent/search")
-async def search_torrents(query: str) -> Dict[str, Any]:
-    """Searches for torrents matching the query."""
-    results = torrent_searcher.search(query)
+async def search_torrents(req: TorrentSearchRequest) -> Dict[str, Any]:
+    """Searches for torrents matching the query with configurable sort order and media type (movies/shows)."""
+    results = torrent_searcher.search(
+        req.query,
+        sort_by_size=req.sort_by_size,
+        media_type=req.media_type,
+    )
     return {"results": results}
+
+
+@app.post("/api/torrent/download")
+async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
+    """Launches torrent download as a background task and returns immediately."""
+    try:
+        movie_id = req.movie_id
+        if not movie_id or movie_id <= 0:
+            movie_id = db.get_or_create_media_item(
+                title=req.movie_title,
+                media_type=req.media_type,
+            )
+
+        asyncio.create_task(
+            torrent_downloader.download(
+                req.magnet_link,
+                movie_id,
+                req.movie_title,
+                media_type=req.media_type,
+            )
+        )
+        return {
+            "success": True,
+            "movie_id": movie_id,
+            "message": f"Download task started for {req.media_type}.",
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/torrent/cancel")
+async def cancel_torrent(req: TorrentCancelRequest) -> Dict[str, Any]:
+    """Cancels an in-progress torrent download."""
+    success = await torrent_downloader.cancel(req.movie_id)
+    return {"success": success}
+
+
+@app.get("/api/torrent/status/{movie_id}")
+async def get_torrent_status(movie_id: int) -> Dict[str, Any]:
+    """Returns the current download progress for a given movie or TV show."""
+    status_data = downloads_store.get(
+        movie_id,
+        {"status": "idle", "progress": 0.0, "movie_id": movie_id},
+    )
+    return status_data
 
 
 @app.post("/api/sync")
@@ -285,7 +341,7 @@ async def sync_catalogue() -> Dict[str, Any]:
 def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Launches Uvicorn server for the application."""
     print("=" * 65)
-    print(f"🎬 SMART MOVIE STREAMER PWA SERVER RUNNING")
+    print(f"🎬 SMART MOVIE & TV STREAMER PWA SERVER RUNNING")
     print(f"📱 Access on your phone:   http://{get_local_ip()}:{port}")
     print(f"💻 Access on your laptop:  http://localhost:{port}")
     print(f"📺 Jellyfin Server:        http://{get_local_ip()}:8096")

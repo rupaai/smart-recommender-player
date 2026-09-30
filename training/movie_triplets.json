@@ -1,0 +1,77 @@
+[
+  {
+    "anchor": "Atmospheric slow-burn cosmic horror with beautiful cinematography",
+    "positive": "Annihilation (2018). Themes: cosmic dread, self-destruction, gorgeous visuals, slow pacing. Quality Score: 8.5/10",
+    "negative": "Alien Convergence (2017). Themes: cheap CGI monster, fast action, cliché plot. Quality Score: 3.2/10"
+  },
+  {
+    "anchor": "Heartwarming animated film about family bonds and growing up",
+    "positive": "Coco (2017). Themes: family legacy, music, Mexican culture, remembrance, emotional depth. Quality Score: 8.4/10",
+    "negative": "Norm of the North (2016). Themes: generic animation, toilet humor, weak story. Quality Score: 2.8/10"
+  },
+  {
+    "anchor": "Intense psychological thriller about identity and paranoia",
+    "positive": "Black Swan (2010). Themes: obsession, duality, descent into madness, ballet. Quality Score: 8.0/10",
+    "negative": "The Roommate (2011). Themes: stalker, college drama, predictable twists. Quality Score: 4.1/10"
+  },
+  {
+    "anchor": "Visually stunning sci-fi epic exploring time and space",
+    "positive": "Interstellar (2014). Themes: relativity, love transcending dimensions, survival, awe-inspiring visuals. Quality Score: 8.7/10",
+    "negative": "Geostorm (2017). Themes: disaster movie, bad CGI, thin characters. Quality Score: 3.5/10"
+  },
+  {
+    "anchor": "Dark comedy about class struggle and social inequality",
+    "positive": "Parasite (2019). Themes: wealth gap, deception, dark humor, masterful tension. Quality Score: 8.6/10",
+    "negative": "Down and Out in Beverly Hills (1986). Themes: slapstick comedy, shallow satire. Quality Score: 5.2/10"
+  },
+  {
+    "anchor": "Gentle documentary about nature and human connection",
+    "positive": "My Octopus Teacher (2020). Themes: marine biology, solitude, interspecies bond, South Africa. Quality Score: 8.1/10",
+    "negative": "Sharknado (2013). Themes: absurd premise, B-movie, intentionally bad. Quality Score: 3.1/10"
+  },
+  {
+    "anchor": "Romantic drama set in a nostalgic bygone era",
+    "positive": "La La Land (2016). Themes: jazz, dreams, Los Angeles, bittersweet romance, musical numbers. Quality Score: 8.0/10",
+    "negative": "Fifty Shades of Grey (2015). Themes: shallow romance, explicit content, weak plot. Quality Score: 4.2/10"
+  },
+  {
+    "anchor": "Mind-bending heist film with layered dream sequences",
+    "positive": "Inception (2010). Themes: lucid dreaming, architecture of the mind, time dilation, emotional core. Quality Score: 8.8/10",
+    "negative": "Now You See Me 2 (2016). Themes: flashy magic tricks, convoluted plot, shallow characters. Quality Score: 5.0/10"
+  },
+  {
+    "anchor": "Gripping survival horror in a post-apocalyptic silence",
+    "positive": "A Quiet Place (2018). Themes: silence as survival, family sacrifice, creature horror, tension. Quality Score: 7.5/10",
+    "negative": "The Silence (2019). Themes: derivative premise, weak execution, forgettable. Quality Score: 4.0/10"
+  },
+  {
+    "anchor": "Thought-provoking philosophical anime about consciousness",
+    "positive": "Ghost in the Shell (1995). Themes: cyberpunk, identity, AI consciousness, stunning animation. Quality Score: 8.0/10",
+    "negative": "Ghost in the Shell (2017). Themes: Hollywood remake, whitewashing controversy, style over substance. Quality Score: 5.0/10"
+  },
+  {
+    "anchor": "Quirky indie comedy with eccentric characters and deadpan humor",
+    "positive": "The Grand Budapest Hotel (2014). Themes: Wes Anderson symmetry, nostalgia, absurd comedy, friendship. Quality Score: 8.1/10",
+    "negative": "Movie 43 (2013). Themes: gross-out sketches, celebrity cameos, zero cohesion. Quality Score: 2.5/10"
+  },
+  {
+    "anchor": "Epic action film with practical stunts and relentless pace",
+    "positive": "Mad Max: Fury Road (2015). Themes: vehicular warfare, feminist themes, desert wasteland, practical effects. Quality Score: 8.1/10",
+    "negative": "Transformers: The Last Knight (2017). Themes: CGI overload, incoherent plot, product placement. Quality Score: 3.8/10"
+  },
+  {
+    "anchor": "Socially conscious horror that uses genre as allegory",
+    "positive": "Get Out (2017). Themes: racism, suburban horror, social commentary, twisty plot. Quality Score: 7.7/10",
+    "negative": "Truth or Dare (2018). Themes: teen horror, generic scares, weak premise. Quality Score: 3.6/10"
+  },
+  {
+    "anchor": "Meditative conversation-driven drama about human connection",
+    "positive": "Before Sunrise (1995). Themes: chance encounter, Vienna, philosophy, real-time dialogue. Quality Score: 8.1/10",
+    "negative": "Holidate (2020). Themes: rom-com formula, predictable, shallow chemistry. Quality Score: 4.5/10"
+  },
+  {
+    "anchor": "Cyberpunk action film questioning the nature of reality",
+    "positive": "The Matrix (1999). Themes: simulation theory, kung fu, chosen one, groundbreaking effects. Quality Score: 8.7/10",
+    "negative": "The Matrix Resurrections (2021). Themes: meta commentary, nostalgia bait, divisive reception. Quality Score: 5.5/10"
+  }
+]

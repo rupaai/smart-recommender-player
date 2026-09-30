@@ -1,7 +1,7 @@
 [project]
 name = "smart-movie-streamer"
-version = "0.1.0"
-description = "A modular Home Streaming & Movie Recommender System"
+version = "0.3.0"
+description = "A self-hosted movie & TV streamer, downloader and recommender for Raspberry Pi / Mac"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,16 +13,12 @@ dependencies = [
     "jinja2>=3.1.3",
     "libtorrent>=2.1.1",
     "guessit>=4.4.0",
-    "qbittorrent>=0.1.6",
-    "websockets>=16.1.1",
 ]
 
 [project.scripts]
 movie-web = "server:run_server"
-movie-hub = "app:main_menu"
 movie-scanner = "scanner:main"
 movie-enricher = "enricher:main"
-movie-recommender = "recommender:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -30,12 +26,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 only-include = [
-    "app.py",
     "server.py",
     "database.py",
     "scanner.py",
     "enricher.py",
-    "recommender.py",
+    "jellyfin.py",
+    "services",
     "templates",
     "static",
 ]

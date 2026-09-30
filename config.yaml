@@ -25,9 +25,22 @@ recommender:
   exclude_watched: true
   enable_tier2_profiling: true
 
-# qBittorrent configuration
-qbittorrent:
-  host: "localhost"
-  port: 8080
-  username: "admin"
-  password: "adminadmin"
+# libtorrent configuration
+torrent:
+  # Port range for incoming connections
+  min_port: 6881
+  max_port: 6891
+  
+  # Where to save downloaded files
+  download_dir: "/Users/labibarupty/codes/smart_movie_streamer/downloads"
+  
+  # Additional libtorrent settings
+  settings:
+    upload_rate_limit: 0      # 0 = unlimited
+    download_rate_limit: 0    # 0 = unlimited
+    active_downloads: 3      # Max simultaneous downloads
+    active_seeds: 3           # Max simultaneous uploads
+    enable_dht: true          # Enable distributed hash table
+    enable_lsd: true           # Enable local service discovery
+    enable_natpmp: true        # Enable NAT-PMP port mapping
+    enable_upnp: true          # Enable UPnP port mapping
