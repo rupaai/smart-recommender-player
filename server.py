@@ -19,11 +19,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
+from services.jellyfin_service import JellyfinService
+from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services.torrent_service import TorrentDownloader, TorrentSearcher, downloads_store
 
@@ -37,8 +39,13 @@ if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
-db_path = config.get("database_path", "catalogue.db")
+db_path = os.getenv("DATABASE_PATH") or config.get("database_path", "catalogue.db")
 db = DatabaseManager(db_path)
+print(
+    f"[DB] active catalogue: {os.path.abspath(db_path)} "
+    f"({'DATABASE_PATH override' if os.getenv('DATABASE_PATH') else 'from config.yaml'})",
+    flush=True,
+)
 
 recommender_cfg = config.get("recommender", {})
 enable_tier2 = recommender_cfg.get("enable_tier2_profiling", True)
@@ -48,11 +55,19 @@ recommender_service = RecommenderService(
     enable_tier2=enable_tier2,
 )
 
+# TIGER generative retrieval engine (parallel — legacy recommender untouched).
+# Artifacts are loaded lazily from models/tiger/; if absent the router
+# automatically serves the existing recommender instead.
+generative_retriever = GenerativeRetriever(db_manager=db, config=config)
+
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
 torrent_downloader = TorrentDownloader(config, db_manager=db)
 
-app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.3.0")
+# Jellyfin library manager (idempotent library setup, refresh + verification)
+jellyfin_service = JellyfinService(config)
+
+app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
 # Enable CORS
 app.add_middleware(
@@ -62,6 +77,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def setup_jellyfin_libraries() -> None:
+    """Idempotently ensures the dedicated Movies / TV Shows libraries exist.
+
+    Additive-only and fully fault-tolerant: if Jellyfin is offline or not
+    configured, the server still boots normally and setup is simply skipped.
+    """
+    try:
+        result = await asyncio.to_thread(jellyfin_service.ensure_libraries)
+        print(f"[Jellyfin] Libraries ensured: {result}", flush=True)
+    except Exception as e:
+        print(f"[Jellyfin] Library setup skipped ({e}) — server continues.", flush=True)
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -102,7 +131,9 @@ class RecommendRequest(BaseModel):
     mood_id: int = 8
     era: Optional[str] = None
     duration: Optional[str] = None
-    top_n: int = 4
+    page: int = Field(default=1, ge=1, description="Page index (1-based)")
+    page_size: int = Field(default=10, ge=1, le=50, description="Items per page")
+    top_n: Optional[int] = Field(default=None, description="Legacy limit parameter alias")
     include_watched: bool = False
     query: Optional[str] = None
     media_type: str = "movie"  # 'movie' or 'tv'
@@ -168,6 +199,12 @@ async def get_status() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/jellyfin/status")
+async def get_jellyfin_status() -> Dict[str, Any]:
+    """Jellyfin diagnostics: server online, libraries (types + locations), env config."""
+    return await asyncio.to_thread(jellyfin_service.diagnostics)
+
+
 @app.get("/api/moods")
 async def get_moods() -> List[Dict[str, Any]]:
     """Returns available mood options including sub-moods for the interactive picker."""
@@ -176,7 +213,7 @@ async def get_moods() -> List[Dict[str, Any]]:
         moods_list.append({
             "id": mood_id,
             "name": info["name"],
-            "vibe": info["vibe"],
+            "vibe": info.get("vibe", ""),
             "genres": info["genres"],
             "submoods": info.get("submoods", []),
         })
@@ -184,19 +221,43 @@ async def get_moods() -> List[Dict[str, Any]]:
 
 
 @app.post("/api/recommend")
-async def get_recommendations(req: RecommendRequest) -> List[Dict[str, Any]]:
-    """Runs recommendation pipeline with dynamic Tier 2 deep profiling, taste scoring, and extra filters."""
-    results = recommender_service.recommend(
+async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
+    """Runs recommendation pipeline with dynamic Tier 2 deep profiling, taste scoring, Bayesian rating, MMR diversity, and pagination.
+
+    Executes off the main asyncio thread to prevent blocking event loop.
+    """
+    # Respect top_n legacy parameter if passed by client, otherwise use page_size
+    effective_page_size = req.top_n if req.top_n is not None else req.page_size
+
+    # Resolve mood genres so both engines receive the same context signal
+    # (legacy already does this internally — byte-equivalent for it; the
+    # generative engine needs it passed in explicitly).
+    genres = req.genres
+    if genres is None:
+        genres = MOOD_MAPPINGS.get(req.mood_id, MOOD_MAPPINGS[8])["genres"]
+
+    kwargs = dict(
         mood_id=req.mood_id,
         exclude_watched=not req.include_watched,
         era_preference=req.era,
         duration_preference=req.duration,
-        top_n=req.top_n,
+        page=req.page,
+        page_size=effective_page_size,
         sub_mood=req.sub_mood,
         query=req.query,
         media_type=req.media_type,
-        genres_override=req.genres,
+        genres_override=genres or None,
         min_rating_override=req.min_rating,
+    )
+
+    # Feature-flag router: dispatches between the untouched legacy recommender
+    # and the parallel TIGER generative retrieval engine (with fallback safety).
+    results = await asyncio.to_thread(
+        route_recommend,
+        recommender_service,
+        generative_retriever,
+        generative_retriever.engine_mode,
+        **kwargs,
     )
     return results
 

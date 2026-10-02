@@ -20,3 +20,10 @@ downloads
 
 # OS junk
 .DS_Store
+
+# Full TMDB catalogue (built by utils/build_full_catalogue.py)
+catalogue_full.db
+
+# TIGER generative retrieval artifacts (built by training/ pipeline)
+training/tiger/
+models/

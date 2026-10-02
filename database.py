@@ -45,7 +45,7 @@ class DatabaseManager:
                 CREATE TABLE IF NOT EXISTS media_items (
                     id                      INTEGER PRIMARY KEY AUTOINCREMENT,
                     media_type              TEXT DEFAULT 'movie',  -- 'movie' or 'tv'
-                    tmdb_id                 INTEGER UNIQUE,
+                    tmdb_id                 INTEGER,               -- TMDB id, unique per media_type (movie/TV id spaces overlap)
                     title                   TEXT NOT NULL,
                     original_title          TEXT,
                     release_year            INTEGER,
@@ -59,7 +59,8 @@ class DatabaseManager:
                     tier2_reviews_summary   TEXT,                  -- Cached user review highlights
                     tier2_profiled_at       TIMESTAMP,             -- Cache timestamp
                     created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(media_type, tmdb_id)
                 );
                 """
             )
@@ -115,6 +116,70 @@ class DatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_active_watch_status ON active_watch_sessions(status);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_items_media_type ON media_items(media_type);")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_watch_history_item_id ON watch_history(media_item_id);")
+
+            # Legacy databases: tmdb_id was UNIQUE globally, but TMDB movie and
+            # TV id spaces overlap — a mixed catalogue needs UNIQUE(media_type, tmdb_id).
+            self._migrate_v1_media_items_unique(cursor, conn)
+
+    def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
+        """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
+
+        Idempotent (PRAGMA user_version gate). Rebuilds media_items preserving
+        ids so media_sources / watch_history foreign keys stay valid.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 1:
+            return
+
+        conn.execute("PRAGMA foreign_keys = OFF;")
+        cursor.execute(
+            """
+            CREATE TABLE media_items_migrated (
+                id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_type              TEXT DEFAULT 'movie',
+                tmdb_id                 INTEGER,
+                title                   TEXT NOT NULL,
+                original_title          TEXT,
+                release_year            INTEGER,
+                overview                TEXT,
+                genres                  TEXT,
+                genre_ids               TEXT,
+                rating                  REAL DEFAULT 0.0,
+                runtime                 INTEGER,
+                poster_url              TEXT,
+                tier2_keywords          TEXT,
+                tier2_reviews_summary   TEXT,
+                tier2_profiled_at       TIMESTAMP,
+                created_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(media_type, tmdb_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO media_items_migrated
+                (id, media_type, tmdb_id, title, original_title, release_year,
+                 overview, genres, genre_ids, rating, runtime, poster_url,
+                 tier2_keywords, tier2_reviews_summary, tier2_profiled_at,
+                 created_at, updated_at)
+            SELECT id, media_type, tmdb_id, title, original_title, release_year,
+                   overview, genres, genre_ids, rating, runtime, poster_url,
+                   tier2_keywords, tier2_reviews_summary, tier2_profiled_at,
+                   created_at, updated_at
+            FROM media_items;
+            """
+        )
+        cursor.execute("DROP TABLE media_items;")
+        cursor.execute("ALTER TABLE media_items_migrated RENAME TO media_items;")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_id ON media_items(tmdb_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_items_media_type ON media_items(media_type);")
+        violations = cursor.execute("PRAGMA foreign_key_check;").fetchall()
+        if violations:
+            print(f"[Database] WARNING: {len(violations)} foreign-key violations after migration!")
+        conn.execute("PRAGMA foreign_keys = ON;")
+        cursor.execute("PRAGMA user_version = 1;")
+        print("[Database] Migration v1 applied: media_items unique key is now (media_type, tmdb_id).")
 
     def register_source_file(
         self,
@@ -264,6 +329,43 @@ class DatabaseManager:
                 ),
             )
 
+    def upsert_catalogue_items(self, items: List[Dict[str, Any]]) -> int:
+        """Bulk-inserts catalogue rows (movies and/or TV).
+
+        Existing (media_type, tmdb_id) pairs are skipped, making the operation
+        idempotent/resumable. Returns the number of newly inserted rows.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            before = conn.total_changes
+            for it in items:
+                cursor.execute(
+                    """
+                    INSERT INTO media_items
+                        (media_type, tmdb_id, title, original_title, release_year,
+                         overview, genres, genre_ids, rating, runtime, poster_url)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(media_type, tmdb_id) DO NOTHING;
+                    """,
+                    (
+                        it["media_type"],
+                        it["tmdb_id"],
+                        it["title"],
+                        it.get("original_title"),
+                        it.get("release_year"),
+                        it.get("overview"),
+                        it.get("genres"),
+                        it.get("genre_ids"),
+                        it.get("rating", 0.0),
+                        it.get("runtime"),
+                        it.get("poster_url"),
+                    ),
+                )
+            # NOTE: cursor.rowcount is unreliable with ON CONFLICT DO NOTHING;
+            # total_changes counts actual inserts.
+            inserted = conn.total_changes - before
+        return inserted
+
     def update_tier2_profile(
         self,
         item_id: int,
@@ -395,6 +497,28 @@ class DatabaseManager:
                 (limit,),
             )
             return [dict(r) for r in cursor.fetchall()]
+    def get_watch_history_chronological(self, limit: int = 200) -> List[Dict[str, Any]]:
+        """Retrieves watch history ordered oldest-first (chronological).
+
+        Used by the generative retrieval engine (TIGER) to build the
+        interaction sequence of semantic IDs, and by the offline training
+        pipeline to bootstrap sequence data.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT wh.*, mi.title, mi.release_year, mi.genres, mi.rating as tmdb_rating, mi.tier2_keywords
+                FROM watch_history wh
+                JOIN media_items mi ON wh.media_item_id = mi.id
+                ORDER BY wh.watched_at ASC
+                LIMIT ?;
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+
 
     def get_user_taste_profile(self, min_rating: float = 7.0) -> Dict[str, Any]:
         """

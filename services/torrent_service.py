@@ -7,21 +7,356 @@ Consolidates search, non-blocking download, cancelation, Jellyfin file organizat
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
 import shutil
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 import yaml
 
+from services.jellyfin_service import JellyfinService
+
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm"}
+SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
+
+# Common 3-letter subtitle language codes → 2-letter Jellyfin codes
+SUBTITLE_LANGUAGE_MAP = {
+    "eng": "en", "english": "en",
+    "fre": "fr", "fra": "fr", "french": "fr",
+    "spa": "es", "spanish": "es",
+    "deu": "de", "ger": "de", "german": "de",
+    "ita": "it", "italian": "it",
+    "jpn": "ja", "japanese": "ja",
+    "kor": "ko", "korean": "ko",
+    "chi": "zh", "zho": "zh", "chinese": "zh",
+    "rus": "ru", "russian": "ru",
+    "por": "pt", "portuguese": "pt", "bra": "pt-br",
+    "dut": "nl", "nld": "nl", "dutch": "nl",
+    "swe": "sv", "swedish": "sv",
+    "nor": "no", "norwegian": "no",
+    "dan": "da", "danish": "da",
+    "fin": "fi", "finnish": "fi",
+    "pol": "pl", "polish": "pl",
+    "tur": "tr", "turkish": "tr",
+    "ara": "ar", "arabic": "ar",
+    "hin": "hi", "hindi": "hi",
+    "tha": "th", "thai": "th",
+    "vie": "vi", "viet": "vi",
+    "ces": "cs", "cze": "cs", "czech": "cs",
+    "hun": "hu", "hungarian": "hu",
+    "heb": "he", "hebrew": "he",
+    "ell": "el", "gre": "el", "greek": "el",
+    "ron": "ro", "rum": "ro",
+    "ind": "id", "ukr": "uk",
+    "ben": "bn", "tam": "ta", "tel": "te", "kan": "kn", "mal": "ml",
+}
+
+# Known 2-letter codes accepted directly. Note: 'hi' is deliberately
+# excluded — in release names it conventionally means hearing-impaired.
+SUBTITLE_ISO2_CODES = {
+    "en", "es", "fr", "de", "it", "ja", "ko", "zh", "ru", "pt", "nl",
+    "sv", "no", "da", "fi", "pl", "tr", "ar", "th", "vi", "cs", "hu",
+    "he", "el", "ro", "id", "uk", "bn", "ta", "te", "kn", "ml",
+}
+
+# Release-name tags that usually mean the TV client must transcode
+TRANSCODE_HINT_TAGS = ("2160p", "4k", "uhd", "hevc", "h265", "x265", "dolby.vision", "hdr10", "hdr")
+
+
+def _parse_sxxeyy(name: str) -> Optional[Tuple[int, int, Optional[int]]]:
+    """Parses (season, episode, episode2|None) from a release filename.
+
+    Handles `S01E02`, `1x02`, and multi-episode files like `S01E02-E03`
+    (also `1x02-03`). Returns None when no episode tag is present.
+    """
+    lower = name.lower()
+    m = re.search(
+        r"(?<!\d)s(\d{1,2})e(\d{1,2})(?:\s*[-_. ]\s*(?:e|ep)?(\d{1,2}))?(?!\d)",
+        lower,
+    )
+    if m:
+        return int(m.group(1)), int(m.group(2)), (int(m.group(3)) if m.group(3) else None)
+    m = re.search(r"(?<!\d)(\d{1,2})x(\d{1,2})(?:\s*[-_. ]\s*(\d{1,2}))?(?!\d)", lower)
+    if m:
+        return int(m.group(1)), int(m.group(2)), (int(m.group(3)) if m.group(3) else None)
+    return None
+
+
+def _parse_subtitle_tags(name: str) -> Tuple[str, List[str]]:
+    """Parses (language, flags) from a subtitle filename.
+
+    Language: 3-letter codes via SUBTITLE_LANGUAGE_MAP (eng→en, fre→fr,
+    spa→es, deu→de…) or known 2-letter ISO codes; defaults to 'en'.
+    Flags: preserves 'forced' and 'sdh'/'cc' markers found in the name.
+    """
+    stem = os.path.splitext(os.path.basename(name))[0]
+    tokens = re.split(r"[._\-\[\]() ]+", stem.lower())
+    lang: Optional[str] = None
+    flags: List[str] = []
+    for tok in tokens:
+        if not tok:
+            continue
+        if tok in ("forced", "forcedsub", "forcedsubs"):
+            if "forced" not in flags:
+                flags.append("forced")
+        elif tok in ("sdh", "cc", "sdhsub"):
+            if "sdh" not in flags:
+                flags.append("sdh")
+        elif tok in SUBTITLE_LANGUAGE_MAP:
+            lang = SUBTITLE_LANGUAGE_MAP[tok]
+        elif tok in SUBTITLE_ISO2_CODES:
+            lang = tok
+    return (lang or "en", flags)
+
+
+def _log_transcode_hint(path: str) -> None:
+    """Warns when a 4K/HEVC release may need transcoding on the TV client."""
+    lower = os.path.basename(path).lower()
+    tags = [t for t in TRANSCODE_HINT_TAGS if t in lower]
+    if tags:
+        print(
+            f"[Organizer] ⚠️ 4K/HEVC-grade release detected ({', '.join(tags)}): "
+            f"'{os.path.basename(path)}'. If it won't play on your TV, enable transcoding in "
+            "Jellyfin (Dashboard → Playback) or grab a 1080p copy.",
+            flush=True,
+        )
+
+
+def _remove_dir_tree_if_empty(path: str) -> bool:
+    """Recursively removes empty directories bottom-up starting at path.
+
+    Returns True when path itself no longer exists. Leftover non-media files
+    keep the directory in place on purpose (never delete user data).
+    """
+    if not os.path.isdir(path):
+        return False
+    changed = True
+    while changed:
+        changed = False
+        for root, dirs, files in os.walk(path, topdown=False):
+            if not dirs and not files:
+                try:
+                    os.rmdir(root)
+                    changed = True
+                except OSError:
+                    pass
+    return not os.path.exists(path)
 
 # ---------------------------------------------------------------------------
 # Global in-memory download progress store
 # Keyed by movie_id → status dict polled via GET /api/torrent/status/<id>
 # ---------------------------------------------------------------------------
 downloads_store: Dict[int, Dict[str, Any]] = {}
+
+
+# ===========================================================================
+# Prowlarr Searcher (optional aggregated provider, configured via .env)
+# ===========================================================================
+PROWLARR_CATEGORY_MAP = {"movie": "2000", "tv": "5000"}
+
+
+def _magnet_info_hash(magnet: str) -> Optional[str]:
+    """Extracts and normalizes the btih info-hash from a magnet link."""
+    m = re.search(r"xt=urn:btih:([A-Za-z0-9]+)", magnet or "")
+    if not m:
+        return None
+    return m.group(1).lower()
+
+
+# ---------------------------------------------------------------------------
+# Bencode (minimal) — converts Prowlarr's proxied .torrent grabs into magnets
+# ---------------------------------------------------------------------------
+def _bencode_decode(data: bytes, pos: int = 0):
+    """Decodes one bencode value at pos. Returns (value, next_pos)."""
+    c = data[pos:pos + 1]
+    if c == b"i":
+        end = data.index(b"e", pos)
+        return int(data[pos + 1:end]), end + 1
+    if c == b"l":
+        pos += 1
+        out = []
+        while data[pos:pos + 1] != b"e":
+            val, pos = _bencode_decode(data, pos)
+            out.append(val)
+        return out, pos + 1
+    if c == b"d":
+        pos += 1
+        out = {}
+        while data[pos:pos + 1] != b"e":
+            key, pos = _bencode_decode(data, pos)
+            val, pos = _bencode_decode(data, pos)
+            out[key] = val
+        return out, pos + 1
+    if c.isdigit():
+        end = data.index(b":", pos)
+        length = int(data[pos:end])
+        start = end + 1
+        return data[start:start + length], start + length
+    raise ValueError(f"bad bencode byte {c!r} at {pos}")
+
+
+def _bencode_encode(obj) -> bytes:
+    """Canonical bencode encoding (sorted dict keys) — required for info-hash."""
+    if isinstance(obj, bool):
+        raise ValueError("bool is not a valid bencode type")
+    if isinstance(obj, int):
+        return b"i" + str(obj).encode() + b"e"
+    if isinstance(obj, bytes):
+        return str(len(obj)).encode() + b":" + obj
+    if isinstance(obj, str):
+        b = obj.encode()
+        return str(len(b)).encode() + b":" + b
+    if isinstance(obj, list):
+        return b"l" + b"".join(_bencode_encode(x) for x in obj) + b"e"
+    if isinstance(obj, dict):
+        return b"d" + b"".join(
+            _bencode_encode(k) + _bencode_encode(v) for k, v in sorted(obj.items())
+        ) + b"e"
+    raise ValueError(f"cannot encode {type(obj)}")
+
+
+def torrent_url_to_magnet(url: str, timeout: int = 25) -> Optional[str]:
+    """Fetches a .torrent URL (e.g. Prowlarr's proxied grab link) and builds a
+    real magnet link from its info-hash (SHA-1 of the bencoded info dict),
+    display name, and trackers. Returns None on any failure.
+    """
+    try:
+        current = url
+        torrent = None
+        # Prowlarr's grab link may serve the .torrent directly or redirect to
+        # the site's original magnet — handle both, following up to 5 hops.
+        for _ in range(5):
+            resp = requests.get(current, timeout=timeout, allow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                nxt = resp.headers.get("Location") or ""
+                if nxt.startswith("magnet:"):
+                    return nxt
+                if not nxt:
+                    return None
+                current = nxt
+                continue
+            resp.raise_for_status()
+            torrent, _ = _bencode_decode(resp.content)
+            break
+        if torrent is None:
+            return None
+        info = torrent[b"info"]
+        info_hash = hashlib.sha1(_bencode_encode(info)).hexdigest()
+        name = (info.get(b"name") or b"torrent").decode("utf-8", "replace")
+        from urllib.parse import quote
+        magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote(name)}"
+        trackers = [torrent.get(b"announce")] + list(torrent.get(b"trackers") or [])
+        for tracker in trackers:
+            if isinstance(tracker, bytes) and tracker:
+                magnet += "&tr=" + quote(tracker.decode("utf-8", "replace"))
+        return magnet
+    except Exception as e:
+        print(f"[Downloader] Could not convert torrent URL to magnet: {e}", flush=True)
+        return None
+
+
+def _map_prowlarr_results(
+    items: List[Dict[str, Any]],
+    media_type: str,
+) -> List[Dict[str, Any]]:
+    """Maps raw Prowlarr search results into the searcher's result dict shape.
+
+    Keeps torrent-protocol results only (NZBs dropped). A result's magnet is
+    either a real magnet URL, or Prowlarr's proxied /download grab link which
+    `download()` converts into a real magnet on demand. Dedup by info-hash
+    (or title+size when the hash is unknown). Seed counts are NOT filtered
+    here — several indexers report 0 seeders for live torrents — the
+    downloader itself aborts dead/fake torrents. Malformed entries skipped.
+    """
+    mapped: List[Dict[str, Any]] = []
+    seen_hashes: Set[str] = set()
+    for item in items:
+        try:
+            if item.get("protocol") != "torrent":
+                continue
+            title = item.get("title") or ""
+            size_bytes = int(item.get("size") or 0)
+            # magnetUrl is either a real magnet or Prowlarr's proxied grab
+            # link (which serves the .torrent file); download() converts
+            # proxied links into real magnets on demand. downloadUrl is the
+            # equivalent grab link kept as a fallback.
+            magnet = item.get("magnetUrl") or item.get("downloadUrl") or ""
+            if not magnet:
+                continue
+            info_hash = _magnet_info_hash(magnet)
+            dedup_key = info_hash or f"{title.lower()}|{size_bytes}"
+            if dedup_key in seen_hashes:
+                continue
+            seen_hashes.add(dedup_key)
+            mapped.append({
+                "name": title,
+                "quality": _infer_quality(title),
+                "size_bytes": size_bytes,
+                "size_display": _format_size(size_bytes),
+                "seeds": int(item.get("seeders") or 0),
+                "peers": int(item.get("leechers") or 0),
+                "magnet": magnet,
+                "media_type": media_type,
+            })
+        except Exception:
+            continue
+    return mapped
+
+
+class ProwlarrSearcher:
+    """Searches a local Prowlarr instance when configured (.env), else disabled.
+
+    PROWLARR_URL / PROWLARR_API_KEY in .env enable it. On any failure
+    (unreachable, 401, HTTP error, malformed JSON) it warns and returns []
+    so TorrentSearcher falls back to YTS / Apibay.
+    """
+
+    def __init__(self):
+        from dotenv import load_dotenv
+        load_dotenv()
+        self.base_url = (os.getenv("PROWLARR_URL") or "").rstrip("/")
+        self.api_key = os.getenv("PROWLARR_API_KEY")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.base_url and self.api_key)
+
+    def search(self, query: str, media_type: str = "movie") -> List[Dict[str, Any]]:
+        """Returns mapped torrent results, or [] on any failure (fallback kicks in)."""
+        if not self.configured:
+            return []
+        try:
+            resp = requests.get(
+                f"{self.base_url}/api/v1/search",
+                headers={"X-Api-Key": self.api_key},
+                params={
+                    "query": query,
+                    "type": "search",
+                    "categories": PROWLARR_CATEGORY_MAP.get(media_type, "2000"),
+                    "limit": 100,
+                },
+                timeout=25,
+            )
+        except requests.exceptions.RequestException as e:
+            print(f"[Searcher] Prowlarr unreachable ({e}) — falling back.", flush=True)
+            return []
+        if resp.status_code == 401:
+            print("[Searcher] Prowlarr 401: PROWLARR_API_KEY invalid — falling back.", flush=True)
+            return []
+        if resp.status_code != 200:
+            print(f"[Searcher] Prowlarr HTTP {resp.status_code} — falling back.", flush=True)
+            return []
+        try:
+            items = resp.json() or []
+        except ValueError:
+            print("[Searcher] Prowlarr returned malformed JSON — falling back.", flush=True)
+            return []
+        results = _map_prowlarr_results(items, media_type)
+        if results:
+            print(f"[Searcher] Prowlarr: {len(results)} torrent results across indexers.", flush=True)
+        return results
 
 
 # ===========================================================================
@@ -53,6 +388,7 @@ class TorrentSearcher:
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
+        self.prowlarr = ProwlarrSearcher()
 
     # ------------------------------------------------------------------
     # Public API
@@ -73,7 +409,12 @@ class TorrentSearcher:
         """
         results: List[Dict[str, Any]] = []
 
-        if media_type == "tv":
+        # 1. Preferred provider: Prowlarr (aggregated indexers) when configured
+        #    via .env; on failure/empty it falls back to the direct endpoints.
+        prowlarr_results = self.prowlarr.search(query, media_type=media_type)
+        if prowlarr_results:
+            results = prowlarr_results
+        elif media_type == "tv":
             # YTS only indexes movies, so search Apibay for TV shows
             results = self._search_apibay(query, min_size=self.MIN_TV_SIZE_BYTES)
         else:
@@ -224,6 +565,165 @@ class TorrentSearcher:
             return []
 
 
+def organize_media_files(
+    staging_dir: str,
+    movie_target: str,
+    tv_target: str,
+    clean_title: str,
+    year: Optional[int],
+    media_type: str = "movie",
+    db: Any = None,
+) -> List[str]:
+    """Pure filesystem organizer for the Jellyfin directory layout.
+
+    Movies: <movie_target>/<Title> (<Year>)/<Title> (<Year>).<ext> with each
+            subtitle copied beside it as <Title> (<Year>).<lang>[.flags].<ext>
+    TV:     <tv_target>/<Show> (<Year>)/Season <XX>/<Show> - S<XX>E<YY>[-E<ZZ>].<ext>
+            for EVERY video found (season packs), with subtitles paired via the
+            SxxEyy tag parsed from their own filename.
+
+    Unpairable subtitles are logged and skipped, every episode is registered
+    in media_sources, and the staging directory is removed once emptied.
+    Returns the list of organized destination paths.
+    """
+    organized: List[str] = []
+    staging_abs = os.path.abspath(staging_dir)
+    skip_roots = {os.path.abspath(movie_target), os.path.abspath(tv_target)}
+
+    videos: List[str] = []
+    subtitles: List[str] = []
+    for root, _, files in os.walk(staging_abs):
+        root_abs = os.path.abspath(root)
+        if root_abs in skip_roots or any(root_abs.startswith(sr + os.sep) for sr in skip_roots):
+            continue
+        for f in files:
+            full = os.path.join(root, f)
+            ext = os.path.splitext(f)[1].lower()
+            if ext in VIDEO_EXTENSIONS:
+                videos.append(full)
+            elif ext in SUBTITLE_EXTENSIONS:
+                subtitles.append(full)
+
+    if not videos:
+        return organized
+
+    videos.sort(key=lambda p: os.path.getsize(p), reverse=True)
+    folder_name = f"{clean_title} ({year})" if year else clean_title
+
+    if media_type != "tv":
+        # ---- Movie: largest video becomes <Title> (<Year>).<ext> ----
+        main_video = videos[0]
+        ext = os.path.splitext(main_video)[1].lower()
+        target_dir = os.path.join(movie_target, folder_name)
+        os.makedirs(target_dir, exist_ok=True)
+        dest = os.path.join(target_dir, f"{folder_name}{ext}")
+        shutil.move(main_video, dest)
+        organized.append(dest)
+        print(f"[Organizer] Movie: {dest}", flush=True)
+        _log_transcode_hint(main_video)
+
+        if db:
+            db.register_source_file(
+                file_path=dest,
+                parsed_title=clean_title,
+                parsed_year=year,
+                media_type="movie",
+                file_size=os.path.getsize(dest),
+                source_type="local",
+            )
+
+        # Copy every subtitle beside the movie with proper naming
+        for sub in subtitles:
+            lang, flags = _parse_subtitle_tags(os.path.basename(sub))
+            parts = [folder_name, lang] + flags
+            sub_dest = os.path.join(target_dir, ".".join(parts) + os.path.splitext(sub)[1])
+            if os.path.abspath(sub) == os.path.abspath(sub_dest):
+                continue  # already correctly named
+            shutil.copy2(sub, sub_dest)
+            try:
+                os.remove(sub)  # clear staging so it can be removed once emptied
+            except OSError:
+                pass
+            organized.append(sub_dest)
+            print(f"[Organizer] Subtitle: {sub_dest}", flush=True)
+    else:
+        # ---- TV: every episode in staging + paired subtitles ----
+        show_dir = os.path.join(tv_target, folder_name)
+        sub_entries = []
+        for sub in subtitles:
+            parsed = _parse_sxxeyy(os.path.basename(sub))
+            if parsed is None:
+                print(
+                    "[Organizer] WARNING: unpairable subtitle (no SxxEyy tag) skipped: "
+                    f"{os.path.basename(sub)}",
+                    flush=True,
+                )
+                continue
+            lang, flags = _parse_subtitle_tags(os.path.basename(sub))
+            sub_entries.append((parsed, sub, lang, flags))
+
+        for video in videos:
+            parsed = _parse_sxxeyy(os.path.basename(video))
+            if parsed is None:
+                print(
+                    f"[Organizer] WARNING: no SxxEyy tag in '{os.path.basename(video)}' — skipped.",
+                    flush=True,
+                )
+                continue
+            s, e, e2 = parsed
+            ext = os.path.splitext(video)[1].lower()
+            season_dir = os.path.join(show_dir, f"Season {s:02d}")
+            os.makedirs(season_dir, exist_ok=True)
+            ep_tag = f"S{s:02d}E{e:02d}" + (f"-E{e2:02d}" if e2 else "")
+            dest = os.path.join(season_dir, f"{clean_title} - {ep_tag}{ext}")
+            shutil.move(video, dest)
+            organized.append(dest)
+            print(f"[Organizer] Episode: {dest}", flush=True)
+            _log_transcode_hint(video)
+
+            if db:
+                db.register_source_file(
+                    file_path=dest,
+                    parsed_title=clean_title,
+                    parsed_year=year,
+                    media_type="tv",
+                    season_number=s,
+                    episode_number=e,
+                    file_size=os.path.getsize(dest),
+                    source_type="local",
+                )
+
+        # Subtitles land in their own parsed Season folder, named after their
+        # own episode tag so Jellyfin pairs them automatically.
+        for (s, e, e2), sub, lang, flags in sub_entries:
+            season_dir = os.path.join(show_dir, f"Season {s:02d}")
+            os.makedirs(season_dir, exist_ok=True)
+            ep_tag = f"S{s:02d}E{e:02d}" + (f"-E{e2:02d}" if e2 else "")
+            parts = [f"{clean_title} - {ep_tag}", lang] + flags
+            sub_dest = os.path.join(season_dir, ".".join(parts) + os.path.splitext(sub)[1])
+            if os.path.abspath(sub) == os.path.abspath(sub_dest):
+                organized.append(sub_dest)
+                continue  # already correctly named
+            shutil.copy2(sub, sub_dest)
+            try:
+                os.remove(sub)  # clear staging so it can be removed once emptied
+            except OSError:
+                pass
+            organized.append(sub_dest)
+            print(f"[Organizer] Subtitle: {sub_dest}", flush=True)
+
+    # Clean up the staging directory once it has been emptied
+    if _remove_dir_tree_if_empty(staging_abs):
+        print(f"[Organizer] Staging directory emptied and removed: {staging_abs}", flush=True)
+    elif os.path.exists(staging_abs):
+        print(
+            f"[Organizer] Staging directory kept (non-media files remain): {staging_abs}",
+            flush=True,
+        )
+
+    return organized
+
+
 # ===========================================================================
 # Torrent Downloader & Jellyfin Organizer
 # ===========================================================================
@@ -244,21 +744,31 @@ class TorrentDownloader:
         self.session = lt.session()
         self.db = db_manager
 
-        # Target directory: prefer media_folders[0], fallback to torrent.download_dir
-        media_folders = config.get("media_folders", [])
-        if media_folders:
-            self.target_dir = os.path.abspath(media_folders[0])
-        else:
-            torrent_cfg = config.get("torrent", {})
-            self.target_dir = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
-
-        # Staging area for in-progress downloads (separate from target)
+        # Jellyfin library roots: prefer explicit jellyfin_library config,
+        # fall back to legacy media_folders[0] so existing setups keep working.
         torrent_cfg = config.get("torrent", {})
+        media_folders = config.get("media_folders", []) or []
+        lib_cfg = config.get("jellyfin_library", {}) or {}
+        if lib_cfg.get("movie_dir"):
+            self.movie_target = os.path.abspath(lib_cfg["movie_dir"])
+        elif media_folders:
+            self.movie_target = os.path.abspath(media_folders[0])
+        else:
+            self.movie_target = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
+        self.tv_target = os.path.abspath(lib_cfg.get("tv_dir") or self.movie_target)
+        os.makedirs(self.movie_target, exist_ok=True)
+        os.makedirs(self.tv_target, exist_ok=True)
+
+        # Staging area for in-progress downloads (separate from targets)
         self.download_dir = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
         os.makedirs(self.download_dir, exist_ok=True)
 
-        print(f"[Downloader] Jellyfin target: {self.target_dir}", flush=True)
-        print(f"[Downloader] Download staging: {self.download_dir}", flush=True)
+        # Jellyfin library manager (create / refresh / verify)
+        self.jellyfin = JellyfinService(config)
+
+        print(f"[Downloader] Jellyfin movie target: {self.movie_target}", flush=True)
+        print(f"[Downloader] Jellyfin TV target:    {self.tv_target}", flush=True)
+        print(f"[Downloader] Download staging:      {self.download_dir}", flush=True)
 
         min_port = torrent_cfg.get("min_port", 6881)
         settings = {
@@ -361,14 +871,15 @@ class TorrentDownloader:
         movie_id: int,
         title: str,
         media_type: str = "movie",
-    ) -> str:
-        """Extracts largest video file and places it into clean Jellyfin directory structure.
+    ) -> List[str]:
+        """Moves staged files into the clean Jellyfin directory structure.
 
-        - Movie:
-          <target_dir>/<Title> (<Year>)/<Title> (<Year>).<ext>
+        - Movie: <movie_target>/<Title> (<Year>)/<Title> (<Year>).<ext> + subtitles
+        - TV:    <tv_target>/<Show> (<Year>)/Season <XX>/<Show> - S<XX>E<YY>.<ext>
+                 for EVERY episode in staging (+ paired subtitles)
 
-        - TV Show:
-          <target_dir>/<Show Title> (<Year>)/Season <XX>/<Show Title> - S<XX>E<YY>.<ext>
+        Afterwards a non-blocking async poller refreshes Jellyfin and verifies
+        the title actually became visible (updates jellyfin_visible).
         """
         clean_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()
 
@@ -380,110 +891,66 @@ class TorrentDownloader:
                 if item.get("media_type"):
                     media_type = item["media_type"]
 
-        # 1. Locate largest video file in staging download directory
-        largest_file = None
-        max_size = 0
+        organized = organize_media_files(
+            staging_dir=self.download_dir,
+            movie_target=self.movie_target,
+            tv_target=self.tv_target,
+            clean_title=clean_title,
+            year=year,
+            media_type=media_type,
+            db=self.db,
+        )
 
-        for root, _, files in os.walk(self.download_dir):
-            if os.path.abspath(root).startswith(os.path.abspath(self.target_dir)):
-                continue
-            for f in files:
-                ext = os.path.splitext(f)[1].lower()
-                if ext in VIDEO_EXTENSIONS:
-                    full = os.path.join(root, f)
-                    sz = os.path.getsize(full)
-                    if sz > max_size:
-                        max_size = sz
-                        largest_file = full
-
-        if not largest_file:
+        if not organized:
             print(f"[Downloader] No video file found to organize for '{title}'.", flush=True)
-            return ""
+            return organized
 
-        ext = os.path.splitext(largest_file)[1].lower()
-        largest_file_name = os.path.basename(largest_file)
-
-        # 2. Determine target path based on media type (Movie vs TV Show)
-        if media_type == "tv":
-            # Extract season and episode from filename or title
-            tv_match = re.search(
-                r"(?:s([0-9]{1,2})e([0-9]{1,2})|([0-9]{1,2})x([0-9]{1,2}))",
-                largest_file_name,
-                re.IGNORECASE,
-            )
-            if not tv_match:
-                tv_match = re.search(
-                    r"(?:s([0-9]{1,2})e([0-9]{1,2})|([0-9]{1,2})x([0-9]{1,2}))",
-                    title,
-                    re.IGNORECASE,
-                )
-
-            if tv_match:
-                if tv_match.group(1) is not None:
-                    season = int(tv_match.group(1))
-                    episode = int(tv_match.group(2))
-                else:
-                    season = int(tv_match.group(3))
-                    episode = int(tv_match.group(4))
-            else:
-                season = 1
-                episode = 1
-
-            show_folder_name = f"{clean_title} ({year})" if year else clean_title
-            season_folder_name = f"Season {season:02d}"
-            target_file_name = f"{clean_title} - S{season:02d}E{episode:02d}{ext}"
-
-            target_show_dir = os.path.join(self.target_dir, show_folder_name, season_folder_name)
-            os.makedirs(target_show_dir, exist_ok=True)
-            target_file_path = os.path.join(target_show_dir, target_file_name)
-
-            shutil.move(largest_file, target_file_path)
-            print(f"[Downloader] Organized TV episode: {target_file_path}", flush=True)
-
-            if self.db:
-                self.db.register_source_file(
-                    file_path=target_file_path,
-                    parsed_title=clean_title,
-                    parsed_year=year,
-                    media_type="tv",
-                    season_number=season,
-                    episode_number=episode,
-                    file_size=max_size,
-                    source_type="local",
-                )
-
-        else:
-            # Movie format
-            folder_name = f"{clean_title} ({year})" if year else clean_title
-            target_dir = os.path.join(self.target_dir, folder_name)
-            os.makedirs(target_dir, exist_ok=True)
-            target_file_path = os.path.join(target_dir, f"{folder_name}{ext}")
-
-            shutil.move(largest_file, target_file_path)
-            print(f"[Downloader] Organized Movie: {target_file_path}", flush=True)
-
-            if self.db:
-                self.db.register_source_file(
-                    file_path=target_file_path,
-                    parsed_title=clean_title,
-                    parsed_year=year,
-                    media_type="movie",
-                    file_size=max_size,
-                    source_type="local",
-                )
-
-        # 3. Trigger Jellyfin library refresh
+        # Kick off the async Jellyfin refresh + visibility verification poller
         try:
-            from jellyfin import JellyfinRefresher
-            refresher = JellyfinRefresher()
-            if refresher.refresh_library():
-                print("[Downloader] Jellyfin library refresh triggered successfully.", flush=True)
-            else:
-                print("[Downloader] Jellyfin refresh skipped (check .env).", flush=True)
-        except Exception as e:
-            print(f"[Downloader] Jellyfin refresh error: {e}", flush=True)
+            asyncio.get_running_loop().create_task(
+                self._verify_in_jellyfin(movie_id, title, media_type)
+            )
+        except RuntimeError:
+            # No running event loop (e.g. manual invocation): verify inline.
+            result = self.jellyfin.refresh_and_verify(title, media_type)
+            if movie_id in downloads_store:
+                downloads_store[movie_id]["jellyfin_visible"] = bool(result.get("visible"))
+        return organized
 
-        return target_file_path
+    async def _verify_in_jellyfin(
+        self,
+        movie_id: int,
+        title: str,
+        media_type: str,
+        timeout_s: int = 120,
+    ) -> None:
+        """Async poller: refreshes Jellyfin and confirms the title is visible.
+
+        Runs the blocking HTTP polling in a worker thread so the event loop is
+        never blocked, then updates downloads_store with the result.
+        """
+        try:
+            result = await asyncio.to_thread(
+                self.jellyfin.refresh_and_verify, title, media_type, timeout_s
+            )
+        except Exception as e:
+            print(f"[Downloader] Jellyfin verification error for '{title}': {e}", flush=True)
+            return
+
+        visible = bool(result.get("visible"))
+        if movie_id in downloads_store:
+            downloads_store[movie_id]["jellyfin_visible"] = visible
+            if result.get("hint"):
+                downloads_store[movie_id]["jellyfin_hint"] = result["hint"]
+
+        if visible:
+            print(f"✅ '{title}' is now visible in Jellyfin", flush=True)
+        else:
+            print(
+                f"⚠️ '{title}' not visible in Jellyfin after {timeout_s}s — "
+                f"hint: {result.get('hint')}",
+                flush=True,
+            )
 
     # ------------------------------------------------------------------
     # Non-blocking Download Task
@@ -504,6 +971,18 @@ class TorrentDownloader:
             self.cancelled_tasks.remove(movie_id)
 
         try:
+            if magnet_link.startswith("http"):
+                # Prowlarr proxied grab link: convert .torrent → magnet on demand
+                print("[Downloader] Converting Prowlarr grab link to magnet...", flush=True)
+                converted = torrent_url_to_magnet(magnet_link)
+                if not converted:
+                    downloads_store[movie_id] = {
+                        "movie_id": movie_id,
+                        "status": "error",
+                        "error": "Could not convert Prowlarr grab link to a magnet link.",
+                    }
+                    return
+                magnet_link = converted
             params = lt.parse_magnet_uri(magnet_link)
             params.save_path = self.download_dir
 

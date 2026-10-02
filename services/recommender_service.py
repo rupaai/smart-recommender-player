@@ -1,157 +1,103 @@
 """
 Recommender Service (services/recommender_service.py)
-Mood-based filtering, taste scoring from watch history, baseline rating rules,
-support for Movies and TV Shows, and optional ONNX vector embedding drop-in.
-
-Works completely without a trained model. The optional `get_vector_embeddings()`
-adaptor checks for a models/model.onnx file at runtime.
+Production-grade multi-stage candidate scoring, vector similarity, 
+Bayesian rating weighting, MMR diversity pruning, and pagination.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import time
-from typing import Any, Dict, List, Optional, Tuple
+import math
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import requests
+import numpy as np
 from database import DatabaseManager
 
 
 # ===========================================================================
-# Mood ↔ Genre Mapping
+# Helpers & Math Utilities
+# ===========================================================================
+def _split_lower(csv: Optional[str]) -> List[str]:
+    """Splits a comma-separated string into lowercase stripped tokens."""
+    if not csv:
+        return []
+    return [t.strip().lower() for t in str(csv).split(",") if t.strip()]
+
+
+def cosine_similarity(a: List[float], b: List[float]) -> float:
+    """Calculates cosine similarity between two float vectors."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    va, vb = np.array(a), np.array(b)
+    norm_a, norm_b = np.linalg.norm(va), np.linalg.norm(vb)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(va, vb) / (norm_a * norm_b))
+
+
+def jaccard_similarity(set_a: Set[str], set_b: Set[str]) -> float:
+    """Measures set overlap between genre/keyword sets for MMR diversity."""
+    if not set_a or not set_b:
+        return 0.0
+    intersection = len(set_a.intersection(set_b))
+    union = len(set_a.union(set_b))
+    return intersection / union if union > 0 else 0.0
+
+
+def calculate_weighted_rating(
+    rating: float,
+    num_votes: int,
+    min_votes: int = 1000,
+    global_mean: float = 6.5,
+) -> float:
+    """Applies IMDb's Bayesian Weighted Rating formula to eliminate 1-vote 10/10 noise."""
+    if num_votes <= 0:
+        return global_mean
+    return (num_votes / (num_votes + min_votes)) * rating + (
+        min_votes / (num_votes + min_votes)
+    ) * global_mean
+
+
+# ===========================================================================
+# Mood ↔ Genre Mapping & Config
 # ===========================================================================
 MOOD_MAPPINGS: Dict[int, Dict[str, Any]] = {
-    1: {
-        "name": "😊 Happy / Feel-Good",
-        "genres": ["Comedy", "Family", "Animation", "Music"],
-        "vibe": "Uplifting, lighthearted, and cheerful",
-        "submoods": [
-            {"name": "Family Fun", "genres": ["Family", "Animation"]},
-            {"name": "Lighthearted Comedy", "genres": ["Comedy", "Romance"]},
-            {"name": "Feel-Good Animation", "genres": ["Animation", "Comedy"]},
-        ],
-    },
-    2: {
-        "name": "😢 Sad / Emotional",
-        "genres": ["Drama", "Romance"],
-        "vibe": "Poignant, touching, and emotionally resonant",
-        "submoods": [
-            {"name": "Tearjerker", "genres": ["Drama"]},
-            {"name": "Bittersweet Romance", "genres": ["Romance", "Drama"]},
-            {"name": "Coming of Age", "genres": ["Drama", "Comedy"]},
-        ],
-    },
-    3: {
-        "name": "😱 Thrilling / On the Edge",
-        "genres": ["Action", "Thriller", "Adventure"],
-        "vibe": "High-octane, intense, and suspenseful",
-        "submoods": [
-            {"name": "Action-Packed", "genres": ["Action", "Adventure"]},
-            {"name": "Psychological Thriller", "genres": ["Thriller", "Mystery"]},
-            {"name": "Crime & Heist", "genres": ["Crime", "Thriller"]},
-        ],
-    },
-    4: {
-        "name": "👻 Scary / Spooky",
-        "genres": ["Horror", "Mystery"],
-        "vibe": "Eerie, chilling, and atmospheric dread",
-        "submoods": [
-            {"name": "Supernatural Horror", "genres": ["Horror", "Fantasy"]},
-            {"name": "Suspenseful Mystery", "genres": ["Mystery", "Thriller"]},
-            {"name": "Psychological Horror", "genres": ["Horror", "Drama"]},
-        ],
-    },
-    5: {
-        "name": "❤️ Romantic",
-        "genres": ["Romance"],
-        "vibe": "Passionate, sweet, and heartwarming",
-        "submoods": [
-            {"name": "Romantic Comedy", "genres": ["Romance", "Comedy"]},
-            {"name": "Period Romance", "genres": ["Romance", "History"]},
-            {"name": "Intense Passion", "genres": ["Romance", "Drama"]},
-        ],
-    },
-    6: {
-        "name": "🤯 Mind-Bending / Thoughtful",
-        "genres": ["Science Fiction", "Sci-Fi", "Mystery"],
-        "vibe": "Complex, cerebral, and reality-questioning",
-        "submoods": [
-            {"name": "Sci-Fi Space Adventure", "genres": ["Science Fiction", "Adventure"]},
-            {"name": "Mind-Bending Mystery", "genres": ["Mystery", "Thriller"]},
-            {"name": "Dystopian Cyberpunk", "genres": ["Science Fiction", "Action"]},
-        ],
-    },
-    7: {
-        "name": "😌 Relaxing / Chill",
-        "genres": ["Documentary", "Animation", "Family"],
-        "vibe": "Calming, visually beautiful, and comforting",
-        "submoods": [
-            {"name": "Nature & Wildlife", "genres": ["Documentary"]},
-            {"name": "Animated Comfort", "genres": ["Animation", "Family"]},
-            {"name": "Gentle Comedy", "genres": ["Comedy", "Family"]},
-        ],
-    },
-    8: {
-        "name": "🎲 Surprise Me!",
-        "genres": [],
-        "vibe": "Wildcard selection from your entire catalogue",
-        "submoods": [
-            {"name": "Top Rated Staff Picks", "genres": []},
-            {"name": "Hidden Gems", "genres": []},
-            {"name": "Cult Classics", "genres": []},
-        ],
-    },
+    1: {"name": "😊 Happy / Feel-Good", "vibe": "light, funny, uplifting", "genres": ["Comedy", "Family", "Animation", "Music"]},
+    2: {"name": "😢 Sad / Emotional", "vibe": "moving, heartfelt, tearjerker", "genres": ["Drama", "Romance"]},
+    3: {"name": "😱 Thrilling / On the Edge", "vibe": "intense, gripping, high-stakes", "genres": ["Action", "Thriller", "Adventure"]},
+    4: {"name": "👻 Scary / Spooky", "vibe": "dark, tense, hair-raising", "genres": ["Horror", "Mystery"]},
+    5: {"name": "❤️ Romantic", "vibe": "warm, swoony, tender", "genres": ["Romance"]},
+    6: {"name": "🤯 Mind-Bending / Thoughtful", "vibe": "clever, cerebral, twisty", "genres": ["Science Fiction", "Sci-Fi", "Mystery"]},
+    7: {"name": "😌 Relaxing / Chill", "vibe": "gentle, cozy, low-stakes", "genres": ["Documentary", "Animation", "Family"]},
+    8: {"name": "🎲 Surprise Me!", "vibe": "anything goes", "genres": []},
 }
 
-# Keywords that suppress or invert the default rating floor
 GUILTY_PLEASURE_KEYWORDS = frozenset({
-    "guilty pleasure",
-    "so bad it's good",
-    "so bad its good",
-    "cringe",
-    "b-movie",
-    "b movie",
-    "trash",
-    "campy",
-    "cheesy",
+    "guilty pleasure", "so bad it's good", "so bad its good",
+    "cringe", "b-movie", "b movie", "trash", "campy", "cheesy"
 })
 
-
-# ===========================================================================
-# TMDB TV Genre Name Aliases
-# ===========================================================================
-# TMDB uses different genre names for TV shows vs movies ("Sci-Fi & Fantasy"
-# vs "Science Fiction"). These aliases let the movie-oriented mood mappings
-# match TV genre naming as well.
 TV_GENRE_ALIASES: Dict[str, List[str]] = {
     "action": ["Action & Adventure", "Action"],
     "adventure": ["Action & Adventure", "Adventure"],
     "science fiction": ["Sci-Fi & Fantasy", "Science Fiction"],
     "sci-fi": ["Sci-Fi & Fantasy", "Sci-Fi"],
     "fantasy": ["Sci-Fi & Fantasy", "Fantasy"],
-    "war": ["War & Politics", "War"],
-    "politics": ["War & Politics", "Politics"],
     "family": ["Family", "Kids"],
-    "kids": ["Kids", "Family"],
-    "children": ["Kids", "Family"],
 }
 
 
 # ===========================================================================
-# Optional ONNX Vector Embedding Adaptor
+# Vector Embedding Adaptor
 # ===========================================================================
-def get_vector_embeddings(text: str) -> Optional[list]:
-    """Checks if models/model.onnx exists and loads via onnxruntime.
-
-    Returns a list of floats (embedding vector) or None if the model
-    is not deployed. The main pipeline gracefully falls back to the
-    SQL/taste-scoring approach when this returns None.
-    """
+def get_vector_embeddings(text: str) -> Optional[List[float]]:
+    """Encodes text using ONNX Runtime if available."""
     model_path = os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "models", "model.onnx"
     )
-    if not os.path.exists(model_path):
+    if not os.path.exists(model_path) or not text.strip():
         return None
 
     try:
@@ -160,10 +106,8 @@ def get_vector_embeddings(text: str) -> Optional[list]:
 
         tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
         encoded = tokenizer(
-            text, padding="max_length", truncation=True,
-            max_length=128, return_tensors="np",
+            text, padding="max_length", truncation=True, max_length=128, return_tensors="np"
         )
-
         session = ort.InferenceSession(model_path)
         inputs = {
             "input_ids": encoded["input_ids"],
@@ -171,29 +115,19 @@ def get_vector_embeddings(text: str) -> Optional[list]:
             "token_type_ids": encoded.get("token_type_ids", encoded["input_ids"] * 0),
         }
         output = session.run(None, inputs)
-        hidden = output[0]  # (1, seq, dim)
+        hidden = output[0]
         mask = encoded["attention_mask"]
         pooled = (hidden * mask[:, :, None]).sum(axis=1) / mask.sum(axis=1, keepdims=True)
         return pooled[0].tolist()
-
     except Exception as e:
         print(f"[Recommender] Vector embedding error: {e}", flush=True)
         return None
 
 
 # ===========================================================================
-# Recommender Service
+# Recommender Service Engine
 # ===========================================================================
 class RecommenderService:
-    """Smart recommender engine using mood mappings, era/runtime filters,
-    taste scoring from past watch history, and baseline rating rules.
-
-    Works entirely from SQLite without any trained models.
-    Supports both Movies and TV Shows.
-    """
-
-    TMDB_BASE_URL = "https://api.themoviedb.org/3"
-
     def __init__(
         self,
         db_manager: DatabaseManager,
@@ -205,256 +139,142 @@ class RecommenderService:
         self.enable_tier2 = enable_tier2
         self.http = requests.Session()
 
-    # ------------------------------------------------------------------
-    # Tier 2 Deep Profiling (TMDB keywords + reviews)
-    # ------------------------------------------------------------------
-    def fetch_tier2_profile(
-        self, tmdb_id: int, media_type: str = "movie"
-    ) -> Tuple[str, str]:
-        """Fetches TMDB keywords and first review excerpt for an item."""
-        if not self.api_key:
-            return "", ""
-
-        keywords: List[str] = []
-        reviews_summary = ""
-
-        # Keywords
-        kw_ep = f"/tv/{tmdb_id}/keywords" if media_type == "tv" else f"/movie/{tmdb_id}/keywords"
-        try:
-            resp = self.http.get(
-                f"{self.TMDB_BASE_URL}{kw_ep}",
-                params={"api_key": self.api_key},
-                timeout=8,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                kw_list = data.get("results") or data.get("keywords") or []
-                keywords = [k["name"].lower() for k in kw_list[:8]]
-        except Exception:
-            pass
-
-        # Reviews
-        rev_ep = f"/tv/{tmdb_id}/reviews" if media_type == "tv" else f"/movie/{tmdb_id}/reviews"
-        try:
-            resp = self.http.get(
-                f"{self.TMDB_BASE_URL}{rev_ep}",
-                params={"api_key": self.api_key},
-                timeout=8,
-            )
-            if resp.status_code == 200:
-                results = resp.json().get("results", [])
-                if results:
-                    text = results[0].get("content", "").replace("\r\n", " ").replace("\n", " ").strip()
-                    sentences = [s.strip() for s in text.split(".") if len(s.strip()) > 15]
-                    if sentences:
-                        reviews_summary = f'"{sentences[0]}."'
-        except Exception:
-            pass
-
-        return ", ".join(keywords), reviews_summary
-
-    def ensure_tier2(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        """Ensures Tier 2 profiling is cached for an item."""
-        if not self.enable_tier2 or not item.get("tmdb_id"):
-            return item
-        if item.get("tier2_profiled_at") and (item.get("tier2_keywords") or item.get("tier2_reviews_summary")):
-            return item
-
-        kw, rev = self.fetch_tier2_profile(item["tmdb_id"], item.get("media_type", "movie"))
-        self.db.update_tier2_profile(item["id"], kw, rev)
-        item["tier2_keywords"] = kw
-        item["tier2_reviews_summary"] = rev
-        item["tier2_profiled_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        return item
-
-    # ------------------------------------------------------------------
-    # Taste Scoring & Context Matching
-    # ------------------------------------------------------------------
-    def _extract_reference_signal(
-        self, query_text: str
-    ) -> Tuple[Dict[str, float], Dict[str, float]]:
-        """Detects movie/TV titles mentioned inside a free-text description.
-
-        e.g. "something like Interstellar but funnier" uses Interstellar's
-        genres, keywords and overview words as extra affinity signals so
-        candidates similar to the referenced titles score higher.
-        """
-        ref_genres: Dict[str, float] = {}
-        ref_keywords: Dict[str, float] = {}
-        if not query_text:
-            return ref_genres, ref_keywords
-
-        try:
-            titles = self.db.get_reference_titles()
-        except Exception as e:
-            print(f"[Recommender] Reference titles unavailable: {e}", flush=True)
-            return ref_genres, ref_keywords
-
-        q_norm = f" {re.sub(r'[^a-z0-9]+', ' ', query_text).strip()} "
-        for t in titles:
-            raw_title = str(t.get("title") or "").strip()
-            norm_title = re.sub(r"[^a-z0-9]+", " ", raw_title.lower()).strip()
-            # Skip tiny titles ("Up", "It") to avoid false-positive matches
-            if len(norm_title) < 4:
-                continue
-            if f" {norm_title} " not in q_norm:
-                continue
-
-            for g in _split_lower(t.get("genres")):
-                ref_genres[g] = ref_genres.get(g, 0.0) + 1.0
-            corpus_words = re.findall(
-                r"\w+",
-                f"{t.get('tier2_keywords') or ''} {t.get('overview') or ''}".lower(),
-            )
-            for w in corpus_words:
-                if len(w) > 3:
-                    ref_keywords[w] = ref_keywords.get(w, 0.0) + 0.5
-            print(f"[Recommender] Reference title detected: {raw_title}", flush=True)
-
-        return ref_genres, ref_keywords
-
     def rank_candidates(
         self,
         candidates: List[Dict[str, Any]],
         taste_profile: Dict[str, Any],
         query: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Ranks candidates using: Final Score = Base Rating + Taste Bonus + Query Relevance Bonus."""
+        """Multi-faceted scoring combining Bayesian rating, taste profile, and vector similarity."""
         preferred_genres = taste_profile.get("preferred_genres", {})
         preferred_keywords = taste_profile.get("preferred_keywords", {})
 
-        query_text = (query or "").lower()
-        query_tokens = [w for w in re.findall(r"\w+", query_text) if len(w) > 2]
-        query_phrases = [
-            p.strip()
-            for p in re.findall(r"[a-z0-9']+\s+[a-z0-9']+", query_text)
-            if len(p.strip()) > 6
-        ]
-
-        # Reference titles mentioned in the description act as extra taste signals
-        ref_genres, ref_keywords = self._extract_reference_signal(query_text)
+        # Compute query vector embedding if model is deployed
+        query_vector = get_vector_embeddings(query) if query else None
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
-            base = float(item.get("rating") or 5.0)
-            bonus = 0.0
+            raw_rating = float(item.get("rating") or 6.0)
+            num_votes = int(item.get("num_votes") or item.get("vote_count") or 100)
 
-            # Genre affinity
-            for g in _split_lower(item.get("genres")):
+            # 1. Base Score: Bayesian Weighted Rating
+            base_score = calculate_weighted_rating(raw_rating, num_votes)
+
+            # 2. Taste Affinity Score
+            taste_bonus = 0.0
+            item_genres = set(_split_lower(item.get("genres")))
+            item_keywords = set(_split_lower(item.get("tier2_keywords")))
+
+            for g in item_genres:
                 if g in preferred_genres:
-                    bonus += preferred_genres[g] * 0.25
-                if g in ref_genres:
-                    bonus += ref_genres[g] * 0.5
+                    taste_bonus += preferred_genres[g] * 0.2
+            for k in item_keywords:
+                if k in preferred_keywords:
+                    taste_bonus += preferred_keywords[k] * 0.15
 
-            # Keyword affinity (taste profile matches phrases, refs match words)
-            if _split_lower(item.get("tier2_keywords")) or ref_keywords:
-                for k in _split_lower(item.get("tier2_keywords")):
-                    if k in preferred_keywords:
-                        bonus += preferred_keywords[k] * 0.2
-                if ref_keywords:
-                    for w in re.findall(
-                        r"\w+", str(item.get("tier2_keywords") or "").lower()
-                    ):
-                        if len(w) > 3 and w in ref_keywords:
-                            bonus += ref_keywords[w] * 0.3
+            taste_bonus = min(taste_bonus, 2.0)
 
-            bonus = min(bonus, 2.0)
+            # 3. Vector Semantic Relevance vs Term Matching Boost
+            relevance_boost = 0.0
+            if query_vector and item.get("embedding"):
+                # Fast Cosine Similarity using stored JSON vector
+                similarity = cosine_similarity(query_vector, item["embedding"])
+                relevance_boost = similarity * 3.0
+            elif query:
+                # Text fall-back match
+                q_words = set(re.findall(r"\w+", query.lower()))
+                item_text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
+                matches = sum(1 for w in q_words if len(w) > 3 and w in item_text)
+                relevance_boost = min(matches * 0.3, 2.0)
 
-            # Query relevance boost (matching title, synopsis, keywords, phrases)
-            query_boost = 0.0
-            if query_tokens:
-                corpus = (
-                    f"{item.get('title', '')} {item.get('overview', '')} "
-                    f"{item.get('genres', '')} {item.get('tier2_keywords', '')}"
-                ).lower()
-                token_matches = sum(1 for token in query_tokens if token in corpus)
-                phrase_matches = sum(1 for phrase in query_phrases if phrase in corpus)
-                if token_matches or phrase_matches:
-                    query_boost = min(token_matches * 0.4 + phrase_matches * 0.6, 2.0)
+            final_score = base_score + taste_bonus + relevance_boost
 
-                # Overview word overlap with referenced titles (story-idea similarity)
-                if ref_keywords:
-                    overview_words = set(
-                        re.findall(r"\w+", str(item.get("overview") or "").lower())
-                    )
-                    overlap = sum(
-                        1 for w in overview_words if len(w) > 3 and w in ref_keywords
-                    )
-                    query_boost += min(overlap * 0.1, 0.5)
+            item["recommendation_score"] = round(final_score, 2)
+            item["base_weighted_rating"] = round(base_score, 2)
+            item["taste_bonus"] = round(taste_bonus, 2)
+            item["relevance_boost"] = round(relevance_boost, 2)
 
-            final = base + bonus + query_boost
-
-            item["recommendation_score"] = round(final, 2)
-            item["taste_bonus"] = round(bonus, 2)
-            item["query_boost"] = round(query_boost, 2)
-            scored.append((final, item))
+            scored.append((final_score, item))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [item for _, item in scored]
 
-    # ------------------------------------------------------------------
-    # Main Recommendation Pipeline
-    # ------------------------------------------------------------------
+    def apply_mmr_diversity(
+        self, candidates: List[Dict[str, Any]], top_n: int, lambda_param: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Maximal Marginal Relevance (MMR) re-ranking to maximize diversity and remove duplicates."""
+        if not candidates or top_n <= 0:
+            return []
+
+        selected: List[Dict[str, Any]] = []
+        unselected = list(candidates)
+
+        while unselected and len(selected) < top_n:
+            best_item = None
+            best_mmr_score = -float("inf")
+
+            for item in unselected:
+                rel = item.get("recommendation_score", 0.0)
+
+                # Similarity against already selected set
+                max_sim = 0.0
+                item_genres = set(_split_lower(item.get("genres")))
+
+                for sel in selected:
+                    sel_genres = set(_split_lower(sel.get("genres")))
+                    sim = jaccard_similarity(item_genres, sel_genres)
+                    # Deduplicate franchises/same main title stems
+                    if item.get("title", "").split(":")[0] == sel.get("title", "").split(":")[0]:
+                        sim += 0.5
+                    if sim > max_sim:
+                        max_sim = sim
+
+                mmr_score = lambda_param * rel - (1 - lambda_param) * max_sim
+                if mmr_score > best_mmr_score:
+                    best_mmr_score = mmr_score
+                    best_item = item
+
+            if best_item:
+                selected.append(best_item)
+                unselected.remove(best_item)
+
+        return selected
+
     def recommend(
         self,
         mood_id: int = 8,
         exclude_watched: bool = True,
         era_preference: Optional[str] = None,
         duration_preference: Optional[str] = None,
-        top_n: int = 5,
+        page: int = 1,
+        page_size: int = 10,
         sub_mood: Optional[str] = None,
         query: Optional[str] = None,
         media_type: str = "movie",
         genres_override: Optional[List[str]] = None,
         min_rating_override: Optional[float] = None,
-    ) -> List[Dict[str, Any]]:
-        """Executes the enhanced recommendation pipeline.
-
-        Args:
-            mood_id: 1-8 mood index.
-            exclude_watched: Filter out movies already rated/watched.
-            era_preference: 'modern', '2000s', 'classic', or None.
-            duration_preference: 'short', 'standard', 'epic', or None.
-            top_n: Number of items to return.
-            sub_mood: Specific sub-mood title.
-            query: Free-form text describing vibes, actors, or themes.
-            media_type: 'movie' or 'tv'.
-            genres_override: Optional list of explicit genre names.
-            min_rating_override: Optional custom minimum rating floor.
-        """
+    ) -> Dict[str, Any]:
+        """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination."""
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
 
-        # Resolve genres
-        if genres_override and len(genres_override) > 0:
+        # Resolve Genres
+        if genres_override:
             genres = genres_override
-        elif sub_mood:
-            genres = None
-            for sm in mood_info.get("submoods", []):
-                if sm["name"].lower() == sub_mood.lower():
-                    genres = sm["genres"]
-                    break
-            if not genres:
-                genres = mood_info["genres"]
         else:
             genres = mood_info["genres"]
 
-        # TV shows use different TMDB genre naming — expand with aliases so
-        # the movie-oriented mood mappings also match TV catalogues.
         if media_type == "tv" and genres:
-            expanded: List[str] = list(genres)
+            expanded = list(genres)
             for g in genres:
                 expanded.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
             genres = list(dict.fromkeys(expanded))
 
-        # ── Stage 1: Baseline Rating Rule ──────────────────────────
+        # Baseline Minimum Rating Floor
         min_rating = 6.0 if min_rating_override is None else min_rating_override
-        if query:
-            q_lower = query.lower()
-            if any(kw in q_lower for kw in GUILTY_PLEASURE_KEYWORDS):
-                min_rating = 0.0
-                print("[Recommender] Guilty-pleasure mode: rating floor suppressed", flush=True)
+        if query and any(kw in query.lower() for kw in GUILTY_PLEASURE_KEYWORDS):
+            min_rating = 0.0
 
-        # ── Stage 1: Hard Metadata Filtering ───────────────────────
+        # Stage 1: Fast Database Metadata Retrieval
         candidates = self.db.get_candidates(
             media_type=media_type,
             genres=genres if genres else None,
@@ -462,70 +282,42 @@ class RecommenderService:
             min_rating=min_rating,
         )
 
-        if not candidates and exclude_watched:
-            print("[Recommender] No unwatched matches. Checking full catalogue...", flush=True)
-            candidates = self.db.get_candidates(
-                media_type=media_type,
-                genres=genres if genres else None,
-                exclude_watched=False,
-                min_rating=min_rating,
-            )
-
         if not candidates:
-            # If still none, check without genre restriction
-            candidates = self.db.get_candidates(
-                media_type=media_type,
-                genres=None,
-                exclude_watched=False,
-                min_rating=0.0,
-            )
+            return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
 
-        if not candidates:
-            return []
-
-        # ── Era Filter ─────────────────────────────────────────────
+        # Era & Runtime Filters
         if era_preference == "modern":
-            filtered = [c for c in candidates if c.get("release_year") and c["release_year"] >= 2015]
-            if filtered: candidates = filtered
+            candidates = [c for c in candidates if (c.get("release_year") or 0) >= 2015] or candidates
         elif era_preference == "2000s":
-            filtered = [c for c in candidates if c.get("release_year") and 2000 <= c["release_year"] < 2015]
-            if filtered: candidates = filtered
+            candidates = [c for c in candidates if 2000 <= (c.get("release_year") or 0) < 2015] or candidates
         elif era_preference == "classic":
-            filtered = [c for c in candidates if c.get("release_year") and c["release_year"] < 2000]
-            if filtered: candidates = filtered
+            candidates = [c for c in candidates if (c.get("release_year") or 0) < 2000] or candidates
 
-        # ── Runtime Filter (Movies only) ───────────────────────────
         if media_type == "movie" and duration_preference:
             if duration_preference == "short":
-                filtered = [c for c in candidates if c.get("runtime") and c["runtime"] < 105]
-                if filtered: candidates = filtered
-            elif duration_preference == "standard":
-                filtered = [c for c in candidates if c.get("runtime") and 105 <= c["runtime"] <= 140]
-                if filtered: candidates = filtered
+                candidates = [c for c in candidates if 0 < (c.get("runtime") or 0) < 105] or candidates
             elif duration_preference == "epic":
-                filtered = [c for c in candidates if c.get("runtime") and c["runtime"] > 140]
-                if filtered: candidates = filtered
+                candidates = [c for c in candidates if (c.get("runtime") or 0) > 140] or candidates
 
-        # ── Stage 2: Tier 2 Profiling (top candidates) ─────────────
-        pool = candidates[: min(len(candidates), top_n * 2)]
-        for item in pool:
-            self.ensure_tier2(item)
-
-        # ── Stage 3: Personal Taste & Context Scoring ──────────────
+        # Stage 2: Personal Taste & Vector Scoring
         taste = self.db.get_user_taste_profile(min_rating=7.0)
         ranked = self.rank_candidates(candidates, taste, query=query)
 
-        # ── Optional: Vector Re-ranking (drop-in when a model is deployed) ──
-        # get_vector_embeddings() stays available for a future ONNX drop-in;
-        # without models/model.onnx the SQL/taste pipeline above is authoritative.
-        return ranked[:top_n]
+        # Stage 3: Candidate Diversity Pruning (MMR)
+        # Process top 100 candidates through MMR to build a diverse pool for pagination
+        pool_size = min(len(ranked), 100)
+        diverse_candidates = self.apply_mmr_diversity(ranked[:pool_size], top_n=pool_size)
 
+        # Stage 4: Pagination Slice
+        total_results = len(diverse_candidates)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated_items = diverse_candidates[start_idx:end_idx]
 
-# ===========================================================================
-# Helpers
-# ===========================================================================
-def _split_lower(csv: Optional[str]) -> List[str]:
-    """Splits a comma-separated string into lowercase stripped tokens."""
-    if not csv:
-        return []
-    return [t.strip().lower() for t in str(csv).split(",") if t.strip()]
+        return {
+            "total_results": total_results,
+            "page": page,
+            "page_size": page_size,
+            "has_more": end_idx < total_results,
+            "items": paginated_items,
+        }

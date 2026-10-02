@@ -253,8 +253,9 @@ async function fetchRecommendations() {
       body: JSON.stringify(payload)
     });
 
-    const movies = await res.json();
-    renderRecommendations(movies);
+    // The API returns a paginated payload object; renderRecommendations expects the items array.
+    const data = await res.json();
+    renderRecommendations(data.items || []);
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     container.innerHTML = '<p style="text-align:center; color:var(--danger)">Failed to load recommendations.</p>';

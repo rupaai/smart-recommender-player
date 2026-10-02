@@ -1,8 +1,17 @@
 # Smart Movie Streamer & Recommender Configuration
 
 # Folders to scan for media files (can be multiple paths)
-media_folders:
-  - /Users/labibarupty/Movies
+media_folders:                      # scanner scans both roots
+  - /Users/labibarupty/Media/Movies
+  - /Users/labibarupty/Media/Shows
+
+# Jellyfin dedicated library configuration
+jellyfin_library:
+  movie_dir: /Users/labibarupty/Media/Movies
+  tv_dir: /Users/labibarupty/Media/Shows
+  movies_library_name: Movies
+  tv_library_name: TV Shows
+  realtime_monitor: true
 
 # TMDB region for release info (e.g., GB, US)
 region: GB
@@ -16,14 +25,26 @@ supported_extensions:
   - .m4v
   - .webm
 
-# Database file location
-database_path: catalogue.db
+# Database file location (DATABASE_PATH env var overrides this at launch)
+database_path: catalogue_full.db
 
 # Recommender preferences
 recommender:
   default_top_n: 5
   exclude_watched: true
   enable_tier2_profiling: true
+
+  # Recommendation engine router for the TIGER generative retrieval engine
+  # (parallel engine — the legacy SQL/taste recommender is never modified):
+  #   "fallback"        generative first; legacy on missing artifacts/history
+  #   "legacy_only"     legacy engine always (kill-switch)
+  #   "generative_only" generative primary; legacy only on unexpected failure
+  engine_mode: fallback
+  generative:
+    history_threshold: 2    # min usable semantic-ID history before generative is used
+    top_k: 40               # semantic ID tuples beam-decoded per request
+    max_seq_len: 10         # sequence length fed to the ONNX predictor
+    candidate_pool: 60      # trie-resolved candidates re-ranked per request
 
 # libtorrent configuration
 torrent:

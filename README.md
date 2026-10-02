@@ -35,14 +35,21 @@ Features a **Mobile-First PWA**, a **Direct Search & Download Subsystem** for in
 
 ```text
 movie-app/
-├── config.yaml               # Target paths (e.g. media_folders: ["/Users/labibarupty/Movies"])
+├── config.yaml               # media_folders roots + jellyfin_library (Movies/TV Shows dirs)
 ├── .env                      # TMDB and Jellyfin API keys and URLs
 ├── database.py               # SQLite schema & query methods
 ├── server.py                 # FastAPI application routes & background worker
 ├── services/
 │   ├── __init__.py           # Package marker
 │   ├── torrent_service.py    # Searcher, non-blocking downloader & Jellyfin organizer
+│   ├── jellyfin_service.py   # JellyfinService: library auto-setup, refresh + visibility verify
 │   └── recommender_service.py# Mood filtering, taste scoring, rating rules & ONNX adaptor
+├── tests/
+│   ├── test_organizer.py     # Offline organizer tests (uv run python tests/test_organizer.py)
+│   └── test_searcher.py      # Offline Prowlarr adapter tests (uv run python tests/test_searcher.py)
+├── utils/
+│   ├── add_prowlarr_indexers.py  # Idempotent safe-indexer setup for Prowlarr
+│   └── build_full_catalogue.py   # Full TMDB catalogue builder (10k movies + 10k TV, resumable)
 ├── static/
 │   ├── app.js                # Frontend SPA controller & 1-second polling logic
 │   ├── styles.css            # Dark mode mobile-first PWA styling
@@ -101,8 +108,17 @@ JELLYFIN_USER_ID=your_jellyfin_user_id
 Specify your local media folders where movies should be saved and organized:
 
 ```yaml
-media_folders:
-  - /Users/labibarupty/Movies   # Primary target for Jellyfin & downloads
+media_folders:                      # scanner scans both roots
+  - /Users/labibarupty/Media/Movies
+  - /Users/labibarupty/Media/Shows
+
+# Dedicated Jellyfin libraries (auto-created at server startup)
+jellyfin_library:
+  movie_dir: /Users/labibarupty/Media/Movies
+  tv_dir: /Users/labibarupty/Media/Shows
+  movies_library_name: Movies
+  tv_library_name: TV Shows
+  realtime_monitor: true
 
 region: GB
 database_path: catalogue.db
@@ -117,6 +133,21 @@ torrent:
   max_port: 6891
   download_dir: ./downloads      # Staging folder for in-progress pieces
 ```
+
+> **Optional — Prowlarr aggregated search:** set `PROWLARR_URL` and `PROWLARR_API_KEY` in `.env` to search all your Prowlarr indexers (YTS, ThePirateBay, NyaaSi, Knaben…) with automatic fallback to YTS/Apibay when Prowlarr is offline or misconfigured. Run `uv run python utils/add_prowlarr_indexers.py` once to install the safe indexer set (no Cloudflare bypass, no accounts; each indexer is live-tested and failures are disabled, never deleted). Results are torrent-only, de-duplicated by info-hash, and merged into one clean sorted list.
+
+### Optional — Full TMDB Catalogue (~10,000 movies + 10,000 TV)
+
+The default `catalogue.db` is a small test catalogue (42 items). Build the full one with:
+
+```bash
+uv run python utils/build_full_catalogue.py                 # 10k movies + 10k TV + runtimes (resumable)
+uv run python utils/build_full_catalogue.py --max-pages 50  # quick partial build
+```
+
+- Movies and TV are stored separately (`UNIQUE(media_type, tmdb_id)` — required because TMDB movie and TV id spaces overlap), popularity-sorted, adult content excluded, unrated junk filtered by vote count.
+- **Plug it in:** add `DATABASE_PATH=catalogue_full.db` to `.env`. **Unplug:** remove the line — you're back on the test catalogue instantly. Your watch history / taste profile is copied into the full DB at build time, so ratings follow you across switches.
+- Fully resumable: re-run any time; existing rows are skipped and only missing runtimes are fetched.
 
 ---
 
@@ -244,6 +275,7 @@ cp model.onnx ../models/model.onnx
 |---|---|---|
 | `GET` | `/` | Serves the mobile PWA frontend |
 | `GET` | `/api/status` | Jellyfin online status, LAN IP & catalogue stats |
+| `GET` | `/api/jellyfin/status` | Jellyfin diagnostics: server online, libraries (types + locations), env config |
 | `GET` | `/api/moods` | Returns 8 mood mappings and sub-moods |
 | `POST` | `/api/recommend` | Runs mood filtering + taste scoring + rating rules |
 | `POST` | `/api/torrent/search` | Body: `{ query, sort_by_size, media_type }`. Searches YTS (movies) & Apibay (movies/TV) |
@@ -263,9 +295,20 @@ cp model.onnx ../models/model.onnx
 ## 📺 Jellyfin Setup (Local TV Streaming)
 
 1. Install [Jellyfin](https://jellyfin.org/) on your Raspberry Pi, Mac, or server.
-2. In the Jellyfin web dashboard, add a Movie Library pointing to your `media_folders` directory (e.g., `/Users/labibarupty/Movies`).
-3. Set your Jellyfin API key and URL in `.env`.
-4. When downloads complete, files are automatically formatted into Jellyfin's standard structure — Movies: `/Movies/Movie Title (Year)/Movie Title (Year).ext`, TV Shows: `/Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` — and Jellyfin is told to refresh. The new title appears on your TV screen within seconds!
+2. Set `JELLYFIN_URL`, `JELLYFIN_API_KEY` (and optionally `JELLYFIN_USER_ID`) in `.env`.
+3. **That's it — libraries are auto-created.** On server startup the app idempotently ensures two dedicated typed libraries exist ("Movies" at `jellyfin_library.movie_dir`, "TV Shows" at `jellyfin_library.tv_dir`) with realtime monitoring enabled. Setup is strictly additive: nothing is ever deleted or renamed. If Jellyfin is offline, startup simply skips it and the server boots normally.
+4. Check `GET /api/jellyfin/status` anytime for diagnostics: server online state, every library with its type + folder locations, and `.env` config presence.
+5. When downloads complete, files are formatted into Jellyfin's standard structure — Movies: `Movies/Movie Title (Year)/Movie Title (Year).ext` with `Movie Title (Year).en.srt` subtitles beside it; TV Shows: `Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` (season packs: **every** episode organized; multi-episode files become `SXXEYY-EZZ`). The app then refreshes the library and **polls until the title is actually visible** (`✅ '<title>' is now visible in Jellyfin`), logging a diagnostic hint if it isn't.
+6. **Subtitles tip:** install the OpenSubtitles plugin (Dashboard → Plugins) so Jellyfin can auto-download missing `.srt` files; local subtitles named `Title (Year).en.forced.srt` / `Title (Year).en.sdh.srt` are honored automatically.
+7. **One-time manual migration** (existing show folders downloaded to the old single root):
+
+   ```bash
+   mkdir -p ~/Media/Shows && mv "/Users/labibarupty/Movies/<Show Name>"* /Users/labibarupty/Media/Shows/
+   ```
+
+   Movies already placed under `~/Media/Movies` need no action.
+
+> **Known limitations:** the "add path to existing library" API shape varies across Jellyfin versions — on mismatch the app logs a clear warning and continues (never destructive); playback of 4K/HEVC releases depends on your TV client / Jellyfin transcoding settings (a hint is logged by the organizer).
 
 ---
 
