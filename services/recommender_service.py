@@ -98,14 +98,80 @@ MOOD_MAPPINGS: Dict[int, Dict[str, Any]] = {
 # a film's original_language is reliable. Both are required — the region must
 # match AND the language must belong to it.
 ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
+    # Regional groupings first. Matched longest-phrase-first, so "south asian"
+    # and "south korean" resolve before the bare country names below.
     "south asian": {
-        "countries": ["IN"], "also_countries": ["BD", "PK", "LK", "NP"],
+        # Every South Asian country, not just India. Bangladeshi titles are a
+        # large, distinct cinema (the Apu Trilogy, Tareque Masud, by-pass
+        # road films) and were being excluded whenever "Indian" was the only
+        # country checked. Bangladesh, Pakistan, Sri Lanka and Nepal are
+        # first-class members of this group.
+        "countries": ["IN", "BD", "PK", "LK", "NP"],
         "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur", "si", "ne"],
         "label": "South Asian",
     },
-    "indian": {"countries": ["IN"],
-               "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur"],
-               "label": "Indian"},
+    "bangladeshi": {"countries": ["BD"],
+                    "languages": ["bn"], "label": "Bangladeshi"},
+    "bangladesh": {"countries": ["BD"],
+                   "languages": ["bn"], "label": "Bangladeshi"},
+    "bengali": {"countries": ["BD", "IN"],
+                "languages": ["bn"], "label": "Bengali (Bangladesh/India)"},
+    "deshi": {"countries": ["BD"], "languages": ["bn"], "label": "Bangladeshi (deshi)"},
+    "pakistani": {"countries": ["PK"], "languages": ["ur", "pa"], "label": "Pakistani"},
+    "sri lankan": {"countries": ["LK"], "languages": ["si"], "label": "Sri Lankan"},
+    "nepali": {"countries": ["NP"], "languages": ["ne"], "label": "Nepali"},
+    # Single-country entries are generated so every chip the UI can emit has a
+    # matching intent. Hand-maintaining two lists (labels in server.py, intents
+    # here) let 15 chips ship with no parser entry and silently do nothing.
+    "thai": {"countries": ["TH"], "languages": ["th"], "label": "Thai"},
+    "indonesian": {"countries": ["ID"], "languages": ["id"], "label": "Indonesian"},
+    "filipino": {"countries": ["PH"], "languages": ["tl"], "label": "Filipino"},
+    "vietnamese": {"countries": ["VN"], "languages": ["vi"], "label": "Vietnamese"},
+    "greek": {"countries": ["GR"], "languages": ["el"], "label": "Greek"},
+    "swedish": {"countries": ["SE"], "languages": ["sv"], "label": "Swedish"},
+    "danish": {"countries": ["DK"], "languages": ["da"], "label": "Danish"},
+    "norwegian": {"countries": ["NO"], "languages": ["no", "nb"], "label": "Norwegian"},
+    "finnish": {"countries": ["FI"], "languages": ["fi"], "label": "Finnish"},
+    "dutch": {"countries": ["NL"], "languages": ["nl"], "label": "Dutch"},
+    "polish": {"countries": ["PL"], "languages": ["pl"], "label": "Polish"},
+    "ukrainian": {"countries": ["UA"], "languages": ["uk"], "label": "Ukrainian"},
+    "argentine": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
+    "argentinian": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
+    "colombian": {"countries": ["CO"], "languages": ["es"], "label": "Colombian"},
+    "chilean": {"countries": ["CL"], "languages": ["es"], "label": "Chilean"},
+    "east asian": {
+        "countries": ["JP", "CN", "HK", "TW", "KR"],
+        "languages": ["ja", "zh", "ko"],
+        "label": "East Asian",
+    },
+    "latin american": {
+        "countries": ["BR", "MX", "AR", "CO", "CL"],
+        "languages": ["pt", "es"],
+        "label": "Latin American",
+    },
+    "chinese": {
+        "countries": ["CN", "HK", "TW"],
+        # A country of origin rather than an ethnicity: HK and TW films are
+        # overwhelmingly Mandarin and are routinely excluded by a CN-only
+        # filter. Language is what the user actually sees, so it drives both.
+        "languages": ["zh", "yue"],
+        "label": "Chinese-language",
+    },
+    "portuguese": {"countries": ["BR", "PT"], "languages": ["pt"], "label": "Portuguese"},
+    "arabic": {
+        "countries": ["EG", "SA", "AE", "JO", "LB", "IQ"],
+        "languages": ["ar"], "label": "Arabic",
+    },
+    "south korean": {"countries": ["KR"], "languages": ["ko"], "label": "South Korean"},
+    "north korean": {"countries": ["KP"], "languages": ["ko"], "label": "North Korean"},
+    "indian": {
+        # `bn` stays here as well as on Bangladesh: much of Indian Bengali
+        # cinema predates the 1947 partition (the Apu Trilogy is Bengali
+        # language, Indian origin). Dropping it would lose those classics.
+        "countries": ["IN"],
+        "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu"],
+        "label": "Indian",
+    },
     "bollywood": {"countries": ["IN"], "languages": ["hi"],
                   "label": "Bollywood (Hindi)"},
     "kollywood": {"countries": ["IN"], "languages": ["te"], "label": "Telugu"},
@@ -117,8 +183,6 @@ ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
     "anime": {"countries": ["JP"], "languages": ["ja"], "label": "Japanese (anime)"},
     "chinese": {"countries": ["CN", "HK", "TW"], "languages": ["zh", "cn"],
                 "label": "Chinese"},
-    "bollywood hollywood": {"countries": ["IN"], "languages": ["hi", "ta", "te", "ml", "kn"],
-                            "label": "South Asian"},
     "nigerian": {"countries": ["NG"], "languages": ["yo"], "label": "Nigerian"},
     "spanish": {"countries": ["ES", "MX", "AR", "CO", "CL"], "languages": ["es"],
                 "label": "Spanish-language"},
@@ -519,6 +583,18 @@ class RecommenderService:
         # contributed, so a query could pull a film in and still rank it
         # mid-table.
 
+        # Bayesian prior must scale with the pool being ranked. A fixed
+        # min_votes=1000 suits a mainstream catalogue averaging ~820 votes, but
+        # Bangladeshi cinema averages 3.7 and peaks at 190 — every title was
+        # pinned to the 6.5 prior, so ranking degenerated to noise and 1-vote
+        # films tied classics. Derive the prior from the actual candidates:
+        # strong-attested regions are unaffected, small cinemas get a prior
+        # they can actually climb out of.
+        pool_votes = [int(c.get("vote_count") or 0) for c in candidates]
+        pool_votes.sort()
+        median_votes = pool_votes[len(pool_votes) // 2] if pool_votes else 0
+        prior_min_votes = max(10, min(1000, median_votes))
+
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
             if item.get("id") in exclude:
@@ -527,6 +603,7 @@ class RecommenderService:
             base_score = calculate_weighted_rating(
                 float(item.get("rating") or 6.0),
                 int(item.get("vote_count") or 100),
+                min_votes=prior_min_votes,
             )
 
             item_genres = set(_split_lower(item.get("genres")))
@@ -829,7 +906,19 @@ class RecommenderService:
         # Cold-start variety (opt-in): seeded shuffle that rotates every 10
         # minutes — repeat requests surface different picks, but the order is
         # stable within a bucket so pagination stays coherent while browsing.
-        if variety and len(diverse_candidates) > page_size:
+        #
+        # Suppressed when the request named an origin or genre. Those are
+        # targeted queries where the user asked for a specific shelf, and
+        # shuffling threw away the quality ordering: "bangladeshi movies"
+        # surfaced 2-vote films above The Clay Bird and Monpura because the
+        # shuffle, not the Bayesian score, decided the page.
+        targeted = bool(
+            origin_spec
+            or genre_spec["include"]
+            or genre_spec["exclude"]
+            or genre_spec.get("weight", 0) > 0
+        )
+        if variety and not targeted and len(diverse_candidates) > page_size:
             random.Random(int(time.time() // 600)).shuffle(diverse_candidates)
 
         # Stage 4: Pagination Slice

@@ -733,6 +733,21 @@ def test_origin_intent(build):
           parse_origin_intent("a funny film") is None)
     check("no query is not an origin request", parse_origin_intent(None) is None)
     check("korean maps to ko", "ko" in parse_origin_intent("korean drama")["languages"])
+
+    # Every phrase the "From" chips can emit must parse. The chip labels live
+    # in server.py and the intents here; when those two lists drifted, 15
+    # chips shipped with no parser entry and silently returned nothing.
+    chip_phrases = ["south asian", "east asian", "latin american", "korean",
+                    "indian", "japanese", "chinese", "spanish language",
+                    "french", "german", "italian", "portuguese", "nigerian",
+                    "iranian", "egyptian", "turkish", "russian", "bangladeshi",
+                    "pakistani", "sri lankan", "nepali", "thai", "indonesian",
+                    "filipino", "vietnamese", "greek", "swedish", "danish",
+                    "norwegian", "finnish", "dutch", "polish", "ukrainian",
+                    "argentine", "colombian", "chilean", "arabic"]
+    unparsed = [ph for ph in chip_phrases if parse_origin_intent(ph) is None]
+    check("every UI origin chip has a matching parser intent",
+          not unparsed, unparsed)
     # Longer, more specific phrases must win over shorter ones.
     check("the more specific phrase wins",
           "hi" in parse_origin_intent("bollywood")["languages"]
@@ -779,6 +794,75 @@ def test_origin_intent(build):
           sorted(x for x in langs if x))
 
 
+def test_small_cinema_ranking(build):
+    """Regression tests for ranking a small, low-vote national cinema.
+
+    All three bugs here were invisible on a mainstream catalogue: TMDB's
+    Bangladeshi titles average 3.7 votes against 822 across the whole
+    catalogue, so every threshold and prior tuned on Hollywood silently
+    flattened an entire national cinema.
+    """
+    print("\n[19] Small/low-vote cinema ranking")
+    db = build()
+    from services.recommender_service import calculate_weighted_rating
+
+    # A fixed 1000-vote prior pins a 190-vote film to the 6.5 global mean.
+    flat = calculate_weighted_rating(8.5, 190, min_votes=1000)
+    check("a fixed prior flattens even a well-reviewed small-cinema film",
+          abs(flat - 6.5) < 0.6, round(flat, 2))
+    # A pool-derived prior lets real signal through.
+    scaled = calculate_weighted_rating(8.5, 190, min_votes=20)
+    check("a pool-scaled prior preserves the rating signal",
+          scaled > 8.0, round(scaled, 2))
+
+    # The pool prior is derived from the candidates actually being ranked.
+    titles = [("Megher Kobita", 8.9, 17), ("Utshob", 8.9, 17), ("Onnoroni",
+              9.4, 11), ("Fagun Haway", 7.4, 33), ("Shankhonad", 7.7, 21)]
+    rows = []
+    for i, (t, r, v) in enumerate(titles):
+        rows.append({"media_type": "movie", "tmdb_id": 90000 + i, "title": t,
+                     "rating": r, "vote_count": v, "genres": "Drama",
+                     "origin_country": "BD", "original_language": "bn"})
+    db.upsert_catalogue_items(rows)
+
+    out = db.get_top_candidates(media_type="movie", origin_countries=["BD"],
+                               origin_languages=["bn"], exclude_watched=False,
+                               min_rating=0.0, limit=50)
+    names = [c["title"] for c in out]
+    check("all low-vote titles are still returned", len(names) == len(titles), names)
+    # Exact Bayesian order at a pool median of 17 votes puts the ~7.4-7.7
+    # titles last; the key property is that the pool-derived prior separates
+    # them at all. Under the old fixed prior of 1000 every one of these five
+    # collapsed into a 0.02-wide band, making order effectively arbitrary.
+    spread = {}
+    for t, rr, vv in titles:
+        spread[t] = (vv / (vv + 17)) * rr + (17 / (vv + 17)) * 6.5
+    worst_two = sorted(spread, key=lambda k: spread[k])[:2]
+    check("the two weakest titles rank last, not first",
+          set(worst_two) == set(names[-2:]), names)
+    best = max(spread, key=lambda k: spread[k])
+    check("the strongest title outranks the weakest",
+          names.index(best) < names.index(worst_two[0]), names)
+    check("vote counts are persisted, not left at 0",
+          all(c["vote_count"] > 0 for c in out),
+          [c["vote_count"] for c in out])
+
+    # Targeted queries must not be randomly reshuffled after scoring.
+    from services.recommender_service import RecommenderService
+    r = RecommenderService(db, shortlist_size=50, final_pool=50)
+    got = r.recommend(mood_id=8, media_type="movie", query="bangladeshi movies",
+                      profile="me", page=1, page_size=10, variety=True)
+    got_names = [i["title"] for i in got["items"]]
+    check("an origin query is not shuffled away from the quality order",
+          got_names[-1] in ("Fagun Haway", "Shankhonad"), got_names)
+    # Repeat calls must be stable: a targeted query is not reshuffled.
+    again = r.recommend(mood_id=8, media_type="movie", query="bangladeshi movies",
+                        profile="me", page=1, page_size=10, variety=True)
+    check("a targeted query returns a stable order across calls",
+          [i["title"] for i in again["items"]] == got_names,
+          [i["title"] for i in again["items"]])
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -808,6 +892,7 @@ def main():
         test_download_survives_refresh(build)
         test_resume_and_eta(build)
         test_origin_intent(build)
+        test_small_cinema_ranking(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

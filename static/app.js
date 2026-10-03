@@ -115,11 +115,21 @@ function switchTab(tab) {
 // with the genre chips — the recommender parses it out of the free-text query.
 // Selecting one writes the phrase the parser recognises into the query box,
 // so there is a single code path for "South Asian" whether typed or clicked.
+// Group chips use the group's own name (lower-cased) as the phrase; country
+// chips map to a phrase the recommender's parse_origin_intent() recognises.
+// Clicking therefore writes exactly what typing the request would.
 const ORIGIN_PHRASES = {
-  IN: 'south asian', JP: 'japanese', KR: 'korean', CN: 'chinese',
+  'South Asian': 'south asian', 'East Asian': 'east asian',
+  'Latin American': 'latin american', Korean: 'korean',
+  IN: 'indian', JP: 'japanese', KR: 'korean', CN: 'chinese',
   HK: 'chinese', TW: 'chinese', ES: 'spanish language', FR: 'french',
   DE: 'german', IT: 'italian', BR: 'portuguese', MX: 'spanish language',
-  NG: 'nigerian', IR: 'iranian', EG: 'egyptian', TR: 'turkish', RU: 'russian'
+  NG: 'nigerian', IR: 'iranian', EG: 'egyptian', TR: 'turkish', RU: 'russian',
+  BD: 'bangladeshi', PK: 'pakistani', LK: 'sri lankan', NP: 'nepali',
+  TH: 'thai', ID: 'indonesian', PH: 'filipino', VN: 'vietnamese',
+  GR: 'greek', SE: 'swedish', DK: 'danish', NO: 'norwegian', FI: 'finnish',
+  NL: 'dutch', PL: 'polish', UA: 'ukrainian', AR: 'argentine',
+  CO: 'colombian', CL: 'chilean', SA: 'arabic'
 };
 
 async function loadOrigins() {
@@ -132,7 +142,7 @@ async function loadOrigins() {
     if (!origins.length) { container.innerHTML = ''; return; }
     container.innerHTML = origins.map(o => `
       <button class="chip" data-origin-code="${o.code}"
-              onclick="setOrigin('${o.code}')"
+              onclick="setOrigin('${String(o.code).replace(/'/g, "&#39;")}')"
               title="${o.count} films from this region in your catalogue">
         ${o.name}<span class="chip-count">${o.count}</span>
       </button>`).join('');
@@ -172,7 +182,8 @@ function setOrigin(code) {
   }
   document.querySelectorAll('[data-origin-code]').forEach(b => b.classList.remove('active'));
   if (!already) {
-    const btn = document.querySelector(`[data-origin-code="${code}"]`);
+    // Group names contain spaces; CSS.escape keeps the selector valid.
+    const btn = document.querySelector(`[data-origin-code="${CSS.escape(code)}"]`);
     if (btn) btn.classList.add('active');
   }
 }

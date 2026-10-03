@@ -442,7 +442,12 @@ async def rename_profile(profile_id: int, req: RenameProfileRequest) -> Dict[str
 # Display names for the origin chips. The phrase written into the query must
 # be one the recommender's parse_origin_intent() recognises.
 ORIGIN_LABELS: Dict[str, str] = {
-    "IN": "🇮🇳 South Asian",
+    # Per-country, not per-region: a chip labelled "South Asian" that counts
+    # only Indian titles (1,432) while Bangladesh sits separately at 645 was
+    # actively misleading. Each country counts its own rows, so the chip
+    # number always matches the chip name. "South Asian" stays reachable as a
+    # phrase in the free-text query, where it correctly unions five countries.
+    "IN": "🇮🇳 Indian",
     "JP": "🇯🇵 Japanese",
     "KR": "🇰🇷 Korean",
     "CN": "🇨🇳 Chinese",
@@ -459,6 +464,37 @@ ORIGIN_LABELS: Dict[str, str] = {
     "EG": "🇪🇬 Egyptian",
     "TR": "🇹🇷 Turkish",
     "RU": "🇷🇺 Russian",
+    "BD": "🇧🇩 Bangladeshi",
+    "PK": "🇵🇰 Pakistani",
+    "LK": "🇱🇰 Sri Lankan",
+    "NP": "🇳🇵 Nepali",
+    "SA": "🇸🇦 Saudi",
+    "TH": "🇹🇭 Thai",
+    "ID": "🇮🇩 Indonesian",
+    "PH": "🇵🇭 Filipino",
+    "VN": "🇻🇳 Vietnamese",
+    "GR": "🇬🇷 Greek",
+    "SE": "🇸🇪 Swedish",
+    "DK": "🇩🇰 Danish",
+    "NO": "🇳🇴 Norwegian",
+    "FI": "🇫🇮 Finnish",
+    "NL": "🇳🇱 Dutch",
+    "PL": "🇵🇱 Polish",
+    "UA": "🇺🇦 Ukrainian",
+    "AR": "🇦🇷 Argentine",
+    "CO": "🇨🇴 Colombian",
+    "CL": "🇨🇱 Chilean",
+}
+
+
+# Multi-country groupings offered as a single chip. The phrase written into
+# the query is one parse_origin_intent() recognises, so these route through
+# exactly the same code path as typing them.
+ORIGIN_GROUPS: Dict[str, List[str]] = {
+    "South Asian": ["IN", "BD", "PK", "LK", "NP"],
+    "Korean": ["KR"],
+    "East Asian": ["JP", "CN", "HK", "TW", "KR"],
+    "Latin American": ["BR", "MX", "AR", "CO", "CL"],
 }
 
 
@@ -489,7 +525,16 @@ async def list_origins():
         for code in sorted(counts, key=lambda c: -counts[c])
         if counts[code] >= 20
     ]
-    return {"origins": labelled}
+
+    # Regional groupings first in the UI, counted from their member countries
+    # so the number on the chip is the number of films it will actually return.
+    groups = []
+    for label, members in ORIGIN_GROUPS.items():
+        total = sum(counts.get(c, 0) for c in members)
+        if total >= 20:
+            groups.append({"code": label, "name": label, "count": total,
+                           "countries": list(members)})
+    return {"origins": groups + labelled}
 
 
 @app.get("/api/ratings/genres")

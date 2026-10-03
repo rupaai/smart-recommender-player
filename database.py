@@ -542,12 +542,20 @@ class DatabaseManager:
                         """
                         UPDATE media_items
                         SET origin_country = COALESCE(NULLIF(media_items.origin_country, ''), ?),
-                            original_language = COALESCE(NULLIF(media_items.original_language, ''), ?)
+                            original_language = COALESCE(NULLIF(media_items.original_language, ''), ?),
+                            -- vote_count is a fact, not a fallback: an earlier
+                            -- import wrote it as 0 because the field was never
+                            -- mapped, and the COALESCE-NULLIF form above can
+                            -- only fill blanks, never correct a wrong 0. A
+                            -- genuine 0-vote title keeps its 0 only if TMDB
+                            -- still reports 0 on this pass.
+                            vote_count = COALESCE(NULLIF(?, 0), media_items.vote_count)
                         WHERE media_type = ? AND tmdb_id = ?;
                         """,
                         (
                             it.get("origin_country"),
                             it.get("original_language"),
+                            it.get("vote_count") or 0,
                             it["media_type"],
                             it["tmdb_id"],
                         ),
@@ -665,10 +673,15 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            order_expr = (
-                "(MAX(COALESCE(mi.vote_count, 0), 0) * 1.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + 1000.0)) * mi.rating"
-                " + (1000.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + 1000.0)) * 6.5"
-            )
+            # The Bayesian prior is scaled to the pool, not fixed at 1000.
+            # A fixed prior suited a mainstream catalogue (mean ~820 votes)
+            # but pins an entire small national cinema to the 6.5 prior:
+            # Bangladeshi titles average 3.7 votes and peak at 190, so SQL
+            # ordering degenerated to rowid order and the Python scorer then
+            # re-sorted a flat list. prior_votes is derived below from the
+            # votes actually present in this filtered result set.
+            prior_votes = 1000
+            prior_params = [float(prior_votes)] * 3
 
             query = f"""
                 SELECT mi.*,
@@ -772,8 +785,42 @@ class DatabaseManager:
                 if lang_clauses:
                     query += " AND (" + " OR ".join(lang_clauses) + ")"
 
-            query += f" GROUP BY mi.id ORDER BY {order_expr} DESC, mi.rating DESC, mi.release_year DESC"
+            # Recompute the Bayesian prior from the rows THIS query returns.
+            # The fixed 1000 suited a mainstream catalogue (mean ~820 votes) but
+            # pinned an entire small national cinema to the 6.5 prior:
+            # Bangladeshi titles average 3.7 votes and peak at 190, so SQL
+            # ordering degenerated to rowid order. Probe without ORDER BY —
+            # the pool median is an input to the ORDER BY that ranks it.
+            probe_cursor = conn.cursor()
+            probe_cursor.execute(
+                query.replace("SELECT mi.*,", "SELECT COALESCE(mi.vote_count, 0),", 1)
+                + " LIMIT 4000",
+                params,
+            )
+            pool_votes = sorted(int(r[0] or 0) for r in probe_cursor.fetchall())
+            if pool_votes:
+                median_votes = pool_votes[len(pool_votes) // 2]
+                prior_votes = max(10, min(1000, median_votes))
+                prior_params = [float(prior_votes)] * 3
+
+            # Tie-break on vote_count, NOT raw rating. Bayesian deliberately
+            # flattens an under-attested film toward the global mean, so a
+            # 2-vote 10.0 and a 35-vote 6.7 both land near 6.51 — and ordering
+            # by `rating` next then promoted the 2-vote film to the top of a
+            # "bangladeshi movies" list ahead of The Clay Bird and Monpura.
+            # Among equally-shrunk titles, the better-attested one wins.
+            # Rebuilt here so it captures the pool-derived prior_votes.
+            order_expr = (
+                "(MAX(COALESCE(mi.vote_count, 0), 0) * 1.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + ?)) * mi.rating"
+                " + (? / (MAX(COALESCE(mi.vote_count, 0), 0) + ?)) * 6.5"
+            )
+            query += (
+                f" GROUP BY mi.id ORDER BY {order_expr} DESC,"
+                " MAX(COALESCE(mi.vote_count, 0)) DESC, mi.rating DESC,"
+                " mi.release_year DESC"
+            )
             query += " LIMIT ?"
+            params.extend(prior_params)
             params.append(limit)
 
             cursor.execute(query, params)

@@ -117,7 +117,8 @@ def fetch_genre_maps(tm: TmdbClient) -> tuple:
 
 
 def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
-                  media_types: List[str], genre_maps: Dict[str, Dict[int, str]]) -> int:
+                  media_types: List[str], genre_maps: Dict[str, Dict[int, str]],
+                  vote_floor: int = 1) -> int:
     """Adds a region's catalogue from TMDB discover, stamping origin_country.
 
     TMDB filters `with_origin_country` correctly server-side, so this gets
@@ -132,7 +133,14 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
                 "with_origin_country": region,
                 "sort_by": "popularity.desc",
                 "include_adult": "false",
-                "vote_count.gte": "100" if media_type == "movie" else "50",
+                # Vote floor is per-region, not global. A fixed 100 imported
+                # 427 Indian films but only 6 Bengali ones, because TMDB's
+                # Bangladeshi titles carry far fewer votes than mainstream
+                # Bollywood (the Apu Trilogy has 512, most have <20). Small
+                # cinemas were being silently skipped. Floor 1 keeps every
+                # title; the recommender's Bayesian quality cut still handles
+                # low-confidence rows at request time.
+                "vote_count.gte": str(vote_floor),
                 "page": page,
             })
             if not data:
@@ -155,6 +163,10 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
                     "genres": ", ".join(genre_map[g] for g in gids if g in genre_map) or None,
                     "genre_ids": ", ".join(str(g) for g in gids) or None,
                     "rating": round(float(r.get("vote_average") or 0.0), 1),
+                    # Without this every imported row reads as vote_count=0, and
+                    # the recommender's Bayesian quality term has nothing to
+                    # shrink against — so a 1-vote film ties a classic.
+                    "vote_count": int(r.get("vote_count") or 0),
                     "runtime": None,
                     "original_language": r.get("original_language"),
                     "origin_country": region,
@@ -233,6 +245,8 @@ def main() -> None:
     parser.add_argument("--pages", type=int, default=10,
                         help="Discover pages per region per media type (20 films each)")
     parser.add_argument("--media-types", default="movie,tv")
+    parser.add_argument("--vote-floor", type=int, default=1,
+                        help="Minimum TMDB votes per title (default 1: keeps small cinemas)")
     parser.add_argument("--fix-labels", action="store_true")
     parser.add_argument("--region-stats", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -254,7 +268,8 @@ def main() -> None:
         regions = [args.import_region] if isinstance(args.import_region, str) else args.import_region
         for region in regions:
             print(f"[import] {REGION_NAMES.get(region, region)} ({region})", flush=True)
-            n = import_region(tm, db, region.upper(), args.pages, media_types, genre_maps)
+            n = import_region(tm, db, region.upper(), args.pages, media_types,
+                              genre_maps, vote_floor=args.vote_floor)
             print(f"[import] {region}: {n} new titles", flush=True)
         region_stats(db)
 
