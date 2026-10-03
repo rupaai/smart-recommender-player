@@ -42,6 +42,7 @@ from services.recommender_service import (  # noqa: E402  (shared scoring helper
     _split_lower,
     calculate_weighted_rating,
     parse_origin_intent,
+    parse_query_intent,
     TV_GENRE_ALIASES,
 )
 
@@ -587,6 +588,17 @@ def route_recommend(
     if parse_origin_intent(kwargs.get("query")):
         result = _legacy()
         result["origin_routed_to"] = "legacy"
+        return result
+
+    # Same reasoning for a request about a film's IDEAS. The predictor knows
+    # nothing of concept, theme or subtext — it ranks by similarity to your
+    # watch history — so "something like They Live, chill but with a deep
+    # concept" returned a Mario cartoon and a Taylor Swift concert film. Any
+    # request that names a concept the legacy theme layer can evaluate goes to
+    # legacy, which matches the actual premise of each film.
+    if parse_query_intent(kwargs.get("query")).get("concept_requested"):
+        result = _legacy()
+        result["concept_routed_to"] = "legacy"
         return result
 
     if mode == "fallback" and not generative_retriever.is_ready():

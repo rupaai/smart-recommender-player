@@ -1371,3 +1371,13 @@ body {
   color: var(--text-muted);
   font-style: italic;
 }
+
+
+/* Premise/theme match on an idea-led request. Distinct from the co-view
+   badges: this explains why the film answers the QUESTION, not who watched it. */
+.badge-theme {
+  background: rgba(139, 92, 246, 0.16);
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  font-weight: 500;
+}

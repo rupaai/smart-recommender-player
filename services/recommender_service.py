@@ -199,12 +199,17 @@ ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
 }
 
 QUERY_INTENT: Dict[str, Dict[str, Any]] = {
-    "relaxing": {"genres": ["Animation", "Family", "Comedy", "Romance", "Music"],
-                 "exclude_genres": ["Horror", "Thriller", "War", "Crime"],
-                 "weight": 0.35},
-    "chill": {"genres": ["Animation", "Family", "Comedy", "Romance", "Music"],
-              "exclude_genres": ["Horror", "Thriller", "War", "Crime"],
-              "weight": 0.35},
+    "relaxing": {"genres": ["Comedy", "Drama", "Romance", "Science Fiction"],
+                 "exclude_genres": ["Horror", "War"],
+                 "weight": 0.25},
+    # "Chill" is a TONE, not a genre. Mapping it to Animation/Family/Music made
+    # every chill request a children's-film request — which is how a request
+    # for a satirical sci-fi about covert alien control (They Live) returned a
+    # Mario cartoon. Low weight on purpose: it nudges, and only when no
+    # stronger genre signal is present.
+    "chill": {"genres": ["Comedy", "Drama", "Science Fiction", "Romance"],
+              "exclude_genres": ["Horror", "War"],
+              "weight": 0.2},
     "cozy": {"genres": ["Family", "Animation", "Romance", "Comedy"],
              "exclude_genres": ["Horror", "Thriller", "Crime"], "weight": 0.3},
     "funny": {"genres": ["Comedy"], "weight": 0.3},
@@ -215,6 +220,103 @@ QUERY_INTENT: Dict[str, Dict[str, Any]] = {
     "thoughtful": {"genres": ["Drama", "Science Fiction"], "weight": 0.3},
     "smart": {"genres": ["Science Fiction", "Mystery"], "weight": 0.25},
 }
+
+# ===========================================================================
+# THEMATIC CONCEPTS
+# ===========================================================================
+# Genres describe WHAT a film is; the thing this recommender was missing is
+# what a film is ABOUT. "We liked that it had a great concept to interpret"
+# carries no genre at all, so it matched nothing and the request fell back to
+# whatever the nearest mood chip allowed — which is how a request for a
+# satirical sci-fi about hidden puppetmasters returned a Mario cartoon.
+#
+# Each theme lists the concrete nouns that signal it in a plot synopsis.
+# Matching is deliberately factual (a disguised alien, a hidden master mind),
+# not vibes: a theme must be earned by the film's actual subject matter.
+THEMES: Dict[str, Dict[str, Any]] = {
+    "hidden_puppeteer": {
+        "label": "hidden controllers among us",
+        # The They Live premise: an unseen force covertly directing people.
+        # "alien" alone is too broad to carry meaning, so it is paired with the
+        # masquerade that makes the premise work.
+        "terms": ["aliens are", "alien disguised", "shape-shifting",
+                  "shapeshifting", "infiltrat", "masquerading as",
+                  "masquerade", "lulling the public", "secret society",
+                  "illuminati", "shadow government", "mind control",
+                  "brainwash", "hypnot", "puppeteer", "covertly control",
+                  "secretly control", "among us"],
+        "genres": ["Science Fiction", "Thriller"],
+    },
+    "exploitation": {
+        "label": "people used by others",
+        # Deliberately narrow. Bare "control" and "corporate" match almost any
+        # synopsis — a car commercial and a superhero film both contain them —
+        # which is how Spider-Man and Ford v Ferrari scored as "people used by
+        # others". These are phrases where exploitation is the actual subject.
+        "terms": ["exploit", "manipulat", "puppet master", "puppeteer",
+                  "brainwash", "mind control", "used by", "enslave",
+                  "exploitation", "parasite", "feeds on", "predatory",
+                  "coerc", "blackmail", "pulling their strings",
+                  "who pull the strings", "on the payroll",
+                  "clandestine", "black ops", "corporate espionage"],
+        "genres": ["Science Fiction", "Thriller", "Drama"],
+    },
+    "identity": {
+        "label": "questions of identity and self",
+        "terms": ["identity", "who am i", "imposter", "clone", "cloning",
+                  "double", "look-alike", "replica", "android", "cyborg",
+                  "memory", "remember", "simulate", "virtual reality"],
+        "genres": ["Science Fiction", "Drama"],
+    },
+    "surveillance": {
+        "label": "watched and watched back",
+        "terms": ["surveill", "watched", "monitor", "big brother",
+                  "camera", "tracking", "spied", "observed", "pods"],
+        "genres": ["Science Fiction", "Thriller"],
+    },
+    "satire": {
+        "label": "satire of everyday life",
+        "terms": ["satir", "lampoon", "mock", "parody", "ridicule",
+                  "consumerism", "conformity", "middle class",
+                  "bureaucracy", "corporate"],
+        "genres": ["Comedy", "Science Fiction"],
+    },
+    "philosophical": {
+        "label": "big ideas, open to interpretation",
+        "terms": ["meaning", "existence", "reality", "question",
+                  "dilemma", "philosoph", "meaning of", "identity of",
+                  "mortality", "free will", "consciousness", "paradox"],
+        "genres": ["Science Fiction", "Drama"],
+    },
+}
+
+# Phrases in a request that mean "I want a concept worth thinking about".
+# Kept separate from QUERY_INTENT because these carry no genre of their own —
+# they are a QUALITY bar, applied across whatever genres survive the rest of
+# the request. This is what "great concept up to interpret" matched on.
+CONCEPT_REQUEST_TERMS = frozenset({
+    "concept", "concepts", "conceptual", "interpret", "interpretation",
+    "interpretable", "intellectual", "thoughtprovoking", "smart",
+    "clever", "subtext", "metaphor", "metaphorical", "symbolic",
+    "mindbending", "philosophical", "meaningful", "bigidea", "ideas",
+    "premise", "satire", "satirical", "allegory", "allegorical",
+})
+
+# Genres a concept-driven request is allowed to draw from. Deliberately wide:
+# when the user is asking for an idea rather than a genre, restricting to
+# whatever adjectives happened to appear in the sentence loses the answer.
+THEMES_GENRES_FOR_CONCEPT = frozenset({
+    "Science Fiction", "Thriller", "Drama", "Comedy", "Mystery", "Action",
+    "Horror", "Crime",
+})
+
+# Genres that are structurally incompatible with "a concept worth
+# interpreting". Not a quality judgement on the film — a mismatch with the
+# request. A Mario cartoon cannot satisfy a request for a satirical concept,
+# however good it is.
+CONCEPT_INCOMPATIBLE_GENRES = frozenset({
+    "Family", "Animation", "Music", "Musical",
+})
 
 # Words too generic to carry signal — dropped before any matching so they
 # don't produce spurious overview hits.
@@ -347,6 +449,12 @@ def parse_origin_intent(query: Optional[str]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _theme_mentioned(theme: str, tokens: List[str]) -> bool:
+    """True when the request itself names a theme (not just its genre)."""
+    haystack = " ".join(tokens)
+    return any(t in haystack for t in THEMES[theme]["terms"])
+
+
 def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
     """Turn a free-text prompt into genre include/exclude signals + weights.
 
@@ -365,6 +473,7 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "include_genres": [], "exclude_genres": [],
         "boost_genres": [], "weight": 0.0,
+        "concept_requested": False, "themes": [],
     }
     if not query or not query.strip():
         return result
@@ -401,10 +510,38 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
         if not negated:
             result["weight"] += intent.get("weight", 0.2)
 
+    # "A great concept to interpret" is a QUALITY bar, not a genre. Detected
+    # separately so it can veto Family/Animation/Music and pull in themes,
+    # rather than silently resolving to whichever mood genres were nearby.
+    concept_requested = any(w in CONCEPT_REQUEST_TERMS for w in tokens)
+    if concept_requested:
+        matched_terms.append("concept")
+
+    # A request that asks for a CONCEPT must not also be restricted to the
+    # genres of the words that surround it. "Chill, a bit funny, but a great
+    # concept like They Live" contains "funny", which pulls in Comedy — and
+    # They Live is Sci-Fi/Action/Thriller with no Comedy at all, so the very
+    # film the user named was hard-excluded by their own description of it.
+    # Concept-bearing requests widen rather than narrow: the concept signal
+    # discriminates on premise, so a fixed genre whitelist only gets in the way.
+    if concept_requested:
+        for g in THEMES_GENRES_FOR_CONCEPT:
+            seen_include.add(g)
+
+    # A genre cannot be both required and forbidden. The concept widening list
+    # is a permissive safety net, not a demand, so when it collides with an
+    # explicit exclusion the EXCLUSION wins and the genre leaves the include
+    # list. Losing "Horror" from the pool is correct; the user's "chill, not
+    # horror" is a real constraint and must not be silently discarded.
+    if concept_requested:
+        seen_include -= seen_exclude
+
     result["include_genres"] = sorted(seen_include)
     result["exclude_genres"] = sorted(seen_exclude)
     result["weight"] = round(min(result["weight"], 1.0), 2)
     result["matched_terms"] = matched_terms
+    result["concept_requested"] = concept_requested
+    result["themes"] = [name for name in THEMES if _theme_mentioned(name, tokens)]
 
     # Content words worth matching against overviews/titles: intent words are
     # already handled structurally, and stopwords carry no signal.
@@ -456,6 +593,8 @@ def resolve_effective_genres(
         "weight": intent["weight"],
         "content_words": intent.get("content_words", []),
         "matched_terms": intent.get("matched_terms", []),
+        "concept_requested": intent.get("concept_requested", False),
+        "themes": intent.get("themes", []),
     }
 
 
@@ -530,6 +669,7 @@ class RecommenderService:
         content_words: Optional[List[str]] = None,
         intent_boost_genres: Optional[Set[str]] = None,
         intent_bonus: float = 0.0,
+        concept_requested: bool = False,
     ) -> List[Dict[str, Any]]:
         """Profile-aware scoring: Bayesian quality + blended taste + co-view tier.
 
@@ -597,6 +737,7 @@ class RecommenderService:
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
+            theme_boost = 0.0
             if item.get("id") in exclude:
                 continue
 
@@ -626,7 +767,35 @@ class RecommenderService:
                 matches = sum(1 for w in query_words if len(w) > 3 and w in item_text)
                 relevance_boost = min(matches * 0.3, 2.0)
 
-            final_score = base_score + taste_bonus + tier_boost + relevance_boost
+                relevance_boost = min(matches * 0.3, 2.0)
+
+            # Thematic signal. Genres say what a film IS; when the request is
+            # about a concept ("hidden puppetmasters among us"), only the plot
+            # can answer it. Scored against the synopsis rather than the genre
+            # list, so a satirical Sci-Fi about covert alien control outranks a
+            # Sci-Fi comedy about nothing in particular.
+            if concept_requested:
+                item_text_lower = (
+                    f"{item.get('title')} {item.get('overview')}"
+                ).lower()
+                matched_themes = [
+                    name for name in THEMES
+                    if any(t in item_text_lower for t in THEMES[name]["terms"])
+                ]
+                if matched_themes:
+                    theme_boost += min(0.6 + 0.35 * (len(matched_themes) - 1), 1.6)
+                    item["matched_themes"] = [
+                        THEMES[n]["label"] for n in matched_themes
+                    ]
+                # A request for an interpretable concept cannot be satisfied by
+                # a family cartoon, however well rated. Soft penalty rather than
+                # a hard filter: the user asked for "chill AND funny AND deep",
+                # not for a genre whitelist, and a film should be able to
+                # surprise us.
+                if item_genres & CONCEPT_INCOMPATIBLE_GENRES:
+                    theme_boost -= 1.2
+
+            final_score = base_score + taste_bonus + tier_boost + relevance_boost + theme_boost
 
             item["recommendation_score"] = round(final_score, 2)
             item["base_weighted_rating"] = round(base_score, 2)
@@ -656,6 +825,7 @@ class RecommenderService:
         candidates: List[Dict[str, Any]],
         taste_profile: Dict[str, Any],
         query: Optional[str] = None,
+        concept_requested: bool = False,
     ) -> List[Dict[str, Any]]:
         """Multi-faceted scoring combining Bayesian rating, taste profile, and vector similarity."""
         preferred_genres = taste_profile.get("preferred_genres", {})
@@ -699,7 +869,26 @@ class RecommenderService:
                 matches = sum(1 for w in q_words if len(w) > 3 and w in item_text)
                 relevance_boost = min(matches * 0.3, 2.0)
 
-            final_score = base_score + taste_bonus + relevance_boost
+            # Same concept layer as the profile-aware path. A cold-start user
+            # (no ratings yet) previously fell to this loop and got concept-
+            # blind results, so the very first search of a new account could
+            # return a cartoon for a request about hidden controllers.
+            theme_boost = 0.0
+            if concept_requested:
+                item_text_lower = (
+                    f"{item.get('title')} {item.get('overview')}"
+                ).lower()
+                matched_themes = [
+                    n for n in THEMES
+                    if any(t in item_text_lower for t in THEMES[n]["terms"])
+                ]
+                if matched_themes:
+                    theme_boost += min(0.6 + 0.35 * (len(matched_themes) - 1), 1.6)
+                    item["matched_themes"] = [THEMES[n]["label"] for n in matched_themes]
+                if item_genres & CONCEPT_INCOMPATIBLE_GENRES:
+                    theme_boost -= 1.2
+
+            final_score = base_score + taste_bonus + relevance_boost + theme_boost
 
             item["recommendation_score"] = round(final_score, 2)
             item["base_weighted_rating"] = round(base_score, 2)
@@ -780,6 +969,20 @@ class RecommenderService:
         excluded_genres = genre_spec["exclude"]
         intent_weight = genre_spec["weight"]
         content_words = genre_spec["content_words"]
+        concept_requested = genre_spec.get("concept_requested", False)
+        # Premise terms for the SQL shortlist. Only the concrete nouns from
+        # THEMES — never the abstract request words ("concept", "interpret"),
+        # which appear in no synopsis and would match nothing while diluting
+        # the terms that do.
+        concept_terms: List[str] = []
+        if concept_requested:
+            seen_terms: Set[str] = set()
+            for theme in THEMES:
+                for term in THEMES[theme]["terms"]:
+                    key = term.strip().lower()
+                    if key and key not in seen_terms:
+                        seen_terms.add(key)
+                        concept_terms.append(key)
 
         # Origin-of-cinema requests ("South Asian movies") are places, not
         # genres. Filter on country AND language so TMDB's origin mislabels
@@ -831,8 +1034,34 @@ class RecommenderService:
             min_rating=min_rating,
             era=era_preference,
             duration=duration_preference if media_type == "movie" else None,
+            concept_terms=concept_terms,
             limit=self.shortlist_size,
         )
+
+        # A concept request must not be decided by the quality cut alone. SQL
+        # returns the top `shortlist_size` by Bayesian rating, and a theme-
+        # relevant film rated 7.3 loses to 250 better-rated titles that have
+        # nothing to do with the request — They Live was filtered out of its
+        # own shortlist by exactly this. For concept requests the shortlist is
+        # widened so premise matching actually gets a chance to rank them.
+        if concept_requested:
+            extra = self.db.get_top_candidates(
+                media_type=media_type,
+                genres=genres if genres else None,
+                exclude_genres=excluded_genres or None,
+                origin_countries=origin_countries,
+                origin_languages=origin_languages,
+                exclude_watched=sql_exclude_watched,
+                min_rating=min_rating,
+                era=era_preference,
+                duration=duration_preference if media_type == "movie" else None,
+                concept_terms=concept_terms,
+                limit=self.shortlist_size * 2,
+            )
+            seen_ids = {c.get("id") for c in candidates}
+            candidates = list(candidates) + [
+                c for c in extra if c.get("id") not in seen_ids
+            ]
 
         if not candidates:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
@@ -887,10 +1116,14 @@ class RecommenderService:
                     for g in (genre_spec.get("boost") or []) if g and g.strip()
                 },
                 intent_bonus=0.5 * intent_weight,
+                concept_requested=concept_requested,
             )
         else:
             taste = self.db.get_user_taste_profile(min_rating=7.0)
-            ranked = self.rank_candidates(candidates, taste, query=query)
+            ranked = self.rank_candidates(
+                candidates, taste, query=query,
+                concept_requested=concept_requested,
+            )
             for item in ranked:
                 item["co_view_tier"] = "C"
                 item["tier_boost"] = 0.0

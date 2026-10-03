@@ -657,6 +657,7 @@ class DatabaseManager:
         era: Optional[str] = None,
         duration: Optional[str] = None,
         min_votes: int = 0,
+        concept_terms: Optional[List[str]] = None,
         limit: int = 250,
     ) -> List[Dict[str, Any]]:
         """Quality-cut candidate funnel for the recommender (large catalogues).
@@ -814,6 +815,27 @@ class DatabaseManager:
                 "(MAX(COALESCE(mi.vote_count, 0), 0) * 1.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + ?)) * mi.rating"
                 " + (? / (MAX(COALESCE(mi.vote_count, 0), 0) + ?)) * 6.5"
             )
+
+            # Premise relevance has to be part of the ORDER BY, not a bonus
+            # applied after the cut. A concept request ranks by rating, so a
+            # premise-relevant film at 7.3 sits ~1000th and is never scored at
+            # all (They Live was excluded from its own shortlist this way).
+            # Promoted into the expression so premise match can lift a title
+            # above the quality cut when the user asked for an idea.
+            concept_params: List[Any] = []
+            if concept_terms:
+                boosts: List[str] = []
+                for term in concept_terms:
+                    if not term or len(term) < 3:
+                        continue
+                    boosts.append(
+                        "(CASE WHEN LOWER(COALESCE(mi.title, '')) LIKE ? "
+                        "OR LOWER(COALESCE(mi.overview, '')) LIKE ? THEN 1 ELSE 0 END)"
+                    )
+                    like = f"%{term.lower()}%"
+                    concept_params.extend([like, like])
+                if boosts:
+                    order_expr += " + 3.0 * (" + " + ".join(boosts) + ")"
             query += (
                 f" GROUP BY mi.id ORDER BY {order_expr} DESC,"
                 " MAX(COALESCE(mi.vote_count, 0)) DESC, mi.rating DESC,"
@@ -821,6 +843,7 @@ class DatabaseManager:
             )
             query += " LIMIT ?"
             params.extend(prior_params)
+            params.extend(concept_params)
             params.append(limit)
 
             cursor.execute(query, params)

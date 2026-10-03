@@ -863,6 +863,107 @@ def test_small_cinema_ranking(build):
           [i["title"] for i in again["items"]])
 
 
+def test_concept_intent(build):
+    """A request about an IDEA, not a genre.
+
+    "Something like They Live — chill, a bit funny, but a great concept to
+    interpret" returned a Mario cartoon. Three separate causes: the request
+    had no concept signal at all, "chill" mapped to Family/Animation/Music,
+    and the generative engine (which knows nothing of premise) served it.
+    """
+    print("\n[20] Concept-driven requests")
+    db = build()
+    from services.recommender_service import (
+        CONCEPT_INCOMPATIBLE_GENRES, THEMES, parse_query_intent,
+        resolve_effective_genres,
+    )
+    Q = ('we would like to watch something cool like "they live". it was chill '
+         'but it was such a great concept up to interpret, it was funny but it '
+         'showed those robotic people among us, like people who use others')
+
+    intent = parse_query_intent(Q)
+    check("a 'great concept to interpret' request is detected",
+          intent["concept_requested"] is True, intent["matched_terms"])
+    check("a plain funny request is not treated as a concept request",
+          parse_query_intent("something funny")["concept_requested"] is False)
+    check("no query is not a concept request",
+          parse_query_intent(None)["concept_requested"] is False)
+
+    # The concept widening must not resurrect a genre the user excluded.
+    spec = resolve_effective_genres(
+        ["Animation", "Family", "Comedy", "Romance", "Music"], None, Q)
+    check("no genre is both required and forbidden",
+          not (set(spec["include"]) & set(spec["exclude"])),
+          (spec["include"], spec["exclude"]))
+    check("an explicit exclusion survives the concept widening",
+          "Horror" in spec["exclude"], spec["exclude"])
+    check("a concept request can reach sci-fi (where They Live lives)",
+          "Science Fiction" in spec["include"], spec["include"])
+
+    # Theme terms are premise phrases, not genre words.
+    text = ("aliens are systematically gaining control of the Earth by "
+            "masquerading as humans")
+    hits = {n for n, s in THEMES.items() if any(t in text for t in s["terms"])}
+    check("a covert-alien-control premise is recognised",
+          "hidden_puppeteer" in hits, hits)
+    check("a generic business premise does not match 'people used by others'",
+          "exploitation" not in {
+              n for n, s in THEMES.items()
+              if any(t in "a ceo fights for control of his company"
+                     for t in s["terms"])})
+
+    # End to end: a concept request must not return a family cartoon.
+    rows = []
+    fixtures = [
+        ("Deep Alien Control", "A defence lawyer discovers aliens are "
+         "masquerading as humans and lulling the public into submission.",
+         "Science Fiction, Thriller", 7.3, 3662),
+        ("Family Cartoon Adventure", "A plumber rescues a princess from an "
+         "evil turtle in a bright cartoon world.", "Animation, Family, Comedy",
+         7.6, 3000),
+        # Rated equal to the premise film on purpose: the only thing that can
+        # separate them is the concept signal. A higher rating here would make
+        # the test pass for the wrong reason.
+        ("Corporate Drama", "A ruthless executive fights for control of his "
+         "company.", "Drama", 7.3, 2500),
+    ]
+    for i, (t, ov, g, rt, vc) in enumerate(fixtures):
+        rows.append({"media_type": "movie", "tmdb_id": 91000 + i, "title": t,
+                     "overview": ov, "genres": g, "rating": rt,
+                     "vote_count": vc})
+    db.upsert_catalogue_items(rows)
+
+    # Isolated catalogue: the shared fixture already holds Interstellar, Se7en
+    # and Inception, which are excellent films and would outrank anything added
+    # here. This test is about premise ranking, not about those three.
+    import tempfile
+    from services.recommender_service import RecommenderService
+    solo = DatabaseManager(tempfile.mktemp(suffix=".db"))
+    solo.upsert_catalogue_items(rows)
+    r = RecommenderService(solo, shortlist_size=50, final_pool=50)
+    out = r.recommend(mood_id=8, media_type="movie", query=Q, profile="me",
+                      page=1, page_size=10)
+    titles = [i["title"] for i in out["items"]]
+    check("the premise-relevant film outranks the family cartoon",
+          titles and titles[0] == "Deep Alien Control", titles)
+    # The cartoon is rated HIGHER than the premise film, so the only reason it
+    # can be demoted is the concept layer. That is the regression this guards.
+    check("a higher-rated family cartoon is still demoted for a concept request",
+          titles.index("Deep Alien Control") < titles.index("Family Cartoon Adventure"),
+          titles)
+    themed = [i for i in out["items"] if i.get("matched_themes")]
+    check("matched themes are reported back to the UI",
+          any("hidden controllers among us" in (i.get("matched_themes") or [])
+              for i in themed),
+          [i.get("matched_themes") for i in themed])
+
+    # The generative engine cannot evaluate premise, so it must not serve these.
+    from services.generative_retriever import route_recommend
+    served = route_recommend(r, None, "generative_only", query=Q)
+    check("a concept request is routed away from the generative engine",
+          served.get("concept_routed_to") == "legacy", served.get("engine"))
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -893,6 +994,7 @@ def main():
         test_resume_and_eta(build)
         test_origin_intent(build)
         test_small_cinema_ranking(build)
+        test_concept_intent(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

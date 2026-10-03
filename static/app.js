@@ -462,6 +462,11 @@ function buildMovieCard(m, engine) {
     const combinedBadge = (m.combined_score && tier === 'A')
       ? `<span class="badge badge-coview-score" title="Your combined score for this film">Together ★ ${m.combined_score}</span>` : '';
     const queryBoost = m.query_boost > 0 ? `<span class="badge badge-query">+${m.query_boost} Match</span>` : '';
+    // Why this film matched an idea-led request. Without it the concept layer
+    // is invisible: the user asked for "a great concept" and got a list with
+    // no explanation of which of them actually had one.
+    const themeBadge = (m.matched_themes && m.matched_themes.length)
+      ? `<span class="badge badge-theme" title="Themes matched from the film's premise">🧠 ${escapeHtml(m.matched_themes.join(' · '))}</span>` : '';
     const runtimeStr = m.runtime ? `<span class="badge badge-runtime">⏱ ${m.runtime}m</span>` : '';
     const engineBadge = engine === 'generative'
       ? '<span class="engine-badge badge-generative">🧠 Learning Your Taste</span>'
@@ -490,6 +495,7 @@ function buildMovieCard(m, engine) {
             ${engineBadge}
             ${tasteBonus}
             ${tierBadge}
+            ${themeBadge}
             ${combinedBadge}
             ${queryBoost}
             ${runtimeStr}
