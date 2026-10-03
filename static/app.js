@@ -20,7 +20,14 @@ const state = {
   lastDirectResults: [],
   activeDownloads: {},     // movieId -> status dict
   pollingIntervals: {},    // movieId -> intervalId
-  moodsData: []            // loaded from /api/moods
+  moodsData: [],           // loaded from /api/moods
+  // --- Rate Together (multi-profile co-view ratings) ---
+  rateProfileId: 1,
+  rateMediaType: 'movie',
+  rateProfiles: [],
+  rateQueue: [],
+  rateIndex: 0,
+  rateCursor: 0            // how many items fetched so far (for "Load more")
 };
 
 // Initialize app on DOM ready
@@ -71,14 +78,19 @@ function switchTab(tab) {
 
   document.getElementById('tabDiscover').classList.toggle('active', tab === 'discover');
   document.getElementById('tabDirect').classList.toggle('active', tab === 'direct');
+  document.getElementById('tabRate').classList.toggle('active', tab === 'rate');
   document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
 
   document.getElementById('discoverView').style.display = tab === 'discover' ? 'block' : 'none';
   document.getElementById('directView').style.display = tab === 'direct' ? 'block' : 'none';
+  document.getElementById('rateView').style.display = tab === 'rate' ? 'block' : 'none';
   document.getElementById('historyView').style.display = tab === 'history' ? 'block' : 'none';
 
   if (tab === 'history') {
     loadHistory();
+  }
+  if (tab === 'rate') {
+    initRateTab();
   }
 }
 
@@ -1089,3 +1101,278 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+// ===========================================================================
+// RATE TOGETHER — multi-profile co-view ratings
+// ===========================================================================
+// One card at a time. Each person rates it, or says "we haven't seen it", or
+// skips. This is the only thing that gives the recommender real signal: taste
+// profiles are only as good as the ratings behind them, and `not_seen` is what
+// lets the recommender tell "he saw it, you haven't" apart from "neither of us
+// has seen it".
+
+// Catalogue titles and overviews are interpolated into innerHTML throughout
+// this module, so anything user- or TMDB-supplied has to be escaped.
+function escapeHtml(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const RATE_PAGE = 25;
+
+function initRateTab() {
+  if (state.rateProfiles.length === 0) {
+    loadProfiles();
+  } else {
+    renderRateProfiles();
+    renderRateCard();
+  }
+}
+
+async function loadProfiles() {
+  try {
+    const res = await fetch('/api/profiles');
+    state.rateProfiles = await res.json();
+    renderRateProfiles();
+    await loadRatingQueue(true);
+    loadCoViewSummary();
+  } catch (err) {
+    console.error('Failed to load profiles:', err);
+    document.getElementById('rateProgress').innerText = 'Could not load profiles.';
+  }
+}
+
+function renderRateProfiles() {
+  const container = document.getElementById('rateProfileSwitch');
+  if (!container) return;
+  container.innerHTML = state.rateProfiles.map(p => `
+    <button class="chip ${p.id === state.rateProfileId ? 'active' : ''}"
+            onclick="setRateProfile(${p.id})"
+            title="${p.rating_count} rated · ${p.not_seen_count || 0} unseen">
+      ${escapeHtml(p.name)}
+      <span class="rate-profile-count">${p.rating_count}</span>
+    </button>
+  `).join('');
+}
+
+function setRateProfile(profileId) {
+  state.rateProfileId = profileId;
+  state.rateQueue = [];
+  state.rateIndex = 0;
+  renderRateProfiles();
+  loadRatingQueue(true);
+}
+
+function setRateMediaType(type) {
+  if (state.rateMediaType === type) return;
+  state.rateMediaType = type;
+  document.getElementById('rateTypeMovie').classList.toggle('active', type === 'movie');
+  document.getElementById('rateTypeTv').classList.toggle('active', type === 'tv');
+  state.rateQueue = [];
+  state.rateIndex = 0;
+  loadRatingQueue(true);
+}
+
+async function loadRatingQueue(reset) {
+  if (reset) {
+    state.rateQueue = [];
+    state.rateIndex = 0;
+    state.rateCursor = 0;
+  }
+  try {
+    const limit = state.rateCursor === 0 ? RATE_PAGE : RATE_PAGE * 2;
+    const res = await fetch(
+      `/api/ratings/queue?profile_id=${state.rateProfileId}&media_type=${state.rateMediaType}&limit=${limit}`
+    );
+    const data = await res.json();
+    state.rateQueue = data.items || [];
+    state.rateCursor = state.rateQueue.length;
+    state.rateIndex = 0;
+    renderRateCard();
+    loadCoViewSummary();
+  } catch (err) {
+    console.error('Failed to load rating queue:', err);
+    document.getElementById('rateProgress').innerText = 'Could not load the queue.';
+  }
+}
+
+function resetRatingQueue() {
+  loadRatingQueue(true);
+}
+
+function currentRateItem() {
+  return state.rateQueue[state.rateIndex] || null;
+}
+
+function renderRateCard() {
+  const card = document.getElementById('rateCard');
+  const empty = document.getElementById('rateEmpty');
+  const item = currentRateItem();
+
+  if (!item) {
+    card.style.display = 'none';
+    empty.style.display = 'block';
+    const total = state.rateCursor;
+    document.getElementById('rateProgress').innerText =
+      total > 0 ? `All ${total} rated.` : 'Nothing left to rate here.';
+    return;
+  }
+  card.style.display = 'block';
+  empty.style.display = 'none';
+
+  const done = state.rateIndex;
+  const total = state.rateQueue.length;
+  document.getElementById('rateProgress').innerText =
+    `${done + 1} of ${total} · ${state.rateMediaType === 'tv' ? 'TV Shows' : 'Movies'}`;
+
+  const poster = item.poster_url
+    ? `<img src="${item.poster_url}" class="rate-poster" alt="${escapeHtml(item.title)} poster"
+          onerror="this.style.display='none'">`
+    : '<div class="rate-poster rate-poster-placeholder">🎬</div>';
+
+  const other = (item.co_view?.verdicts || []).find(v => v.profile_id !== state.rateProfileId);
+  let otherLine = '';
+  if (other) {
+    if (other.status === 'not_seen') {
+      otherLine = `<span class="rate-other-pill">${escapeHtml(other.name)} hasn't seen this</span>`;
+    } else if (other.user_rating) {
+      otherLine = `<span class="rate-other-pill">${escapeHtml(other.name)} rated ${other.user_rating}/10</span>`;
+    }
+  }
+  const inLibrary = item.in_library
+    ? '<span class="badge badge-bonus">📀 In your library</span>' : '';
+  const coview = item.co_view?.tier === 'A'
+    ? '<span class="badge badge-tmdb">💞 You both liked it</span>' : '';
+
+  const meta = [];
+  if (item.release_year) meta.push(item.release_year);
+  if (item.runtime) meta.push(`${item.runtime} min`);
+  if (item.rating) meta.push(`★ ${item.rating.toFixed(1)} TMDB`);
+
+  card.innerHTML = `
+    <div class="rate-card-body">
+      ${poster}
+      <div class="rate-info">
+        <h4 class="rate-title">${escapeHtml(item.title)}</h4>
+        <p class="rate-meta">${meta.join(' · ')}</p>
+        <p class="rate-genres">${escapeHtml(item.genres || '')}</p>
+        <div class="rate-pills">${inLibrary}${coview}${otherLine}</div>
+        ${item.overview ? `<p class="rate-overview">${escapeHtml(item.overview.slice(0, 260))}${item.overview.length > 260 ? '…' : ''}</p>` : ''}
+      </div>
+    </div>
+
+    <div class="rate-stars" id="rateStars">
+      ${Array.from({ length: 10 }, (_, i) => `
+        <button class="star-btn" onclick="submitRating(${i + 1})" title="${i + 1}/10">★</button>
+      `).join('')}
+    </div>
+
+    <div class="rate-actions">
+      <button class="btn-not-seen" onclick="submitNotSeen()">
+        👁️ We haven't seen it
+      </button>
+      <button class="chip" onclick="skipRateItem()">Skip</button>
+    </div>
+    <p class="rate-hint">Tip: keys 1–0 rate, N = haven't seen, S = skip</p>
+  `;
+}
+
+async function submitRating(value) {
+  const item = currentRateItem();
+  if (!item) return;
+  await postRating(item.id, { user_rating: value, status: 'seen' });
+  advanceQueue();
+}
+
+async function submitNotSeen() {
+  const item = currentRateItem();
+  if (!item) return;
+  // "Haven't seen it" is a real answer — stored with status='not_seen' and no
+  // rating attached, never as a zero or a 1.
+  await postRating(item.id, { status: 'not_seen' });
+  advanceQueue();
+}
+
+async function postRating(itemId, payload) {
+  try {
+    const res = await fetch('/api/ratings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_item_id: itemId, profile_id: state.rateProfileId, ...payload })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const summary = await res.json();
+    flashRateFeedback(summary);
+  } catch (err) {
+    console.error('Rating failed:', err);
+    document.getElementById('rateProgress').innerText = `Could not save: ${err.message}`;
+  }
+}
+
+function flashRateFeedback(summary) {
+  const msg = document.getElementById('rateProgress');
+  if (!summary || summary.tier === 'C') return;
+  if (summary.tier === 'A') {
+    msg.innerText = '💞 Added — you both like this one.';
+  } else if (summary.disagreement >= 3) {
+    msg.innerText = `Noted — you two differ by ${summary.disagreement} points.`;
+  }
+}
+
+function advanceQueue() {
+  state.rateIndex += 1;
+  // Refresh the profile counters (rating_count) without re-fetching the queue.
+  loadProfiles();
+}
+
+function skipRateItem() {
+  state.rateIndex += 1;
+  renderRateCard();
+}
+
+async function loadCoViewSummary() {
+  const container = document.getElementById('rateCoviewSummary');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/ratings/co-view');
+    const data = await res.json();
+    if (!data.count) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = `
+      <div class="section-title"><span>Both of you liked</span></div>
+      <p class="rate-sub" style="margin-bottom: 8px;">
+        ${data.count} film${data.count === 1 ? '' : 's'} rated ${data.min_liked}+ by both —
+        this is what "watch together" recommendations are built from.
+      </p>
+      <div class="rate-coview-chips">
+        ${data.items.slice(0, 12).map(i => `<span class="taste-tag">${escapeHtml(i.title)}</span>`).join('')}
+      </div>
+    `;
+  } catch (err) {
+    console.error('Co-view summary failed:', err);
+  }
+}
+
+// Keyboard shortcuts for the rating card (1–0 rate, N = not seen, S = skip).
+document.addEventListener('keydown', (e) => {
+  if (state.activeTab !== 'rate') return;
+  if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k >= '0' && k <= '9') {
+    submitRating(k === '0' ? 10 : parseInt(k, 10));
+    e.preventDefault();
+  } else if (k === 'n') {
+    submitNotSeen();
+  } else if (k === 's') {
+    skipRateItem();
+  }
+});

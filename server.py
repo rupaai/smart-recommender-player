@@ -15,7 +15,7 @@ import requests
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -162,6 +162,19 @@ class FinishWatchRequest(BaseModel):
 
 class CancelWatchRequest(BaseModel):
     session_id: int
+
+
+# --- Co-view rating models (multi-profile, schema v3) ---
+class RateRequest(BaseModel):
+    media_item_id: int
+    profile_id: int = 1
+    user_rating: Optional[float] = Field(default=None, ge=1, le=10)
+    status: str = "seen"  # 'seen' | 'not_seen'
+    notes: Optional[str] = None
+
+
+class RenameProfileRequest(BaseModel):
+    name: str
 
 
 class TorrentSearchRequest(BaseModel):
@@ -390,6 +403,97 @@ async def get_history() -> Dict[str, Any]:
     return {
         "history": history,
         "taste_profile": taste,
+    }
+
+
+@app.get("/api/profiles")
+async def get_profiles() -> List[Dict[str, Any]]:
+    """Lists the co-view rating profiles (you + partner) with live stats."""
+    return db.get_profiles()
+
+
+@app.put("/api/profiles/{profile_id}")
+async def rename_profile(profile_id: int, req: RenameProfileRequest) -> Dict[str, Any]:
+    """Renames a rating profile. 400 on unknown id or a duplicate name."""
+    if not db.update_profile_name(profile_id, req.name):
+        raise HTTPException(status_code=400, detail="Unknown profile id or duplicate name.")
+    return {"ok": True, "profiles": db.get_profiles()}
+
+
+@app.get("/api/ratings/queue")
+async def get_rating_queue(
+    profile_id: int = 1,
+    media_type: str = "movie",
+    limit: int = Query(default=25, ge=1, le=100),
+) -> Dict[str, Any]:
+    """Next items for this profile to rate, highest-value first.
+
+    Ordered so the queue leads with films already in the library that nobody
+    has rated (turning watch events into taste signal), then the co-view gap,
+    then unseen high-rated picks.
+    """
+    items = await asyncio.to_thread(db.get_rating_queue, profile_id, media_type, limit)
+
+    # Attach what the OTHER profile already said, so the card can show
+    # "you rated this 8/10" while the current profile rates it too.
+    other_id = 2 if profile_id == 1 else 1
+    for item in items:
+        summary = db.get_rating_summary(item["id"])
+        item["co_view"] = {
+            "tier": summary["tier"],
+            "tier_reason": summary["tier_reason"],
+            "combined_score": summary["combined_score"],
+            "disagreement": summary["disagreement"],
+            "verdicts": summary["verdicts"],
+        }
+        item["other_profile_id"] = other_id
+    return {"profile_id": profile_id, "media_type": media_type, "items": items}
+
+
+@app.post("/api/ratings")
+async def rate_item(req: RateRequest) -> Dict[str, Any]:
+    """Records one profile's verdict on one item (upsert).
+
+    `status="not_seen"` means "we haven't watched this" — stored as its own
+    state with no rating attached, never as a zero or a low score.
+    """
+    try:
+        summary = await asyncio.to_thread(
+            db.rate_item,
+            req.media_item_id,
+            req.profile_id,
+            req.user_rating,
+            req.status,
+            req.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return summary
+
+
+@app.get("/api/ratings/summary/{item_id}")
+async def get_rating_summary(item_id: int) -> Dict[str, Any]:
+    """Both profiles' verdicts on one item, the combined score, and its tier."""
+    return db.get_rating_summary(item_id)
+
+
+@app.get("/api/ratings/co-view")
+async def get_co_view_history(min_liked: float = 7.0) -> Dict[str, Any]:
+    """Films BOTH profiles rated >= min_liked — the virtual-user sequence.
+
+    This is what a `together` recommendation is grounded in; it stays empty
+    until enough films have been rated by both.
+    """
+    items = db.get_co_view_history(min_liked=min_liked)
+    return {
+        "count": len(items),
+        "min_liked": min_liked,
+        "items": items,
+        "note": (
+            "Both profiles have liked these films — the shared taste signal."
+            if items
+            else "Nothing rated by both profiles yet. Rate together to build this."
+        ),
     }
 
 

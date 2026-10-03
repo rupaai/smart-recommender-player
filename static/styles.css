@@ -1077,3 +1077,197 @@ body {
   padding: 0 4px;
 }
 
+
+/* ==========================================================================
+   RATE TOGETHER — multi-profile co-view ratings
+   ========================================================================== */
+.rate-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.rate-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.rate-profile-switch {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rate-profile-count {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.rate-media-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rate-card {
+  background: var(--surface-color);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+}
+
+.rate-card-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.rate-poster {
+  width: 110px;
+  min-width: 110px;
+  border-radius: var(--radius-md);
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  background: var(--surface-hover);
+}
+
+.rate-poster-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  color: var(--text-muted);
+}
+
+.rate-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rate-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  line-height: 1.25;
+}
+
+.rate-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.rate-genres {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.rate-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.rate-other-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--accent-glow);
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rate-overview {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.rate-stars {
+  display: flex;
+  justify-content: space-between;
+  gap: 2px;
+  margin: 18px 0 14px;
+}
+
+.rate-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn-not-seen {
+  flex: 1;
+  min-width: 180px;
+  padding: 11px 16px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  border: 1px solid var(--surface-border);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-not-seen:hover {
+  border-color: var(--accent);
+}
+
+.rate-hint {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.rate-empty {
+  background: var(--surface-color);
+  border: 1px dashed var(--surface-border);
+  border-radius: var(--radius-lg);
+  padding: 32px 18px;
+  text-align: center;
+}
+
+.rate-coview-summary {
+  margin-top: 24px;
+}
+
+.rate-coview-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+  .rate-stars .star-btn {
+    font-size: 20px;
+  }
+
+  .rate-card-body {
+    gap: 12px;
+  }
+
+  .rate-poster {
+    width: 84px;
+    min-width: 84px;
+  }
+
+  .rate-title {
+    font-size: 16px;
+  }
+}

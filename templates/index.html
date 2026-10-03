@@ -34,6 +34,9 @@
       <button id="tabDirect" class="tab-btn" onclick="switchTab('direct')">
         ⚡ Direct Download
       </button>
+      <button id="tabRate" class="tab-btn" onclick="switchTab('rate')">
+        💞 Rate Together
+      </button>
       <button id="tabHistory" class="tab-btn" onclick="switchTab('history')">
         ⭐ Taste & History
       </button>
@@ -214,6 +217,41 @@
       <div id="historyList">
         <!-- History items rendered dynamically -->
       </div>
+    </section>
+
+    <!-- ==========================================================================
+         RATE TOGETHER — one card at a time, each person rates or skips.
+         Deliberately not a grid: this is a decision queue, and a grid tempts
+         you to batch-rate without looking, which poisons the taste signal.
+         ========================================================================== -->
+    <section id="rateView" style="display: none;">
+      <div class="rate-header">
+        <div>
+          <h3 style="font-size: 16px; margin-bottom: 2px;">💞 Rate Together</h3>
+          <p class="rate-sub" id="rateProgress">Loading…</p>
+        </div>
+        <div class="rate-profile-switch" id="rateProfileSwitch"></div>
+      </div>
+
+      <div class="rate-media-toggle">
+        <button id="rateTypeMovie" class="chip active" onclick="setRateMediaType('movie')">Movies</button>
+        <button id="rateTypeTv" class="chip" onclick="setRateMediaType('tv')">TV Shows</button>
+      </div>
+
+      <div id="rateCard" class="rate-card">
+        <!-- Current item rendered here -->
+      </div>
+
+      <div id="rateEmpty" class="rate-empty" style="display: none;">
+        <p style="font-size: 32px; margin-bottom: 8px;">🎉</p>
+        <p style="font-size: 15px; margin-bottom: 4px;">Queue clear!</p>
+        <p class="rate-sub">You've both rated everything in this queue.</p>
+        <button class="secondary-btn" style="margin-top: 16px;" onclick="resetRatingQueue()">
+          Load more
+        </button>
+      </div>
+
+      <div class="rate-coview-summary" id="rateCoviewSummary"></div>
     </section>
   </div>
 

@@ -25,6 +25,7 @@ import os
 import re
 import sys
 from collections import defaultdict
+from typing import Optional
 
 import numpy as np
 
@@ -71,19 +72,41 @@ def real_history_sequences(db, sid: dict, min_seq: int) -> list:
     return seqs
 
 
-def movielens_sequences(ratings_csv: str, catalog: dict, sid: dict, min_seq: int) -> list:
+def movielens_sequences(
+    ratings_csv: str,
+    catalog: dict,
+    sid: dict,
+    min_seq: int,
+    movies_csv: Optional[str] = None,
+) -> list:
     """MovieLens ratings.csv -> per-user chronological semantic ID sequences.
 
     Movies are matched to the catalog by (normalized title, year). Rows are
     sorted by timestamp; ratings >= 4.0 count as a positive watch event.
+
+    `ratings.csv` has NO title column — its schema is
+    `userId,movieId,rating,timestamp`. Titles live in `movies.csv`, joined by
+    `movieId`. Pass `movies_csv` (sibling file) to do that join; without it the
+    function can only key on movieId, which does not line up with catalogue
+    ids, so every row counts as unmatched.
     """
+    titles: dict = {}
+    if movies_csv and os.path.exists(movies_csv):
+        with open(movies_csv, "r", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                titles[row["movieId"]] = row["title"]
+        print(f"   MovieLens: loaded {len(titles)} titles from {os.path.basename(movies_csv)}")
+    else:
+        print("   MovieLens: WARNING — no movies.csv given; ratings.csv has no "
+              "title column, so nothing can be matched to the catalogue.")
+
     by_user: dict = defaultdict(list)
     matched = unmatched = 0
     with open(ratings_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            ml_title = row["title"]
-            m = re.match(r"^(?P<t>.*)\s\((?P<y>\d{4})\)\s*$", ml_title)
+            ml_title = titles.get(row.get("movieId", ""), "")
+            m = re.match(r"^(?P<t>.*)\s\((?P<y>\d{4})\)\s*$", ml_title or "")
             if not m:
                 unmatched += 1
                 continue
@@ -174,7 +197,12 @@ def main() -> None:
     if args.movielens:
         print(f"\n2️⃣  MovieLens ({args.movielens}) ...")
         catalog = load_catalog(db)
-        sequences.extend(movielens_sequences(args.movielens, catalog, sid, args.min_seq))
+        # ratings.csv carries no title column — titles come from movies.csv in
+        # the same directory (the ml-latest-small.zip layout).
+        sibling = os.path.join(os.path.dirname(os.path.abspath(args.movielens)), "movies.csv")
+        sequences.extend(
+            movielens_sequences(args.movielens, catalog, sid, args.min_seq, movies_csv=sibling)
+        )
 
     if len(sequences) < 50:
         print("\n3️⃣  Synthetic genre co-watch bootstrap (sparse history fallback) ...")

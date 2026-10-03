@@ -207,7 +207,32 @@ App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
 - **Frontend render fix:** `app.js` treated the paginated recommend payload as an array (`movies.forEach` TypeError in the browser → "Failed to load recommendations" despite clean 200s server-side). Now renders `data.items` and passes `data.engine`.
 - **Full catalogue is the default:** `config.yaml database_path: catalogue_full.db` — the TIGER artifacts (14,397 semantic IDs) match it (coverage 100%). `DATABASE_PATH` env override still switches catalogues per launch. `server.py` prints `[DB] active catalogue: <path> (<source>)` at startup so DB/artifact mismatches are immediately visible.
 - **Vote-count quality funnel + variety + cold-start gate:** schema v2 (`media_items.vote_count`), `get_top_candidates` SQL funnel (shortlist 250), MMR final pool 50, opt-in `variety` (10-minute seeded rotation) wired through both engines, `history_threshold: 5` cold-start gate, engine badge in the UI, and `utils/backfill_vote_counts.py`. Details in Sections 3/B/F above.
-- **Deferred ideas (discussed, deliberately not implemented):** per-tap exclusion of already-shown items (`exclude_ids`), shuffling *before* MMR so the pool's composition (not just order) varies per bucket, widening `shortlist_size` to 400 for more rotation runway. Note: the final 50-item pool composition is currently static per mood (top-rated cut + deterministic MMR); the variety shuffle only re-orders it, and the vote-count backfill will shift the composition once it runs.
+### Schema v3: Multi-profile co-view ratings (added later on 2026-10-03)
+The recommender's core problem was **signal, not architecture**: 2 ratings in `watch_history`. Two people share one catalogue, so `watch_history` needed to know *who* rated.
+- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Me`, `Partner`).
+- **`watch_history.profile_id`** — who rated. Existing rows migrate to profile 1 with ratings preserved.
+- **`watch_history.status`** — `'seen'` | `'not_seen'`. "Never saw it" is a real answer stored with **no rating attached** (never a 0 or a 1); it's what makes the Tier B recommendation computable ("he saw it, you haven't" vs "neither has").
+- Indexes: `idx_watch_history_profile_item` (unique, upsert target), `idx_watch_history_item` (co-view grouping).
+- **Migration note:** SQLite rejects `ALTER TABLE ... ADD COLUMN ... REFERENCES ... NOT NULL DEFAULT 1` ("Cannot add a REFERENCES column with non-NULL default value"), so `profile_id` is added bare then backfilled. Idempotent via `PRAGMA user_version = 3`.
+
+**Co-view tiers** (`get_rating_summary`): **A** both rated ≥7.0 · **B** one rated ≥7.0 and the other hasn't seen it · **C** exploration, or both saw it and disagreed (a disagreement is *not* Tier B).
+
+**Combined score:** Bayesian-shrunk weighted mean per rater — `adj = (n·mean + 10·6.5)/(n+10)`, weight `w = n/(n+10)`, combined = `Σ(w·adj)/Σw` over raters who saw it. A 4/10 from someone with 5 ratings can't outvote an 8/10 from someone with 200.
+
+**Rating queue** (`get_rating_queue`) priority: in-library but unrated by this profile → rated by the other profile → unseen high-rated. Leads with films already on disk, turning watch events into taste signal.
+
+**New DB methods:** `get_profiles`, `update_profile_name`, `rate_item`, `get_rating_summary`, `get_rating_queue`, `get_co_view_history`.
+**New API:** `GET /api/profiles`, `PUT /api/profiles/{id}`, `GET /api/ratings/queue`, `POST /api/ratings`, `GET /api/ratings/summary/{id}`, `GET /api/ratings/co-view`.
+**New frontend:** **💞 Rate Together** tab — one card at a time, profile switcher, 1–10 stars, **"👁️ We haven't seen it"**, skip, keyboard shortcuts (`1`–`0`, `N`, `S`), co-view summary of films both profiles liked.
+
+### Bugs fixed (2026-10-03)
+1. **Genre filter never reached SQL** (`database.py` `get_top_candidates`) — the filter ran as a Python loop *after* the query, so every mood request pulled the whole ~8,041-row catalogue (~2.1 MB with overviews) into Python to cut to 250. Now a SQL `LIKE` predicate. **91 ms → 17 ms**, results verified byte-identical across 6 genre combinations.
+   - *Subtle:* genres are stored comma+**space** separated (`"Crime, Mystery, Thriller"`). The padded-comma token test needs spaces stripped on **both** sides or `%,mystery,%` never matches `", mystery,"` — this silently dropped ~84% of matches on the first attempt.
+2. **`movies.csv` join missing in `bootstrap_sequences.movielens_sequences()`** — it read `row["title"]`, but `ratings.csv` has no title column (`userId,movieId,rating,timestamp`). The function could never run; it `KeyError`'d on row 1. Now joins `movies.csv` by `movieId` (auto-detected as a sibling file). Verified: **0 → 576 sequences**, 63,294/100,836 rows matched (62.6%).
+3. **`rate_item` read its own uncommitted write** — called `get_rating_summary()` (a second connection) inside the `with` block, so SQLite returned the pre-write state and the new verdict was silently missing. Moved the read after the commit.
+4. **Co-view tier misclassified disagreements** — one person liking a film the other had *seen and disliked* returned Tier B ("he'd recommend this to you"). Now Tier C.
+5. `MOVIE_LENS` data location: `https://files.grouplens.org/datasets/movielens/ml-latest-small.zip` (the bare `ratings.csv` URLs 404; files ship zipped). Measured: 1.95M usable co-rated pairs after matching to the catalogue.
+- **Note:** IMDb `title.ratings.tsv.gz` covers TV but is `tconst,averageRating,numVotes` — aggregate per-title means with **no userId**, so it cannot express agreement between people. There is no public per-user TV ratings dataset; any future co-view predictor is movies-only.
 - **PENDING VERIFICATION (not yet executed — session terminal wedged):** `python3 -m py_compile database.py server.py services/recommender_service.py services/generative_retriever.py utils/backfill_vote_counts.py`, `uv run python tests/test_generative_retriever.py`, server restart + live checks (`/api/moods` 200, `POST /api/recommend` → `engine` field + badge data), and the vote-count backfill run.
 
 ### Changelog
@@ -227,6 +252,20 @@ App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
 - **Full catalogue support:** schema v1 migration (`tmdb_id UNIQUE` → `UNIQUE(media_type, tmdb_id)`, `PRAGMA user_version`-gated, idempotent, FK-preserving rebuild), `upsert_catalogue_items()` bulk insert, `utils/build_full_catalogue.py` (10k movies + 10k TV via TMDB discover, resumable, threaded runtime details pass, watch-history carry-over), `DATABASE_PATH` env override in `server.py` for one-line plug/unplug (`catalogue.db` = test catalogue, `catalogue_full.db` = full).
 
 ### Verification checklist
+- [x] Schema v3 migration verified on **both** `catalogue.db` and `catalogue_full.db`: history rows preserved (2 → 2, ratings intact, landed on profile 1), `PRAGMA foreign_key_check` clean, idempotent on reopen
+- [x] `uv run python tests/test_ratings.py` — 45 checks pass (migration, not_seen semantics, tiers A/B/C, upsert, shrinkage, queue priority, co-view history, validation, SQL genre matching)
+- [x] Genre-in-SQL fix verified **byte-identical** to the old Python filter across 6 genre combinations incl. multi-word ("Science Fiction") and TV aliases ("Sci-Fi & Fantasy"); `Se7en` (top-scoring) now correctly included
+- [x] `bootstrap_sequences.movielens_sequences()` verified on the real dataset: 0 → **576 sequences**, 63,294/100,836 rows matched (62.6%)
+- [x] Live API check against the real 14,398-item catalogue: all 6 new endpoints correct (queue, rate 9.0 → tier B, not_seen → tier B, summary, co-view count 0, rename, HTTP 400 on unknown item + duplicate name)
+- [x] `POST /api/recommend` regression — still returns `engine: "legacy"`, 10 items
+- [x] Frontend wiring verified: all 7 `onclick` handlers defined, all 9 element IDs present in `index.html`, `node --check static/app.js` clean
+- [x] No regressions: `test_organizer.py`, `test_searcher.py`, `test_generative_retriever.py` all still pass
+- [x] `python3 -m py_compile database.py server.py training/bootstrap_sequences.py`
+- [x] `training/data/` added to `.gitignore` (4.1 MB download, not source)
+- [ ] **NOT YET BUILT — Phase 2:** profile-aware recommendation scoring (`profile=me|partner|together`), tier boosts (A:+1.5, B:+0.8), profile-aware `exclude_watched`, profile selector on Discover, co-view badges on cards
+- [ ] **NOT YET BUILT:** `MOOD_MAPPINGS` still maps Horror to `["Horror","Mystery"]` (Mystery is crime → Scary returns *Mystic River*, *High and Low*); silent `or candidates` filter fallback (`recommender_service.py:302-312`); variety shuffle runs *after* MMR so pool composition never varies (`:326`)
+- [ ] **NOT YET BUILT:** dead ONNX branch (`recommender_service.py:97-126,184-188` — reads a nonexistent `embedding` column, needs an unexported `models/model.onnx`, imports uninstalled `transformers`); `tier2_keywords` backfill (0% populated, no util exists)
+- [ ] **DEFERRED — Phase 5:** co-view predictor (1.95M MovieLens pairs available; ~1 new module + 1 training run). Movies only — no public per-user TV ratings data exists.
 - [x] `uv run python -m py_compile services/generative_retriever.py services/recommender_service.py server.py database.py training/prepare_semantic_data.py training/train_rqvae.py training/bootstrap_sequences.py training/train_tiger_predictor.py training/export_tiger_onnx.py tests/test_generative_retriever.py`
 - [x] `uv run python tests/test_generative_retriever.py` — all offline TIGER checks pass (trie, beam, sequences, router, missing artifacts)
 - [x] Full TIGER pipeline live-run on `catalogue_full.db` (scratch venv): Stage A (14,397 × 384 embeddings), Stage B (2,822 unique tuples, 1,254 collision groups leaf-disambiguated, codebook utilization ~0.5), Stage D (500 synthetic sequences), Stage C (loss 4.46→3.45), Stage F gates (0.69 MB / 0.15 ms) + trie smoke test

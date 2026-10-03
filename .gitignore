@@ -27,3 +27,7 @@ catalogue_full.db
 # TIGER generative retrieval artifacts (built by training/ pipeline)
 training/tiger/
 models/
+
+# Training datasets (downloaded, not source)
+# MovieLens ml-latest-small: https://files.grouplens.org/datasets/movielens/ml-latest-small.zip
+training/data/
