@@ -128,6 +128,7 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
     for media_type in media_types:
         path = "/discover/movie" if media_type == "movie" else "/discover/tv"
         genre_map = genre_maps[media_type]
+        remote_total = 0
         for page in range(1, pages + 1):
             data = tm.get(path, {
                 "with_origin_country": region,
@@ -148,6 +149,10 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
             results = data.get("results") or []
             if not results:
                 break
+            # Record what TMDB says exists so a truncated run is visible. A
+            # region that reports far fewer rows than total_results means the
+            # run stopped early, not that the catalogue is exhausted.
+            remote_total = int(data.get("total_results") or 0)
             rows = []
             for r in results:
                 date = r.get("release_date") or r.get("first_air_date") or ""
@@ -175,7 +180,19 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
             inserted = db.upsert_catalogue_items(rows)
             total += inserted
             if page % 5 == 0:
-                print(f"[{region}/{media_type}] page {page} (inserted so far: {total})", flush=True)
+                print(f"[{region}/{media_type}] page {page} "
+                      f"(inserted so far: {total})", flush=True)
+
+        # Explicit coverage report. Silence here previously let an 8-region run
+        # finish looking identical whether it stored 600 titles or all 60,000.
+        if remote_total and total < remote_total:
+            pct = 100.0 * total / remote_total
+            note = "TRUNCATED - raise --pages" if pct < 95 else "partial"
+            print(f"[{region}/{media_type}] coverage: {total}/{remote_total} "
+                  f"({pct:.0f}%) [{note}]", flush=True)
+        elif remote_total:
+            print(f"[{region}/{media_type}] coverage: {total}/{remote_total} "
+                  f"(complete)", flush=True)
     return total
 
 
@@ -244,6 +261,12 @@ def main() -> None:
                         help="Import a region's catalogue (default IN)")
     parser.add_argument("--pages", type=int, default=10,
                         help="Discover pages per region per media type (20 films each)")
+    # Warn loudly instead of silently truncating a region. At 20 titles/page a
+    # low --pages value looks like a completed import while quietly capping a
+    # large region at a few hundred films: Mexican cinema has 11,080 titles and
+    # an 8-region run at --pages 15 stored ~600 per region, which read as
+    # complete. TMDB caps discover at 500 pages, so full coverage is only
+    # reachable for regions under ~10,000 titles.
     parser.add_argument("--media-types", default="movie,tv")
     parser.add_argument("--vote-floor", type=int, default=1,
                         help="Minimum TMDB votes per title (default 1: keeps small cinemas)")

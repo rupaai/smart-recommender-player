@@ -748,6 +748,23 @@ def test_origin_intent(build):
     unparsed = [ph for ph in chip_phrases if parse_origin_intent(ph) is None]
     check("every UI origin chip has a matching parser intent",
           not unparsed, unparsed)
+
+    # Every country name a user might type must resolve. "mexican movies"
+    # parsed as NO origin intent, so no filter ran and it returned American
+    # Graffiti and Straw Dogs — the precise failure this feature prevents,
+    # resurfacing for any country missing from the table. No hardcoded list can
+    # stay in sync forever, so assert the invariant instead: every ORIGIN_INTENT
+    # key must round-trip through the parser.
+    from services.recommender_service import ORIGIN_INTENT
+    self_parse_fail = [k for k in ORIGIN_INTENT
+                       if parse_origin_intent(k) is None]
+    check("every declared origin intent parses from its own key",
+          not self_parse_fail, self_parse_fail)
+    for country in ("MX", "PE", "CL", "AR", "CO", "BR"):
+        covered = any(country in spec["countries"]
+                      for spec in ORIGIN_INTENT.values())
+        check(f"Latin American country {country} is addressable",
+              covered, sorted(ORIGIN_INTENT))
     # Longer, more specific phrases must win over shorter ones.
     check("the more specific phrase wins",
           "hi" in parse_origin_intent("bollywood")["languages"]

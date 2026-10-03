@@ -135,6 +135,12 @@ ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
     "dutch": {"countries": ["NL"], "languages": ["nl"], "label": "Dutch"},
     "polish": {"countries": ["PL"], "languages": ["pl"], "label": "Polish"},
     "ukrainian": {"countries": ["UA"], "languages": ["uk"], "label": "Ukrainian"},
+    # Latin American countries, reachable individually. Without these,
+    # "mexican movies" parsed as no origin intent at all and silently returned
+    # unfiltered Hollywood — the exact failure this whole feature exists to
+    # prevent, resurfacing for any country name missing from the table.
+    "mexican": {"countries": ["MX"], "languages": ["es"], "label": "Mexican"},
+    "peruvian": {"countries": ["PE"], "languages": ["es"], "label": "Peruvian"},
     "argentine": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
     "argentinian": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
     "colombian": {"countries": ["CO"], "languages": ["es"], "label": "Colombian"},
