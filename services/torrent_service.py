@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import time
 import re
 import shutil
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -843,6 +844,17 @@ class TorrentDownloader:
         import libtorrent as lt
 
         self.lt = lt
+        # libtorrent 2.x dropped the 1.x `lt.session({'resume': True,
+        # 'resume_dir': ...})` settings — passing them now raises
+        # "unknown name in settings_pack: resume". Persistence in 2.x is
+        # driven per-torrent: `add_torrent_params.resume_data` carries state
+        # loaded from `lt.read_resume_data()`, and `save_resume_data_alert`
+        # tells us when the session has flushed it to disk. The session's own
+        # resume directory is `download_dir`, so flushed .ltresume files land
+        # beside the partial data they describe.
+        self.resume_dir = os.path.abspath(
+            (config.get("torrent", {}) or {}).get("download_dir", "./downloads")
+        )
         self.session = lt.session()
         self.db = db_manager
 
@@ -934,6 +946,153 @@ class TorrentDownloader:
         path = os.path.join(self.download_dir, f"id_{movie_id}")
         os.makedirs(path, exist_ok=True)
         return path
+
+    def _resume_file_for(self, info_hash: str) -> str:
+        """Path to the persisted resume file for a torrent."""
+        return os.path.join(self.resume_dir, f"{info_hash}.ltresume")
+
+    @staticmethod
+    def _info_hash_from_magnet(magnet_link: str) -> Optional[str]:
+        """Extract the hex info hash from a magnet URI.
+
+        `magnet:?xt=urn:btih:<40 hex>` (v1) or `urn:btmh:1220<hex>` (v2). The
+        hash is what libtorrent names resume files by, so this is how a retry
+        after a restart finds its own partial download again.
+        """
+        try:
+            if "btih:" in magnet_link:
+                h = magnet_link.rsplit("btih:", 1)[-1].split("&")[0].split(" ")[0].lower()
+                return h if len(h) >= 32 else None
+            if "btmh:" in magnet_link:
+                h = magnet_link.rsplit("btmh:", 1)[-1].split("&")[0].split(" ")[0]
+                return h if len(h) >= 40 else None
+        except Exception:
+            pass
+        return None
+
+    def _load_resume_params(self, magnet_link: str):
+        """Return add_torrent_params carrying saved state, or None.
+
+        libtorrent 2.x has no 1.x-style `lt.session({'resume': True})`. The
+        working loop is: flush with `lt.write_resume_data()` -> bencode to
+        bytes -> read back with `lt.read_resume_data()` -> hand straight to
+        `session.add_torrent()`. Verified against libtorrent 2.1.1 here.
+
+        Any failure returns None so a corrupt, stale, or version-mismatched
+        resume file degrades to a fresh download instead of blocking it.
+        """
+        lt = self.lt
+        info_hash = self._info_hash_from_magnet(magnet_link)
+        if not info_hash:
+            return None
+        path = self._resume_file_for(info_hash)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "rb") as fh:
+                params = lt.read_resume_data(fh.read())
+            if params is None:
+                return None
+            # The saved save_path can point at a staging dir from a previous
+            # run that no longer exists; the caller overrides it anyway.
+            return params
+        except Exception as e:
+            print(f"[Downloader] Resume data unusable ({info_hash[:12]}): {e}", flush=True)
+            return None
+
+    def _persist_resume_data(self, params) -> None:
+        """Flush current torrent state to its .ltresume file (best effort)."""
+        lt = self.lt
+        try:
+            info_hash = str(params.info_hashes[0]) if params.info_hashes else None
+            if not info_hash:
+                return
+            path = self._resume_file_for(info_hash)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            data = lt.write_resume_data(params)
+            with open(path, "wb") as fh:
+                fh.write(lt.bencode(data))
+        except Exception as e:
+            # Persistence is an optimisation; a failure here must never abort
+            # an otherwise healthy download.
+            print(f"[Downloader] Could not persist resume data: {e}", flush=True)
+
+    def _resume_file_for_handle(self, handle) -> Optional[str]:
+        """Resolve the .ltresume path for a live torrent handle."""
+        try:
+            hashes = handle.info_hashes()
+            if not hashes:
+                return None
+            return self._resume_file_for(str(hashes[0]))
+        except Exception:
+            return None
+
+    def _flush_handle_resume(self, handle) -> bool:
+        """Write a live handle's state to disk. Best effort; never raises.
+
+        libtorrent 2.1 exposes no `session.save_resume_data`; the working call
+        is `handle.write_resume_data()`, which returns the resume dict
+        (deprecated in favour of the alert flow, but the only synchronous
+        option here). The torrent's own info hash — the name its resume file
+        uses — is carried inside that dict as `b'info-hash'`, so no
+        `info_hashes()` stringification is needed (that object is not
+        subscriptable or printable in 2.x).
+        """
+        lt = self.lt
+        try:
+            data = handle.write_resume_data()
+        except Exception as e:
+            print(f"[Downloader] write_resume_data failed: {e}", flush=True)
+            return False
+        if not data:
+            return False
+
+        try:
+            raw = data.get(b'info-hash') if isinstance(data, dict) else None
+            if not raw:
+                return False
+            if isinstance(raw, (bytes, bytearray)):
+                info_hash = raw.hex().lower()
+            elif hasattr(raw, "hex"):
+                info_hash = raw.hex().lower()
+            else:
+                info_hash = str(raw).lower()
+            path = self._resume_file_for(info_hash)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fh:
+                fh.write(lt.bencode(data))
+            return True
+        except Exception as e:
+            # Persistence is an optimisation; a failure must never abort an
+            # otherwise healthy download.
+            print(f"[Downloader] Could not persist resume data: {e}", flush=True)
+            return False
+
+    def _clear_resume_file(self, movie_id: int) -> None:
+        """Delete a movie's .ltresume once its content is fully organized."""
+        try:
+            staging = os.path.join(self.download_dir, f"id_{movie_id}")
+            if os.path.isdir(staging):
+                for name in os.listdir(self.resume_dir):
+                    if name.endswith(".ltresume"):
+                        try:
+                            os.remove(os.path.join(self.resume_dir, name))
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+
+    def _has_partial_data(self, movie_id: int) -> float:
+        """Bytes already present in this torrent's staging dir (for reporting)."""
+        staging = self._torrent_staging_dir(movie_id)
+        total = 0
+        for root, _dirs, files in os.walk(staging):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
+        return total
 
     def _purge_partial_files(self, movie_id: int) -> None:
         """Removes the per-torrent staging directory (partial files + leftovers)."""
@@ -1093,7 +1252,30 @@ class TorrentDownloader:
             # Per-torrent staging dir: the organizer only ever sweeps THIS
             # torrent's files — concurrent downloads can never contaminate
             # each other's show folders (the bug that mixed GoT into New Girl).
-            params.save_path = self._torrent_staging_dir(movie_id)
+            staging_dir = self._torrent_staging_dir(movie_id)
+            params.save_path = staging_dir
+
+            # Resume from a previous run if this torrent has saved state and its
+            # partial data is still on disk. `_load_resume_params` returns fully
+            # reconstructed params (including trackers), so parse_magnet_uri above
+            # is only needed on a cold start.
+            resumed_from = self._load_resume_params(magnet_link)
+            resumed = False
+            if resumed_from is not None:
+                resumed_from.save_path = staging_dir
+                params = resumed_from
+                partial_bytes = self._has_partial_data(movie_id)
+                resumed = partial_bytes > 0
+                if resumed:
+                    print(
+                        f"[Downloader] Resuming '{movie_title}': "
+                        f"{partial_bytes / (1024 ** 2):.1f} MB already on disk",
+                        flush=True,
+                    )
+                else:
+                    # Resume file exists but the data is gone (cleaned up or
+                    # moved); starting fresh is the only correct option.
+                    resumed = False
 
             handle = self.session.add_torrent(params)
             info_hash = str(handle.info_hash()).lower()
@@ -1113,6 +1295,11 @@ class TorrentDownloader:
             }
 
             min_threshold = self.TorrentSearcher_min_size(media_type)
+
+            # Declared outside the polling loop: inside it, the counter would
+            # reset to 0 every second and flush resume data on every tick
+            # instead of every 30s.
+            last_resume_flush = time.time()
 
             while True:
                 await asyncio.sleep(1)
@@ -1145,6 +1332,15 @@ class TorrentDownloader:
                     progress_pct = 0.0
                     torrent_name = movie_title
 
+                # ETA from instantaneous speed. `download_rate` is bytes/sec,
+                # so remaining/seconds gives a time estimate; without it the UI
+                # showed a bare percentage with no sense of how long was left.
+                remaining = max(0, total_wanted - total_done) if has_meta else 0
+                if status.download_rate > 0 and remaining > 0:
+                    eta_seconds = int(remaining / status.download_rate)
+                else:
+                    eta_seconds = None
+
                 # Abort fake / shortcut torrents
                 if has_meta and total_wanted < min_threshold:
                     downloads_store[movie_id] = {
@@ -1170,8 +1366,20 @@ class TorrentDownloader:
                     "download_speed": status.download_rate,
                     "total_size": total_wanted,
                     "downloaded": total_done,
+                    "eta_seconds": eta_seconds,
+                    "resumed": resumed,
+                    "peers": status.num_peers,
+                    "seeds": status.num_seeds,
                     "error": None,
                 }
+
+                # Flush resume data periodically so a crash or restart doesn't lose the
+                # partial download. Every 30s is frequent enough to bound lost
+                # progress without hammering the disk.
+                now = time.time()
+                if now - last_resume_flush >= 30:
+                    self._flush_handle_resume(handle)
+                    last_resume_flush = now
 
                 is_complete = (
                     has_meta
@@ -1183,10 +1391,15 @@ class TorrentDownloader:
                 if is_complete:
                     downloads_store[movie_id]["progress"] = 100.0
                     downloads_store[movie_id]["status"] = "organizing"
+                    downloads_store[movie_id]["eta_seconds"] = 0
 
                     self._organize_for_jellyfin(movie_id, movie_title, media_type)
 
                     downloads_store[movie_id]["status"] = "completed"
+                    # The file is now in the Jellyfin library, so the resume
+                    # file is stale — drop it or a future re-add would try to
+                    # resume an already-finished torrent.
+                    self._clear_resume_file(movie_id)
                     await self.cleanup(info_hash)
                     return
 

@@ -748,6 +748,15 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
         if (totalStr !== '0 B') {
           statusLabel += ` (${downloadedStr} / ${totalStr})`;
         }
+        // ETA needs an actual transfer rate and something left to fetch; with
+        // 0 peers libtorrent reports 0 B/s and any ETA would be fiction.
+        const etaStr = formatEta(data.eta_seconds);
+        if (etaStr && (data.download_speed || 0) > 0 && pct < 100) {
+          statusLabel += ` · ${etaStr}`;
+        }
+        if (data.resumed) {
+          statusLabel += ' · ↻ resumed';
+        }
         if (stateStr === 'organizing') {
           statusLabel = `📂 Organizing ${mediaType === 'tv' ? 'TV episode' : 'movie'} for Jellyfin...`;
         }
@@ -1181,6 +1190,22 @@ function formatSize(bytes) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// Human ETA from seconds remaining. Rounded so it doesn't churn every tick,
+// and coarse beyond an hour ("3h left" is more honest than "2h 58m").
+function formatEta(seconds) {
+  if (seconds === null || seconds === undefined) return '';
+  if (seconds <= 0) return 'finishing…';
+  const s = Math.round(seconds);
+  if (s < 60) return `${s}s left`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m left`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  if (h < 24) return rem ? `${h}h ${rem}m left` : `${h}h left`;
+  const days = Math.round(h / 24);
+  return `${days}d left`;
 }
 
 // ===========================================================================

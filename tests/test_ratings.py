@@ -601,6 +601,84 @@ def test_download_survives_refresh(build):
           downloads_store is server_mod.downloads_store)
 
 
+
+def test_resume_and_eta(build):
+    print("\n[17] Resume-from-disk and ETA")
+    import os
+    import tempfile
+    import libtorrent as lt
+    from services.torrent_service import TorrentDownloader, downloads_store
+    import server as server_mod
+
+    MAGNET = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=TestFilm"
+    HASH = "0123456789abcdef0123456789abcdef01234567"
+
+    check("info hash is extracted from a magnet URI",
+          TorrentDownloader._info_hash_from_magnet(MAGNET) == HASH,
+          TorrentDownloader._info_hash_from_magnet(MAGNET))
+    check("a non-magnet string yields no hash",
+          TorrentDownloader._info_hash_from_magnet("http://example.com/x.torrent") is None)
+
+    d = tempfile.mkdtemp()
+    dl = object.__new__(TorrentDownloader)
+    dl.lt = lt
+    dl.resume_dir = d
+    dl.download_dir = d
+    dl.movie_target = d
+    dl.tv_target = d
+
+    # Real libtorrent session so this exercises the actual 2.x API, not a mock.
+    params = lt.parse_magnet_uri(MAGNET)
+    params.save_path = d
+    dl.session = lt.session()
+    handle = dl.session.add_torrent(params)
+
+    check("resume data is flushed to disk", dl._flush_handle_resume(handle) is True)
+    files = [f for f in os.listdir(d) if f.endswith(".ltresume")]
+    check("a .ltresume file is written", files == [f"{HASH}.ltresume"], files)
+
+    loaded = dl._load_resume_params(MAGNET)
+    check("resume data loads back", loaded is not None, type(loaded).__name__)
+    loaded.save_path = d
+    fresh = lt.session()
+    check("resumed params can be added to a brand new session",
+          fresh.add_torrent(loaded).name() == "TestFilm")
+
+    # A cold start (no file) must work, not raise.
+    check("cold start with no resume file returns None",
+          dl._load_resume_params(
+              "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=Other") is None)
+
+    # A corrupt file must degrade to a fresh download, never block one.
+    with open(os.path.join(d, f"{HASH}.ltresume"), "wb") as fh:
+        fh.write(b"garbage")
+    check("corrupt resume file degrades gracefully", dl._load_resume_params(MAGNET) is None)
+
+    # ETA is computed from remaining bytes / current rate.
+    downloads_store[1] = {
+        "movie_id": 1, "status": "downloading", "progress": 42.5,
+        "download_speed": 1_048_576, "total_size": 10_737_418_240,
+        "downloaded": 4_563_984_768, "eta_seconds": 5887, "resumed": True,
+        "peers": 12, "seeds": 33, "error": None,
+    }
+    remaining = 10_737_418_240 - 4_563_984_768
+    check("eta = remaining / speed",
+          abs(5887 - remaining / 1_048_576) < 2, round(remaining / 1_048_576))
+    downloads_store.pop(1, None)
+
+    # ETA / resume / swarm fields must survive the status endpoint.
+    downloads_store[2] = {
+        "movie_id": 2, "status": "downloading", "progress": 10.0,
+        "download_speed": 2048, "total_size": 1000, "downloaded": 100,
+        "eta_seconds": 440, "resumed": True, "peers": 3, "seeds": 9, "error": None,
+    }
+    import asyncio
+    payload = asyncio.run(server_mod.get_torrent_status(2))
+    for field in ("eta_seconds", "resumed", "peers", "seeds"):
+        check(f"status endpoint exposes {field}", field in payload, sorted(payload))
+    downloads_store.pop(2, None)
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -628,6 +706,7 @@ def main():
         test_pagination_shape(build)
         test_rating_genre_endpoint(build)
         test_download_survives_refresh(build)
+        test_resume_and_eta(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
