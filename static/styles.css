@@ -1297,3 +1297,39 @@ body {
   padding: 4px 10px;
   font-size: 11px;
 }
+
+/* Profile-aware recommendation: whose taste is being optimised for */
+.rec-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.rec-profile-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* Co-view badges explain WHY a film is ranked where it is */
+.badge-coview-a {
+  background: var(--primary-glow);
+  color: var(--primary);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  font-weight: 700;
+}
+
+.badge-coview-b {
+  background: var(--accent-glow);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  font-weight: 600;
+}
+
+.badge-coview-score {
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}

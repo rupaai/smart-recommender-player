@@ -320,6 +320,102 @@ def test_genre_sql(build):
         min_rating=6.0, limit=10) == [])
 
 
+def test_profile_scoring(build):
+    print("\n[10] Profile-aware scoring: tiers, blending, viewer-relative")
+    from services.recommender_service import PROFILE_MIX, TIER_BOOSTS, RecommenderService
+    db = build()
+
+    # Profile 1 likes thrillers; profile 2 likes animation. Both love Se7en.
+    db.rate_item(1, profile_id=1, user_rating=9.0)   # Inception
+    db.rate_item(2, profile_id=2, user_rating=8.5)   # Interstellar (B for me)
+    db.rate_item(3, profile_id=1, user_rating=9.0)   # Jaws
+    db.rate_item(3, profile_id=2, user_rating=8.0)   # Jaws -> tier A
+    db.rate_item(4, profile_id=1, user_rating=9.5)   # Se7en (I liked, he hasn't)
+
+    # Viewer-relative tiers: the whole point is that "B" means
+    # "the OTHER person loved it and YOU haven't".
+    v_me = db.get_item_co_view([2, 3, 4], viewer_profile_id=1)
+    check("film the other liked and I haven't -> tier B (me)", v_me[2]["tier"] == "B",
+          v_me[2]["tier"])
+    check("shared favourite -> tier A (me)", v_me[3]["tier"] == "A", v_me[3]["tier"])
+    check("film only I liked -> tier C for me", v_me[4]["tier"] == "C", v_me[4]["tier"])
+
+    v_him = db.get_item_co_view([2, 3, 4], viewer_profile_id=2)
+    check("my film he hasn't seen -> tier B (him)", v_him[4]["tier"] == "B", v_him[4]["tier"])
+    check("shared favourite -> tier A (him)", v_him[3]["tier"] == "A", v_him[3]["tier"])
+    check("film he already rated -> tier C (him)", v_him[2]["tier"] == "C", v_him[2]["tier"])
+
+    # Symmetric view (rating UI) still works with no viewer.
+    sym = db.get_item_co_view([2, 3, 4])
+    check("symmetric tier A for shared favourite", sym[3]["tier"] == "A", sym[3]["tier"])
+
+    check("tier boosts are ordered A > B > C",
+          TIER_BOOSTS["A"] > TIER_BOOSTS["B"] > TIER_BOOSTS["C"] == 0.0, TIER_BOOSTS)
+    check("together weights are asymmetric toward the viewer",
+          PROFILE_MIX["together"][0] > PROFILE_MIX["together"][1], PROFILE_MIX)
+    check("single-profile views invert the weights",
+          PROFILE_MIX["me"][0] > PROFILE_MIX["me"][1]
+          and PROFILE_MIX["partner"][1] > PROFILE_MIX["partner"][0], PROFILE_MIX)
+
+    # Ranking: profile-aware path engages and me != partner.
+    r = RecommenderService(db, shortlist_size=50, final_pool=20)
+    together = r.recommend(mood_id=8, media_type="movie", profile="together", page=1, page_size=10)
+    check("profile-aware scoring used (tier field present)",
+          "co_view_tier" in together["items"][0], list(together["items"][0].keys())[:6])
+
+    me = r.recommend(mood_id=8, media_type="movie", profile="me", page=1, page_size=10)
+    him = r.recommend(mood_id=8, media_type="movie", profile="partner", page=1, page_size=10)
+    check("'me' and 'partner' are NOT the same list",
+          [i["id"] for i in me["items"]] != [i["id"] for i in him["items"]])
+    check("own/other taste bonuses actually differ",
+          any(i["taste_bonus_own"] != i["taste_bonus_other"] for i in me["items"]),
+          [(i["taste_bonus_own"], i["taste_bonus_other"]) for i in me["items"][:3]])
+    check("films the viewer already rated are excluded",
+          all(i["id"] not in (1, 3, 4) for i in me["items"]),
+          [i["id"] for i in me["items"]])
+
+    # The tier boost must actually change the order.
+    a_item = [i for i in together["items"] if i["co_view_tier"] == "A"]
+    c_item = [i for i in together["items"] if i["co_view_tier"] == "C"]
+    check("tier A item outranks a lower-scoring tier C item",
+          not (a_item and c_item
+               and a_item[0]["base_weighted_rating"] < c_item[0]["base_weighted_rating"]
+               and a_item[0]["recommendation_score"] < c_item[0]["recommendation_score"]),
+          (a_item[0]["recommendation_score"] if a_item else None,
+           c_item[0]["recommendation_score"] if c_item else None))
+
+
+def test_balanced_queue(build):
+    print("\n[11] Balanced pass walks the genre wheel")
+    db = build()
+    with db.get_connection() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0]
+        combos = ["Comedy, Drama", "Animation, Action", "Horror, Thriller", "Romance, Drama",
+                  "Science Fiction, Adventure", "Family, Music", "Western, Drama"]
+        for i in range(30):
+            for g in combos:
+                conn.execute(
+                    "INSERT INTO media_items (title, release_year, media_type, rating, vote_count, genres) "
+                    "VALUES (?, 2020, 'movie', 7.9, 9000, ?);",
+                    (f"Wheel {n + i} {g[:4]}", g),
+                )
+    q = db.get_rating_queue(profile_id=1, limit=20, balanced=True, seed=1)
+    check("balanced queue returns items", len(q) > 0, len(q))
+    tags = set()
+    for i in q:
+        for g in (i["genres"] or "").split(","):
+            tags.add(g.strip())
+    check("balanced covers many genres", len(tags) >= 5, sorted(tags))
+    check("balanced surfaces Comedy", any("Comedy" in (i["genres"] or "") for i in q))
+    check("balanced surfaces Animation", any("Animation" in (i["genres"] or "") for i in q))
+    check("no duplicate ids", len({i["id"] for i in q}) == len(q))
+    # Same seed is stable; different seed still valid.
+    q2 = db.get_rating_queue(profile_id=1, limit=20, balanced=True, seed=1)
+    check("balanced is deterministic per seed",
+          [i["id"] for i in q] == [i["id"] for i in q2])
+    check("balanced respects limit", len(q) <= 20, len(q))
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -340,6 +436,8 @@ def main():
         test_co_view_history(db)
         test_validation(db)
         test_genre_sql(build)
+        test_profile_scoring(build)
+        test_balanced_queue(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

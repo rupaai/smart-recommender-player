@@ -902,6 +902,7 @@ class DatabaseManager:
         limit: int = 25,
         genres: Optional[List[str]] = None,
         seed: Optional[int] = None,
+        balanced: bool = False,
     ) -> List[Dict[str, Any]]:
         """Items this profile still needs to rate, highest-value first.
 
@@ -922,6 +923,14 @@ class DatabaseManager:
         filters to a slice (the UI's genre chips); when unset, a seeded rotation
         is applied so repeated loads surface different films instead of the same
         canonical top-rated list.
+
+        `balanced=True` is the mode for building a taste profile quickly. It
+        walks the genre wheel so each genre is exhausted before any repeats —
+        20 ratings then covers ~20 genres instead of ~3, which stops the
+        profile from coming out Drama-shaped regardless of what you actually
+        like. Genre is matched on ANY of a film's genres (not the primary one,
+        since TMDB lists "Drama" first on 2,368 items and that would make the
+        wheel useless).
         """
         quality = (
             "(COALESCE(mi.vote_count, 0) * 1.0 / (COALESCE(mi.vote_count, 0) + 1000.0)) * mi.rating"
@@ -955,8 +964,9 @@ class DatabaseManager:
             else:
                 order_sql = "in_library DESC, other_profile_count DESC"
 
-            # Over-fetch so the rotation below has material to shuffle.
-            pool = max(limit * 6, 150)
+            # Over-fetch so the rotation / balancing below has material to work
+            # with. Balanced mode needs far more: it walks the whole genre wheel.
+            pool = max(limit * 12, 600) if balanced else max(limit * 6, 150)
             cursor.execute(
                 f"""
                 SELECT mi.*, {quality} AS quality_score,
@@ -985,6 +995,61 @@ class DatabaseManager:
         if seed is None:
             seed = int(time.time() // 600)
         rng = random.Random(f"{profile_id}:{media_type}:{seed}")
+
+        if balanced:
+            # Walk the genre wheel: take one film from each genre, then a second
+            # from each, and so on. A film counts for every genre it carries, so
+            # "Se7en" (Crime, Mystery, Thriller) can serve any of the three —
+            # that's what stops this collapsing back into Drama-only.
+            #
+            # Ranked by the per-viewer priority first so "rate what he liked"
+            # still wins inside each genre, then by quality.
+            def _balanced_rank(item: Dict[str, Any]) -> Tuple[int, float]:
+                if profile_id == 1:
+                    key = (int(item.get("other_profile_count") or 0),
+                           int(item.get("in_library") or 0))
+                else:
+                    key = (int(item.get("in_library") or 0),
+                           int(item.get("other_profile_count") or 0))
+                return (key[0] + key[1], float(item.get("quality_score") or 0.0))
+
+            ordered = sorted(rows, key=_balanced_rank, reverse=True)
+
+            # Pass 1 seeds the wheel with the strongest pick per genre.
+            wheel: List[str] = []
+            per_genre: Dict[str, List[Dict[str, Any]]] = {}
+            for item in ordered:
+                tags = [g.strip() for g in (item.get("genres") or "").split(",") if g.strip()]
+                if not tags:
+                    tags = ["Other"]
+                for tag in tags:
+                    if tag not in per_genre:
+                        per_genre[tag] = []
+                        wheel.append(tag)
+                    per_genre[tag].append(item)
+
+            # Round-robin the wheel, skipping genres already spent, until we have
+            # enough items or run dry.
+            result: List[Dict[str, Any]] = []
+            seen: set = set()
+            depth = 0
+            while len(result) < limit:
+                added = False
+                for tag in wheel:
+                    if len(result) >= limit:
+                        break
+                    bucket = per_genre.get(tag) or []
+                    while depth < len(bucket):
+                        item = bucket[depth]
+                        depth += 1
+                        if item["id"] not in seen:
+                            seen.add(item["id"])
+                            result.append(item)
+                            added = True
+                            break
+                if not added:
+                    break
+            return result[:limit]
 
         # Genre balance. The pure quality cut is Drama-dominated (~23% of the top
         # 250) because TMDB lists "Drama" first on 2,368 films, so bucketing by
@@ -1052,6 +1117,165 @@ class DatabaseManager:
                 (min_liked,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def get_profile_taste_profile(self, profile_id: int, min_rating: float = 7.0) -> Dict[str, Any]:
+        """One profile's taste: genre/keyword weights from THEIR high ratings.
+
+        Separate from `get_user_taste_profile` (legacy, profile-agnostic) so the
+        two people keep independent tastes and are blended at scoring time —
+        pre-averaging them would split the difference into a lukewarm nothing.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT mi.genres, mi.tier2_keywords, wh.user_rating
+                FROM watch_history wh
+                JOIN media_items mi ON wh.media_item_id = mi.id
+                WHERE wh.profile_id = ? AND wh.status = 'seen' AND wh.user_rating >= ?;
+                """,
+                (profile_id, min_rating),
+            )
+            rows = cursor.fetchall()
+
+        genre_scores: Dict[str, float] = {}
+        keyword_scores: Dict[str, float] = {}
+        for row in rows:
+            weight = float(row["user_rating"] or 7.0) / 10.0
+            for raw in (row["genres"] or "").split(","):
+                key = raw.strip().lower()
+                if key:
+                    genre_scores[key] = genre_scores.get(key, 0.0) + weight
+            for raw in (row["tier2_keywords"] or "").split(","):
+                key = raw.strip().lower()
+                if key:
+                    keyword_scores[key] = keyword_scores.get(key, 0.0) + weight
+
+        return {
+            "preferred_genres": genre_scores,
+            "preferred_keywords": keyword_scores,
+            "rating_count": len(rows),
+        }
+
+    def get_all_profile_tastes(self, min_rating: float = 7.0) -> Dict[int, Dict[str, Any]]:
+        """Every profile's taste + rating stats, keyed by profile id.
+
+        `mean_rating` / `rating_count` drive the shrinkage weights: a profile
+        with 3 ratings should not outvote one with 200.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            profiles = cursor.execute("SELECT id, name FROM profiles ORDER BY id;").fetchall()
+            out: Dict[int, Dict[str, Any]] = {}
+            for p in profiles:
+                pid = p["id"]
+                stats = cursor.execute(
+                    "SELECT COUNT(*) AS n, COALESCE(AVG(user_rating), 0.0) AS m "
+                    "FROM watch_history WHERE profile_id = ? AND status = 'seen' "
+                    "AND user_rating IS NOT NULL;",
+                    (pid,),
+                ).fetchone()
+                taste = self.get_profile_taste_profile(pid, min_rating=min_rating)
+                taste["name"] = p["name"]
+                taste["rating_count"] = int(stats["n"])
+                taste["mean_rating"] = float(stats["m"])
+                # Shrinkage weight: a new rater counts, but less than an
+                # established one. k=10 matches the score-shrinkage constant.
+                taste["weight"] = int(stats["n"]) / (int(stats["n"]) + 10.0)
+                out[pid] = taste
+            return out
+
+    def get_item_co_view(
+        self, item_ids: List[int], viewer_profile_id: Optional[int] = None
+    ) -> Dict[int, Dict[str, Any]]:
+        """Co-view verdicts for many items in one query (avoids N+1).
+
+        Tiers are **viewer-relative** when `viewer_profile_id` is given, because
+        "worth recommending" depends on who is asking:
+
+          A - the viewer liked it AND the other person liked it too
+          B - the OTHER person liked it and the viewer hasn't seen it
+              ("what would he recommend to me?") — only if the viewer is
+              actually unexposed; if the viewer already rated it, recommending
+              it back is pointless
+          C - everything else (exploration, or already seen by the viewer)
+
+        Without a viewer, falls back to the symmetric tier used by the rating
+        UI (where both people are on the same page).
+        """
+        if not item_ids:
+            return {}
+        placeholders = ",".join("?" * len(item_ids))
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            rows = cursor.execute(
+                f"""
+                SELECT media_item_id, profile_id, user_rating, status
+                FROM watch_history
+                WHERE media_item_id IN ({placeholders})
+                """,
+                item_ids,
+            ).fetchall()
+
+        by_item: Dict[int, List[Dict[str, Any]]] = {}
+        for r in rows:
+            by_item.setdefault(r["media_item_id"], []).append({
+                "profile_id": r["profile_id"],
+                "user_rating": r["user_rating"],
+                "status": r["status"],
+            })
+
+        out: Dict[int, Dict[str, Any]] = {}
+        for item_id, verdicts in by_item.items():
+            seen = {v["profile_id"]: v for v in verdicts if v["status"] == "seen"}
+            unseen = {v["profile_id"] for v in verdicts if v["status"] == "not_seen"}
+            liked = [pid for pid, v in seen.items() if (v["user_rating"] or 0) >= 7.0]
+
+            if viewer_profile_id is None:
+                # Symmetric tiers (rating-UI view).
+                if len(liked) >= 2:
+                    tier = "A"
+                elif liked and unseen:
+                    tier = "B"
+                elif liked:
+                    others_seen = [pid for pid in seen if pid not in liked]
+                    tier = "C" if others_seen else "B"
+                elif seen:
+                    tier = "C"
+                else:
+                    tier = "C"
+            else:
+                viewer_seen = viewer_profile_id in seen
+                others = [pid for pid in seen if pid != viewer_profile_id]
+                others_liked = [pid for pid in others if pid in liked]
+                if viewer_seen and others_liked:
+                    tier = "A"          # shared favourite
+                elif (not viewer_seen) and others_liked:
+                    tier = "B"          # "he loved it, you haven't"
+                else:
+                    tier = "C"          # viewer already rated it, or unseen by all
+
+            out[item_id] = {
+                "tier": tier,
+                "liked_by": liked,
+                "seen_by": list(seen.keys()),
+                "not_seen_by": list(unseen),
+                "combined_score": self._shrunk_combined(seen),
+            }
+        return out
+
+    @staticmethod
+    def _shrunk_combined(seen: Dict[int, Dict[str, Any]]) -> Optional[float]:
+        """Bayesian-shrunk weighted mean of the ratings that exist."""
+        ratings = [v["user_rating"] for v in seen.values() if v["user_rating"] is not None]
+        if not ratings:
+            return None
+        # Counts aren't available per-rater here, so weight by how many raters
+        # exist and shrink mildly toward the global mean.
+        n = len(ratings)
+        mean = sum(ratings) / n
+        adj = (n * mean + 10.0 * 6.5) / (n + 10.0)
+        return round(adj, 2)
 
     def get_watch_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Retrieves past watch history entries ordered by date."""

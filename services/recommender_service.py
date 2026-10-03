@@ -129,6 +129,25 @@ def get_vector_embeddings(text: str) -> Optional[List[float]]:
 # ===========================================================================
 # Recommender Service Engine
 # ===========================================================================
+PROFILE_MIX: Dict[str, Tuple[float, float]] = {
+    # (own weight, other weight). Asymmetric on purpose: this is one person's
+    # evening informed by the other's taste, not a committee. Averaging 50/50
+    # would recommend the compromise, which neither of them asked for.
+    "together": (0.6, 0.4),
+    "me": (0.75, 0.25),
+    "partner": (0.25, 0.75),
+}
+
+TIER_BOOSTS: Dict[str, float] = {
+    # A: you both liked it — the scarcest and most useful signal
+    # B: one of you loved it, the other hasn't seen it — "he'd recommend this"
+    # C: exploration
+    "A": 1.5,
+    "B": 0.8,
+    "C": 0.0,
+}
+
+
 class RecommenderService:
     def __init__(
         self,
@@ -144,6 +163,157 @@ class RecommenderService:
         self.shortlist_size = shortlist_size   # Funnel 2: quality-cut pool size
         self.final_pool = final_pool           # Funnel 4: diverse pool for pagination
         self.http = requests.Session()
+
+    def _resolve_profiles(self, profile: str) -> Tuple[int, int]:
+        """Maps a profile selector to concrete profile ids.
+
+        `together` is NOT a stored profile — it is a computed blend over both,
+        so storing it would double-count every film both people rated.
+        """
+        ids = sorted(self.db.get_all_profile_tastes().keys())
+        if not ids:
+            return (1, 2)
+        primary = ids[0]
+        other = ids[1] if len(ids) > 1 else primary
+        return (primary, other)
+
+    def _taste_bonus(
+        self,
+        item_genres: Set[str],
+        item_keywords: Set[str],
+        own_taste: Dict[str, Any],
+        other_taste: Dict[str, Any],
+        mix: Tuple[float, float],
+    ) -> Tuple[float, float, float]:
+        """Blended taste bonus for one item, plus its own/other components.
+
+        Profiles are blended HERE, at scoring time, never pre-averaged into a
+        single profile — that would turn "you like horror, he doesn't" into a
+        lukewarm average nobody actually wants.
+        """
+        own_w, other_w = mix
+
+        def bonus_for(taste: Dict[str, Any]) -> float:
+            genres = taste.get("preferred_genres", {})
+            keywords = taste.get("preferred_keywords", {})
+            total = 0.0
+            for g in item_genres:
+                if g in genres:
+                    total += genres[g] * 0.2
+            for k in item_keywords:
+                if k in keywords:
+                    total += keywords[k] * 0.15
+            return min(total, 2.0)
+
+        own_bonus = bonus_for(own_taste)
+        other_bonus = bonus_for(other_taste)
+        blended = own_w * own_bonus + other_w * other_bonus
+        return blended, own_bonus, other_bonus
+
+    def rank_candidates_profile_aware(
+        self,
+        candidates: List[Dict[str, Any]],
+        profile: str = "together",
+        query: Optional[str] = None,
+        exclude_ids: Optional[Set[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Profile-aware scoring: Bayesian quality + blended taste + co-view tier.
+
+        The tier boost is what makes "together" work. Without it a Tier A film
+        (you both loved it) always loses to a marginally better-rated unseen
+        one, and your shared favourites quietly disappear from the list.
+        """
+        tastes = self.db.get_all_profile_tastes()
+        if not tastes:
+            tastes = {1: {"preferred_genres": {}, "preferred_keywords": {},
+                          "rating_count": 0, "name": "Me", "weight": 0.0},
+                      2: {"preferred_genres": {}, "preferred_keywords": {},
+                          "rating_count": 0, "name": "Partner", "weight": 0.0}}
+        ids = sorted(tastes.keys())
+        own_id, other_id = ids[0], (ids[1] if len(ids) > 1 else ids[0])
+
+        if profile == "partner":
+            own_id, other_id = other_id, own_id   # view from his seat
+
+        own_taste = tastes.get(own_id, {})
+        other_taste = tastes.get(other_id, {})
+
+        # For `me`/`partner` the mix is defined from the VIEWER's seat, so
+        # swapping the ids must also swap which weight is "own". Swapping ids
+        # alone would leave both modes using the same 0.75 on profile 1, making
+        # `me` and `partner` return identical lists.
+        if profile == "me":
+            own_w, other_w = PROFILE_MIX["me"]
+        elif profile == "partner":
+            own_w, other_w = PROFILE_MIX["partner"]
+        else:
+            own_w, other_w = PROFILE_MIX["together"]
+        mix = (own_w, other_w)
+
+        coview = self.db.get_item_co_view(
+            [c["id"] for c in candidates if c.get("id")], viewer_profile_id=own_id
+        )
+        exclude = exclude_ids or set()
+        # In `me`/`partner` mode the viewer has no use for films they've already
+        # rated. In `together` mode both may still have untested picks (tier B),
+        # so only films BOTH have seen are dropped — handled upstream.
+        viewer_seen_ids = {
+            iid for iid, cv in coview.items() if own_id in (cv.get("seen_by") or [])
+        }
+        if profile in ("me", "partner"):
+            exclude = exclude | viewer_seen_ids
+        query_words = set(re.findall(r"\w+", query.lower())) if query else set()
+
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for item in candidates:
+            if item.get("id") in exclude:
+                continue
+
+            base_score = calculate_weighted_rating(
+                float(item.get("rating") or 6.0),
+                int(item.get("vote_count") or 100),
+            )
+
+            item_genres = set(_split_lower(item.get("genres")))
+            item_keywords = set(_split_lower(item.get("tier2_keywords")))
+            taste_bonus, own_bonus, other_bonus = self._taste_bonus(
+                item_genres, item_keywords, own_taste, other_taste, mix
+            )
+
+            cv = coview.get(item.get("id")) or {}
+            tier = cv.get("tier", "C")
+            tier_boost = TIER_BOOSTS.get(tier, 0.0)
+
+            relevance_boost = 0.0
+            if query_words:
+                item_text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
+                matches = sum(1 for w in query_words if len(w) > 3 and w in item_text)
+                relevance_boost = min(matches * 0.3, 2.0)
+
+            final_score = base_score + taste_bonus + tier_boost + relevance_boost
+
+            item["recommendation_score"] = round(final_score, 2)
+            item["base_weighted_rating"] = round(base_score, 2)
+            item["taste_bonus"] = round(taste_bonus, 2)
+            item["taste_bonus_own"] = round(own_bonus, 2)
+            item["taste_bonus_other"] = round(other_bonus, 2)
+            item["co_view_tier"] = tier
+            item["tier_boost"] = tier_boost
+            item["relevance_boost"] = round(relevance_boost, 2)
+            if cv.get("combined_score") is not None:
+                item["combined_score"] = cv["combined_score"]
+            if cv.get("seen_by"):
+                item["seen_by_profile_ids"] = cv["seen_by"]
+            other_name = other_taste.get("name") or "They"
+            if tier == "A":
+                item["tier_reason"] = "You both liked it"
+            elif tier == "B":
+                item["tier_reason"] = f"{other_name} loved this — you haven't"
+
+            scored.append((final_score, item))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item for _, item in scored]
 
     def rank_candidates(
         self,
@@ -260,6 +430,7 @@ class RecommenderService:
         genres_override: Optional[List[str]] = None,
         min_rating_override: Optional[float] = None,
         variety: bool = False,
+        profile: str = "together",
     ) -> Dict[str, Any]:
         """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination."""
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
@@ -284,10 +455,17 @@ class RecommenderService:
         # Stage 1: Quality-cut candidate funnel — hard filters + Bayesian
         # audience-weighted ordering computed in SQL (real vote counts), cut
         # to the shortlist so Python scoring never touches the full catalogue.
+        #
+        # NB: the SQL `exclude_watched` drops anything EITHER profile has
+        # watched. In a profile-aware run that would delete every rated film
+        # before the scorer could see its tier, making Tier A unreachable — so
+        # watched exclusion is handled in Python below, where "seen by both"
+        # can be distinguished from "seen by one".
+        sql_exclude_watched = exclude_watched and profile not in PROFILE_MIX
         candidates = self.db.get_top_candidates(
             media_type=media_type,
             genres=genres if genres else None,
-            exclude_watched=exclude_watched,
+            exclude_watched=sql_exclude_watched,
             min_rating=min_rating,
             era=era_preference,
             duration=duration_preference if media_type == "movie" else None,
@@ -311,9 +489,41 @@ class RecommenderService:
             elif duration_preference == "epic":
                 candidates = [c for c in candidates if (c.get("runtime") or 0) > 140] or candidates
 
-        # Stage 2: Personal Taste & Vector Scoring
-        taste = self.db.get_user_taste_profile(min_rating=7.0)
-        ranked = self.rank_candidates(candidates, taste, query=query)
+        # Profile-aware exclusion, applied in Python so "seen by both" can be told
+        # apart from "seen by one". A film only ONE person has seen is exactly
+        # the Tier B pick we want to surface ("he loved it, you haven't"), so it
+        # is kept and badged rather than hidden. A film BOTH have seen is a
+        # genuine "already watched together" and is dropped.
+        if exclude_watched and profile in PROFILE_MIX:
+            coview_all = self.db.get_item_co_view(
+                [c["id"] for c in candidates if c.get("id")], viewer_profile_id=None
+            )
+            candidates = [
+                c for c in candidates
+                if len((coview_all.get(c["id"]) or {}).get("seen_by") or []) < 2
+            ]
+            if not candidates:
+                return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
+
+        # Stage 2: Personal Taste & Co-view Scoring
+        # Profile-aware path blends the two people's tastes and applies tier
+        # boosts; the legacy path is unchanged when no profile signal exists.
+        has_profile_signal = any(
+            t.get("rating_count", 0) > 0 for t in self.db.get_all_profile_tastes().values()
+        )
+        if has_profile_signal:
+            ranked = self.rank_candidates_profile_aware(
+                candidates, profile=profile, query=query
+            )
+        else:
+            taste = self.db.get_user_taste_profile(min_rating=7.0)
+            ranked = self.rank_candidates(candidates, taste, query=query)
+            for item in ranked:
+                item["co_view_tier"] = "C"
+                item["tier_boost"] = 0.0
+
+        if not ranked:
+            return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
 
         # Stage 3: Candidate Diversity Pruning (MMR)
         # Process the shortlist through MMR to build the diverse final pool.

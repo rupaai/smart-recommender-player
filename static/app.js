@@ -3,6 +3,8 @@
 const state = {
   activeTab: 'discover',
   recMediaType: 'movie',    // 'movie' or 'tv'
+  recProfile: 'together',  // 'me' | 'partner' | 'together' — whose taste to optimise for
+  dismissedIds: new Set(), // items tapped away ("not this one")
   directMediaType: 'movie', // 'movie' or 'tv'
   activeMoodId: 8,
   activeSubMood: null,
@@ -30,6 +32,7 @@ const state = {
   rateCursor: 0,           // how many items fetched so far (for "Load more")
   rateGenres: [],          // active genre chips ([] = anything)
   rateSeed: null,          // null = 10-minute rotation bucket
+  rateBalanced: true,      // walk the genre wheel (build a profile fast)
   rateSkipped: new Set()   // item ids skipped this session
 };
 
@@ -100,6 +103,15 @@ function switchTab(tab) {
 // ---------------------------------------------------------------------------
 // 3. Recommender: Movie / TV Toggle & Mood Picker
 // ---------------------------------------------------------------------------
+function setRecProfile(profile) {
+  if (state.recProfile === profile) return;
+  state.recProfile = profile;
+  document.querySelectorAll('[data-rec-profile]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.recProfile === profile);
+  });
+  fetchRecommendations();
+}
+
 function setRecMediaType(type) {
   state.recMediaType = type;
   document.getElementById('recTypeMovieBtn').classList.toggle('active', type === 'movie');
@@ -259,7 +271,8 @@ async function fetchRecommendations() {
       min_rating: state.minRating,
       top_n: 4,
       include_watched: state.includeWatched,
-      query: query || null
+      query: query || null,
+      profile: state.recProfile
     };
 
     const res = await fetch('/api/recommend', {
@@ -301,6 +314,15 @@ function renderRecommendations(movies, engine) {
 
     const posterSrc = m.poster_url || 'https://via.placeholder.com/150x225/161722/ffffff?text=No+Poster';
     const tasteBonus = m.taste_bonus > 0 ? `<span class="badge badge-bonus">+${m.taste_bonus} Taste Boost</span>` : '';
+    // Co-view badge: why this film is ranked where it is.
+    const tier = m.co_view_tier;
+    const tierBadge = tier === 'A'
+      ? `<span class="badge badge-coview-a" title="You both liked this">💞 You both liked it</span>`
+      : tier === 'B'
+        ? `<span class="badge badge-coview-b" title="${escapeHtml(m.tier_reason || 'One of you loved it; the other hasn\'t seen it')}">🧑 ${escapeHtml(m.tier_reason || "He'd recommend this")}</span>`
+        : '';
+    const combinedBadge = (m.combined_score && tier === 'A')
+      ? `<span class="badge badge-coview-score" title="Your combined score for this film">Together ★ ${m.combined_score}</span>` : '';
     const queryBoost = m.query_boost > 0 ? `<span class="badge badge-query">+${m.query_boost} Match</span>` : '';
     const runtimeStr = m.runtime ? `<span class="badge badge-runtime">⏱ ${m.runtime}m</span>` : '';
     const engineBadge = engine === 'generative'
@@ -329,6 +351,8 @@ function renderRecommendations(movies, engine) {
             <span class="badge badge-tmdb">★ ${m.rating || 'N/A'}</span>
             ${engineBadge}
             ${tasteBonus}
+            ${tierBadge}
+            ${combinedBadge}
             ${queryBoost}
             ${runtimeStr}
           </div>
@@ -1202,6 +1226,7 @@ async function loadRatingQueue(reset) {
     });
     if (state.rateGenres.length) params.set('genres', state.rateGenres.join(','));
     if (state.rateSeed != null) params.set('seed', state.rateSeed);
+    if (state.rateBalanced) params.set('balanced', 'true');
 
     const res = await fetch(`/api/ratings/queue?${params}`);
     const data = await res.json();
@@ -1241,12 +1266,24 @@ function shuffleRatingQueue() {
   loadRatingQueue(true);
 }
 
+function setRateBalanced() {
+  state.rateBalanced = !state.rateBalanced;
+  renderRateGenres();
+  loadRatingQueue(true);
+}
+
 function renderRateGenres() {
   const container = document.getElementById('rateGenreChips');
   if (!container) return;
   const genres = ['Comedy', 'Drama', 'Action', 'Horror', 'Romance',
                   'Science Fiction', 'Animation', 'Thriller', 'Documentary'];
-  container.innerHTML = genres.map(g => `
+  const balancedChip = `
+    <button class="chip ${state.rateBalanced ? 'active' : ''}"
+            onclick="setRateBalanced()"
+            title="Rate one film per genre before repeating — builds your profile faster">
+      🌈 Balanced
+    </button>`;
+  container.innerHTML = balancedChip + genres.map(g => `
     <button class="chip ${state.rateGenres.includes(g) ? 'active' : ''}"
             onclick="setRateGenre('${g}')">${g}</button>
   `).join('');

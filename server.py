@@ -148,6 +148,8 @@ class RecommendRequest(BaseModel):
     sub_mood: Optional[str] = None
     genres: Optional[List[str]] = None
     min_rating: Optional[float] = None
+    profile: str = "together"  # 'me' | 'partner' | 'together'
+    exclude_ids: Optional[List[int]] = None
 
 
 class StartWatchRequest(BaseModel):
@@ -330,10 +332,12 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
         genres_override=genres or None,
         min_rating_override=req.min_rating,
         variety=True,   # cold-start freshness: seeded 10-minute rotation
+        profile=req.profile,
     )
 
     # Feature-flag router: dispatches between the untouched legacy recommender
     # and the parallel TIGER generative retrieval engine (with fallback safety).
+    # Per-item exclusion is applied after routing so it works for both engines.
     results = await asyncio.to_thread(
         route_recommend,
         recommender_service,
@@ -341,6 +345,14 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
         generative_retriever.engine_mode,
         **kwargs,
     )
+
+    # exclude_ids: per-tap "not this one" — drop items the user dismissed so
+    # the next request surfaces something else instead of the same list.
+    if req.exclude_ids and results.get("items"):
+        excluded = set(req.exclude_ids)
+        results["items"] = [i for i in results["items"] if i.get("id") not in excluded]
+        results["total_results"] = len(results["items"])
+        results["has_more"] = False
     return results
 
 
@@ -427,12 +439,14 @@ async def get_rating_queue(
     limit: int = Query(default=25, ge=1, le=100),
     genres: Optional[str] = Query(default=None, description="Comma-separated genre filter"),
     seed: Optional[int] = Query(default=None, description="Rotation seed; omit to use a 10-min bucket"),
+    balanced: bool = Query(default=False, description="Walk the genre wheel — best for building a taste profile fast"),
 ) -> Dict[str, Any]:
     """Next items for this profile to rate, highest-value first.
 
     Each profile rates independently — this is a to-do list *for the active
     profile*, not a list of their existing ratings. `genres` narrows to a slice
-    (the UI's genre chips); `seed` rotates which films come up.
+    (the UI's genre chips); `seed` rotates which films come up; `balanced` walks
+    the genre wheel so a short rating session still covers many genres.
     """
     # FastAPI substitutes Query(...) defaults over HTTP, but a direct call
     # (tests, scripts) passes the Query object itself, which has no .split().
@@ -443,8 +457,9 @@ async def get_rating_queue(
         else None
     )
     seed_value = seed if isinstance(seed, int) else None
+    balanced_value = balanced if isinstance(balanced, bool) else False
     items = await asyncio.to_thread(
-        db.get_rating_queue, profile_id, media_type, limit, genre_list, seed_value
+        db.get_rating_queue, profile_id, media_type, limit, genre_list, seed_value, balanced_value
     )
 
     # Attach what the OTHER profile already said, so the card can show

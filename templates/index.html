@@ -65,6 +65,23 @@
         <button id="recTypeTvBtn" class="media-toggle-btn" onclick="setRecMediaType('tv')">📺 TV Shows</button>
       </div>
 
+      <!-- Whose taste to optimise for. Ratings come from two profiles, so the
+           recommender needs to know whose evening it's planning. -->
+      <div class="rec-profile-row">
+        <span class="rate-genre-label">For</span>
+        <div class="rec-profile-group">
+          <button class="chip active" data-rec-profile="together"
+                  onclick="setRecProfile('together')"
+                  title="Blend both your tastes — films either of you hasn't seen, weighted toward what the other liked">💞 Us, together</button>
+          <button class="chip" data-rec-profile="me"
+                  onclick="setRecProfile('me')"
+                  title="Mostly your taste, with a little of theirs">🙂 Just me</button>
+          <button class="chip" data-rec-profile="partner"
+                  onclick="setRecProfile('partner')"
+                  title="Mostly their taste — what they'd recommend to you">🧑 His picks</button>
+        </div>
+      </div>
+
       <div class="section-title">
         <span>How are you feeling tonight?</span>
       </div>
