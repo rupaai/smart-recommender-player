@@ -6,7 +6,9 @@ Central hub managing the normalized SQLite catalogue, media sources, and watch h
 from __future__ import annotations
 
 import os
+import random
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -898,17 +900,28 @@ class DatabaseManager:
         profile_id: int = 1,
         media_type: str = "movie",
         limit: int = 25,
+        genres: Optional[List[str]] = None,
+        seed: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Items this profile still needs to rate, highest-value first.
 
-        Priority order is what makes the Rate tab worth using:
-          1. in the library but never rated by this profile — turns existing
-             watch signal into taste signal
-          2. rated by the other profile but not this one — the co-view gap
-          3. unseen and highly rated — seeds new signal
+        Each profile rates independently, so this is a to-do list *for the
+        active profile* — not a list of their existing ratings.
 
-        Within each tier the Bayesian quality cut leads, so the queue starts
-        with genuinely good films rather than obscurity.
+        Priority depends on WHO is rating:
+          - For profile 1: films profile 2 already rated lead (the co-view gap —
+            "he loved it, have you?"), then in-library films, then quality.
+          - For profile 2: in-library films lead (rate what's actually on disk),
+            then films profile 1 rated, then quality.
+        The old fixed `in_library, other_profile_count` order pushed profile 1's
+        own ratings to the top of profile 2's queue, which read as "here are my
+        opinions, rate them".
+
+        Genre balance: the pure quality cut is Drama-dominated (~23% of the top
+        250), which made the queue feel like one serious register. `genres`
+        filters to a slice (the UI's genre chips); when unset, a seeded rotation
+        is applied so repeated loads surface different films instead of the same
+        canonical top-rated list.
         """
         quality = (
             "(COALESCE(mi.vote_count, 0) * 1.0 / (COALESCE(mi.vote_count, 0) + 1000.0)) * mi.rating"
@@ -916,6 +929,34 @@ class DatabaseManager:
         )
         with self.get_connection() as conn:
             cursor = conn.cursor()
+
+            # Placeholder order must follow the SQL text exactly:
+            #   1. other_profile_count != ?   (in the SELECT)
+            #   2. media_type = ?            (in the WHERE)
+            #   3. genre LIKE ?              (appended into the WHERE)
+            #   4. profile_id = ?            (NOT EXISTS, last)
+            params: List[Any] = [profile_id, media_type]
+
+            genre_clauses = []
+            for g in genres or []:
+                needle = (g or "").strip().lower().replace(" ", "")
+                if needle:
+                    genre_clauses.append(
+                        "',' || REPLACE(LOWER(COALESCE(mi.genres, '')), ' ', '') || ',' LIKE ?"
+                    )
+                    params.append(f"%,{needle},%")
+            genre_sql = (" AND (" + " OR ".join(genre_clauses) + ")") if genre_clauses else ""
+
+            params.append(profile_id)
+
+            # Priority expression depends on the viewer (see docstring).
+            if profile_id == 1:
+                order_sql = "other_profile_count DESC, in_library DESC"
+            else:
+                order_sql = "in_library DESC, other_profile_count DESC"
+
+            # Over-fetch so the rotation below has material to shuffle.
+            pool = max(limit * 6, 150)
             cursor.execute(
                 f"""
                 SELECT mi.*, {quality} AS quality_score,
@@ -925,18 +966,65 @@ class DatabaseManager:
                          WHERE w2.media_item_id = mi.id AND w2.profile_id != ?) AS other_profile_count
                 FROM media_items mi
                 WHERE mi.media_type = ?
-                  AND mi.rating >= 5.0
+                  AND mi.rating >= 5.0{genre_sql}
                   AND NOT EXISTS (
                         SELECT 1 FROM watch_history w
                         WHERE w.media_item_id = mi.id AND w.profile_id = ?
                   )
-                ORDER BY in_library DESC, other_profile_count DESC,
-                         quality_score DESC, mi.vote_count DESC
+                ORDER BY {order_sql}, quality_score DESC, mi.vote_count DESC
                 LIMIT ?;
                 """,
-                (profile_id, media_type, profile_id, limit),
+                (*params, pool),
             )
-            return [dict(r) for r in cursor.fetchall()]
+            rows = [dict(r) for r in cursor.fetchall()]
+
+        # Seeded rotation. Without this the queue is identical on every load, so
+        # skipping just walks the same canonical list. A per-(profile, 10-min
+        # bucket) seed keeps pagination coherent within a session while still
+        # changing what gets suggested over time.
+        if seed is None:
+            seed = int(time.time() // 600)
+        rng = random.Random(f"{profile_id}:{media_type}:{seed}")
+
+        # Genre balance. The pure quality cut is Drama-dominated (~23% of the top
+        # 250) because TMDB lists "Drama" first on 2,368 films, so bucketing by
+        # the *primary* genre just produces one giant Drama bucket. Instead each
+        # film is filed under a pseudo-randomly chosen one of ITS genres, then
+        # buckets are round-robined — so a Comedy that happens to lead with Drama
+        # still surfaces in the comedy bucket some of the time.
+        by_genre: Dict[str, List[Dict[str, Any]]] = {}
+        for item in rows:
+            genres = [g.strip() for g in (item.get("genres") or "").split(",") if g.strip()]
+            if not genres:
+                genres = ["Other"]
+            bucket = genres[rng.randrange(len(genres))]
+            by_genre.setdefault(bucket, []).append(item)
+
+        interleaved: List[Dict[str, Any]] = []
+        genre_keys = sorted(by_genre)
+        rng.shuffle(genre_keys)
+        while genre_keys:
+            for key in list(genre_keys):
+                interleaved.append(by_genre[key].pop(0))
+                if not by_genre[key]:
+                    genre_keys.remove(key)
+
+        # Rotate the head so consecutive loads differ, then restore the per-viewer
+        # priority with a stable sort. Sorting on priority only (never quality)
+        # keeps the genre round-robin intact inside each priority group.
+        if interleaved:
+            offset = rng.randrange(len(interleaved))
+            interleaved = interleaved[offset:] + interleaved[:offset]
+
+        def _priority(item: Dict[str, Any]) -> Tuple[int, int]:
+            if profile_id == 1:
+                return (int(item.get("other_profile_count") or 0), int(item.get("in_library") or 0))
+            return (int(item.get("in_library") or 0), int(item.get("other_profile_count") or 0))
+
+        # Stable sort: keeps the genre round-robin order *within* each priority
+        # group, so balancing survives while priority still leads.
+        interleaved.sort(key=_priority, reverse=True)
+        return interleaved[:limit]
 
     def get_co_view_history(self, min_liked: float = 7.0) -> List[Dict[str, Any]]:
         """Items BOTH profiles rated >= min_liked — the virtual-user sequence.

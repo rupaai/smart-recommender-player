@@ -27,7 +27,10 @@ const state = {
   rateProfiles: [],
   rateQueue: [],
   rateIndex: 0,
-  rateCursor: 0            // how many items fetched so far (for "Load more")
+  rateCursor: 0,           // how many items fetched so far (for "Load more")
+  rateGenres: [],          // active genre chips ([] = anything)
+  rateSeed: null,          // null = 10-minute rotation bucket
+  rateSkipped: new Set()   // item ids skipped this session
 };
 
 // Initialize app on DOM ready
@@ -1125,6 +1128,7 @@ function escapeHtml(str) {
 const RATE_PAGE = 25;
 
 function initRateTab() {
+  renderRateGenres();
   if (state.rateProfiles.length === 0) {
     loadProfiles();
   } else {
@@ -1138,7 +1142,11 @@ async function loadProfiles() {
     const res = await fetch('/api/profiles');
     state.rateProfiles = await res.json();
     renderRateProfiles();
-    await loadRatingQueue(true);
+    if (state.rateQueue.length === 0) {
+      await loadRatingQueue(true);
+    } else {
+      renderRateCard();
+    }
     loadCoViewSummary();
   } catch (err) {
     console.error('Failed to load profiles:', err);
@@ -1182,15 +1190,29 @@ async function loadRatingQueue(reset) {
     state.rateQueue = [];
     state.rateIndex = 0;
     state.rateCursor = 0;
+    state.rateSkipped = new Set();
   }
+  const activeProfile = activeRateProfile();
   try {
     const limit = state.rateCursor === 0 ? RATE_PAGE : RATE_PAGE * 2;
-    const res = await fetch(
-      `/api/ratings/queue?profile_id=${state.rateProfileId}&media_type=${state.rateMediaType}&limit=${limit}`
-    );
+    const params = new URLSearchParams({
+      profile_id: state.rateProfileId,
+      media_type: state.rateMediaType,
+      limit: limit
+    });
+    if (state.rateGenres.length) params.set('genres', state.rateGenres.join(','));
+    if (state.rateSeed != null) params.set('seed', state.rateSeed);
+
+    const res = await fetch(`/api/ratings/queue?${params}`);
     const data = await res.json();
-    state.rateQueue = data.items || [];
-    state.rateCursor = state.rateQueue.length;
+
+    // Drop anything already rated or skipped this session so skipping really
+    // advances rather than looping back to the same card.
+    state.rateQueue = (data.items || []).filter(
+      it => !state.rateSkipped.has(it.id) && !(it.co_view?.verdicts || [])
+        .some(v => v.profile_id === state.rateProfileId)
+    );
+    state.rateCursor = (data.items || []).length;
     state.rateIndex = 0;
     renderRateCard();
     loadCoViewSummary();
@@ -1200,7 +1222,38 @@ async function loadRatingQueue(reset) {
   }
 }
 
+function activeRateProfile() {
+  return state.rateProfiles.find(p => p.id === state.rateProfileId) || { name: 'you' };
+}
+
+function setRateGenre(genre) {
+  if (state.rateGenres.includes(genre)) {
+    state.rateGenres = state.rateGenres.filter(g => g !== genre);
+  } else {
+    state.rateGenres.push(genre);
+  }
+  loadRatingQueue(true);
+}
+
+function shuffleRatingQueue() {
+  // A fresh random seed draws a genuinely different set from the pool.
+  state.rateSeed = Math.floor(Math.random() * 100000);
+  loadRatingQueue(true);
+}
+
+function renderRateGenres() {
+  const container = document.getElementById('rateGenreChips');
+  if (!container) return;
+  const genres = ['Comedy', 'Drama', 'Action', 'Horror', 'Romance',
+                  'Science Fiction', 'Animation', 'Thriller', 'Documentary'];
+  container.innerHTML = genres.map(g => `
+    <button class="chip ${state.rateGenres.includes(g) ? 'active' : ''}"
+            onclick="setRateGenre('${g}')">${g}</button>
+  `).join('');
+}
+
 function resetRatingQueue() {
+  state.rateSeed = Math.floor(Math.random() * 100000);
   loadRatingQueue(true);
 }
 
@@ -1212,13 +1265,14 @@ function renderRateCard() {
   const card = document.getElementById('rateCard');
   const empty = document.getElementById('rateEmpty');
   const item = currentRateItem();
+  const me = activeRateProfile();
 
   if (!item) {
     card.style.display = 'none';
     empty.style.display = 'block';
     const total = state.rateCursor;
     document.getElementById('rateProgress').innerText =
-      total > 0 ? `All ${total} rated.` : 'Nothing left to rate here.';
+      total > 0 ? `Nothing left to rate here (${total} shown).` : 'Nothing left to rate here.';
     return;
   }
   card.style.display = 'block';
@@ -1227,7 +1281,8 @@ function renderRateCard() {
   const done = state.rateIndex;
   const total = state.rateQueue.length;
   document.getElementById('rateProgress').innerText =
-    `${done + 1} of ${total} · ${state.rateMediaType === 'tv' ? 'TV Shows' : 'Movies'}`;
+    `Rating as ${me.name} · ${done + 1} of ${total}` +
+    (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : '');
 
   const poster = item.poster_url
     ? `<img src="${item.poster_url}" class="rate-poster" alt="${escapeHtml(item.title)} poster"
@@ -1273,11 +1328,12 @@ function renderRateCard() {
 
     <div class="rate-actions">
       <button class="btn-not-seen" onclick="submitNotSeen()">
-        👁️ We haven't seen it
+        👁️ I haven't seen it
       </button>
       <button class="chip" onclick="skipRateItem()">Skip</button>
+      <button class="chip" onclick="shuffleRatingQueue()" title="Show different films">🎲 Shuffle</button>
     </div>
-    <p class="rate-hint">Tip: keys 1–0 rate, N = haven't seen, S = skip</p>
+    <p class="rate-hint">Keys 1–0 rate · N = I haven't seen it · S = skip</p>
   `;
 }
 
@@ -1328,13 +1384,24 @@ function flashRateFeedback(summary) {
 
 function advanceQueue() {
   state.rateIndex += 1;
-  // Refresh the profile counters (rating_count) without re-fetching the queue.
+  // Refresh the profile counters (rating_count) without resetting the queue —
+  // reloading the queue here used to snap the card back to the start.
   loadProfiles();
 }
 
 function skipRateItem() {
+  const item = currentRateItem();
+  if (item) {
+    // Remember it so a reload doesn't hand back the same film.
+    state.rateSkipped.add(item.id);
+  }
   state.rateIndex += 1;
-  renderRateCard();
+  // Near the end, pull a fresh batch so skipping always finds something new.
+  if (state.rateIndex >= state.rateQueue.length - 1) {
+    loadRatingQueue(false);
+  } else {
+    renderRateCard();
+  }
 }
 
 async function loadCoViewSummary() {

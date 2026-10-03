@@ -425,14 +425,27 @@ async def get_rating_queue(
     profile_id: int = 1,
     media_type: str = "movie",
     limit: int = Query(default=25, ge=1, le=100),
+    genres: Optional[str] = Query(default=None, description="Comma-separated genre filter"),
+    seed: Optional[int] = Query(default=None, description="Rotation seed; omit to use a 10-min bucket"),
 ) -> Dict[str, Any]:
     """Next items for this profile to rate, highest-value first.
 
-    Ordered so the queue leads with films already in the library that nobody
-    has rated (turning watch events into taste signal), then the co-view gap,
-    then unseen high-rated picks.
+    Each profile rates independently — this is a to-do list *for the active
+    profile*, not a list of their existing ratings. `genres` narrows to a slice
+    (the UI's genre chips); `seed` rotates which films come up.
     """
-    items = await asyncio.to_thread(db.get_rating_queue, profile_id, media_type, limit)
+    # FastAPI substitutes Query(...) defaults over HTTP, but a direct call
+    # (tests, scripts) passes the Query object itself, which has no .split().
+    # Normalise anything non-string to None.
+    genre_list = (
+        [g.strip() for g in genres.split(",") if g.strip()]
+        if isinstance(genres, str) and genres
+        else None
+    )
+    seed_value = seed if isinstance(seed, int) else None
+    items = await asyncio.to_thread(
+        db.get_rating_queue, profile_id, media_type, limit, genre_list, seed_value
+    )
 
     # Attach what the OTHER profile already said, so the card can show
     # "you rated this 8/10" while the current profile rates it too.

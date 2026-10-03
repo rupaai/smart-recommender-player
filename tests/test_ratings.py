@@ -156,27 +156,82 @@ def test_shrinkage(db):
 
 
 def test_queue(build):
-    print("\n[6] Queue prioritises in-library, then co-view gap")
+    print("\n[6] Queue prioritises per-viewer, balanced, rotating")
     # Fresh DB: earlier tests rate items and add filler rows, which would
     # exclude candidates (exclude_watched) and crowd out the library item.
     db = build()
-    queue = db.get_rating_queue(profile_id=2, media_type="movie", limit=10)
-    titles = [i["title"] for i in queue]
-    check("in-library item leads the queue", titles[0] == "Inception", titles[:3])
-    check("library flag set on it", queue[0]["in_library"] == 1, queue[0]["in_library"])
-    check("TV excluded from a movie queue",
-          all(i["media_type"] == "movie" for i in queue))
+    # Profile 2 sees in-library first; profile 1 sees other-rated first.
+    q2 = db.get_rating_queue(profile_id=2, limit=10, seed=1)
+    check("in-library item leads the partner queue",
+          q2[0]["title"] == "Inception", [i["title"] for i in q2[:3]])
+    check("library flag set on it", q2[0]["in_library"] == 1, q2[0]["in_library"])
 
+    # Profile 1 rated nothing here, so its queue leads with the co-view gap.
+    db.rate_item(3, profile_id=2, user_rating=8.0)   # Jaws rated by partner
+    q1 = db.get_rating_queue(profile_id=1, limit=10, seed=1)
+    check("partner-rated film leads MY queue", q1[0]["title"] == "Jaws",
+          [i["title"] for i in q1[:3]])
+    check("it is flagged as rated by the other profile",
+          q1[0]["other_profile_count"] == 1, q1[0]["other_profile_count"])
+
+    check("TV excluded from a movie queue",
+          all(i["media_type"] == "movie" for i in q1))
     tv_queue = db.get_rating_queue(profile_id=2, media_type="tv", limit=10)
     check("TV queue returns only TV", [i["media_type"] for i in tv_queue] == ["tv"])
 
-    # Already-rated items drop out, and switching profiles changes the queue.
-    db.rate_item(1, profile_id=2, user_rating=8.0)
-    check("rated item leaves the queue",
-          "Inception" not in [i["title"] for i in db.get_rating_queue(profile_id=2, limit=10)])
-    q1 = {i["id"] for i in db.get_rating_queue(profile_id=1, limit=20)}
-    q2 = {i["id"] for i in db.get_rating_queue(profile_id=2, limit=20)}
-    check("queues differ per profile", q1 != q2)
+    # Already-rated items drop out. Jaws was rated by partner above and is
+    # still unrated by me, so it must remain in MY queue while being gone
+    # from the partner's (who already rated it).
+    check("rated item leaves that profile's queue",
+          "Jaws" not in [i["title"] for i in db.get_rating_queue(profile_id=2, limit=10, seed=1)])
+    check("item rated only by the other profile stays in MY queue",
+          "Jaws" in [i["title"] for i in db.get_rating_queue(profile_id=1, limit=10, seed=1)])
+    db.rate_item(3, profile_id=1, user_rating=9.0)   # now rated by both
+    check("rated by both -> gone from both queues",
+          "Jaws" not in [i["title"] for i in db.get_rating_queue(profile_id=1, limit=10, seed=1)]
+          and "Jaws" not in [i["title"] for i in db.get_rating_queue(profile_id=2, limit=10, seed=1)])
+
+    # Genre balance fixture: needs a pool with real genre variety before the
+    # rotation/balance assertions mean anything.
+    with db.get_connection() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0]
+        for i in range(60):
+            for genre in ("Comedy, Drama", "Animation, Action", "Horror, Thriller",
+                          "Romance, Drama", "Science Fiction, Adventure"):
+                conn.execute(
+                    "INSERT INTO media_items (title, release_year, media_type, rating, vote_count, genres) "
+                    "VALUES (?, 2021, 'movie', 7.9, 9000, ?);",
+                    (f"Spread {n + i} {genre[:3]}", genre),
+                )
+
+    # Determinism + rotation (on a pool big enough to rotate).
+    a = [i["id"] for i in db.get_rating_queue(profile_id=1, limit=8, seed=7)]
+    b = [i["id"] for i in db.get_rating_queue(profile_id=1, limit=8, seed=7)]
+    c = [i["id"] for i in db.get_rating_queue(profile_id=1, limit=8, seed=8)]
+    check("same seed is stable", a == b, (a, b))
+    check("different seed rotates the queue", a != c, (a, c))
+
+    # Genre filter.
+    comedy = db.get_rating_queue(profile_id=1, genres=["Comedy"], limit=10, seed=1)
+    check("genre filter returns only that genre",
+          comedy and all("Comedy" in (i["genres"] or "") for i in comedy),
+          [i["genres"] for i in comedy])
+    check("genre filter is non-empty", len(comedy) > 0)
+    multi = db.get_rating_queue(profile_id=1, genres=["Horror", "Animation"], limit=10, seed=1)
+    check("multiple genres OR together",
+          multi and all(("Horror" in (i["genres"] or "")) or ("Animation" in (i["genres"] or ""))
+                        for i in multi), [i["genres"] for i in multi])
+    check("unknown genre returns empty",
+          db.get_rating_queue(profile_id=1, genres=["Polka"], limit=10, seed=1) == [])
+
+    spread = db.get_rating_queue(profile_id=1, limit=25, seed=3)
+    primaries = [(i["genres"] or "").split(",")[0].strip() for i in spread]
+    check("queue is not dominated by one primary genre",
+          len(set(primaries)) >= 4, sorted(set(primaries)))
+    check("genre balance keeps films from several registers",
+          any("Comedy" in (i["genres"] or "") for i in spread)
+          and any("Animation" in (i["genres"] or "") for i in spread),
+          primaries)
 
 
 def test_co_view_history(db):

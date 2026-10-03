@@ -236,6 +236,12 @@
       <div class="rate-media-toggle">
         <button id="rateTypeMovie" class="chip active" onclick="setRateMediaType('movie')">Movies</button>
         <button id="rateTypeTv" class="chip" onclick="setRateMediaType('tv')">TV Shows</button>
+        <button class="chip" onclick="shuffleRatingQueue()" title="Show a different set of films">🎲 Shuffle</button>
+      </div>
+
+      <div class="rate-genre-row">
+        <span class="rate-genre-label">Genre</span>
+        <div id="rateGenreChips" class="rate-genre-chips"></div>
       </div>
 
       <div id="rateCard" class="rate-card">

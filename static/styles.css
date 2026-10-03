@@ -1271,3 +1271,29 @@ body {
     font-size: 16px;
   }
 }
+
+.rate-genre-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.rate-genre-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+.rate-genre-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.rate-genre-chips .chip {
+  padding: 4px 10px;
+  font-size: 11px;
+}
