@@ -31,3 +31,6 @@ models/
 # Training datasets (downloaded, not source)
 # MovieLens ml-latest-small: https://files.grouplens.org/datasets/movielens/ml-latest-small.zip
 training/data/
+
+# Local database backups (created by rating resets / migrations)
+backups/
