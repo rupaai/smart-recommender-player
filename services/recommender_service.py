@@ -72,9 +72,53 @@ MOOD_MAPPINGS: Dict[int, Dict[str, Any]] = {
     4: {"name": "👻 Scary / Spooky", "vibe": "dark, tense, hair-raising", "genres": ["Horror", "Mystery"]},
     5: {"name": "❤️ Romantic", "vibe": "warm, swoony, tender", "genres": ["Romance"]},
     6: {"name": "🤯 Mind-Bending / Thoughtful", "vibe": "clever, cerebral, twisty", "genres": ["Science Fiction", "Sci-Fi", "Mystery"]},
-    7: {"name": "😌 Relaxing / Chill", "vibe": "gentle, cozy, low-stakes", "genres": ["Documentary", "Animation", "Family"]},
+    # "Relaxing" previously mapped to Documentary/Animation/Family only, which
+    # returned preschool animation and nature docs — and, once the user added
+    # their own genre chips, films like Silence of the Lambs leaked in anyway
+    # because the mood contributed nothing to the actual filter. Relaxing is
+    # better expressed as a *tone* (gentle pacing, no violence) than as a
+    # genre, so these are deliberately the warm/low-stakes genres.
+    7: {"name": "😌 Relaxing / Chill", "vibe": "gentle, cozy, low-stakes", "genres": ["Animation", "Family", "Comedy", "Romance", "Music"]},
     8: {"name": "🎲 Surprise Me!", "vibe": "anything goes", "genres": []},
 }
+
+# Natural-language intent the free-text query is actually asking for. The old
+# scoring substring-matched raw query words against overviews, so a prompt like
+# "relaxing but not too complicated, a bit funny" scored every film whose
+# blurb happened to contain "funny" — noise, not intent. These are weighted,
+# genre-mapped signals so the query steers the *filter*, not just the ranking.
+QUERY_INTENT: Dict[str, Dict[str, Any]] = {
+    "relaxing": {"genres": ["Animation", "Family", "Comedy", "Romance", "Music"],
+                 "exclude_genres": ["Horror", "Thriller", "War", "Crime"],
+                 "weight": 0.35},
+    "chill": {"genres": ["Animation", "Family", "Comedy", "Romance", "Music"],
+              "exclude_genres": ["Horror", "Thriller", "War", "Crime"],
+              "weight": 0.35},
+    "cozy": {"genres": ["Family", "Animation", "Romance", "Comedy"],
+             "exclude_genres": ["Horror", "Thriller", "Crime"], "weight": 0.3},
+    "funny": {"genres": ["Comedy"], "weight": 0.3},
+    "complicated": {"exclude_genres": ["Horror", "Thriller", "Crime", "War"], "weight": 0.25},
+    "simple": {"exclude_genres": ["Horror", "Thriller", "Crime", "War"], "weight": 0.25},
+    "dark": {"genres": ["Horror", "Thriller", "Crime"], "weight": 0.3},
+    "scary": {"genres": ["Horror"], "weight": 0.3},
+    "thoughtful": {"genres": ["Drama", "Science Fiction"], "weight": 0.3},
+    "smart": {"genres": ["Science Fiction", "Mystery"], "weight": 0.25},
+}
+
+# Words too generic to carry signal — dropped before any matching so they
+# don't produce spurious overview hits.
+QUERY_STOPWORDS = frozenset({
+    "would", "like", "want", "wantto", "wantto", "movie", "film", "watch",
+    "something", "high", "quality", "good", "great", "best", "really",
+    "should", "have", "that", "this", "with", "but", "not", "too", "very",
+    "complicated", "some", "kind", "sort", "bit", "which", "there", "here",
+    "about", "more", "less", "also", "then", "than", "them", "they", "been",
+    "were", "was", "you", "your", "our", "we", "us", "me", "my", "and", "for",
+    "from", "one", "two", "all", "can", "will", "just", "get", "got", "see",
+})
+
+# Tokens that must never be treated as a genre request on their own.
+QUERY_NON_GENRE = frozenset({"scifi", "concept", "concepts", "idea", "ideas"})
 
 GUILTY_PLEASURE_KEYWORDS = frozenset({
     "guilty pleasure", "so bad it's good", "so bad its good",
@@ -148,6 +192,118 @@ TIER_BOOSTS: Dict[str, float] = {
 }
 
 
+def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
+    """Turn a free-text prompt into genre include/exclude signals + weights.
+
+    The old behaviour substring-matched every query word against item
+    overviews, so "relaxing but not too complicated, a bit funny" boosted any
+    film whose blurb contained "funny" while "relaxing" did nothing at all.
+    Intent words are now recognised explicitly and mapped to genres, so they
+    steer the hard filter (exclusions especially) as well as the score.
+
+    Returns:
+        include_genres: genres the user positively asked for
+        exclude_genres: genres contradicting the request (hard-excluded)
+        boost_genres:   genres to nudge in scoring
+        weight:         how strongly the query should shape the result
+    """
+    result: Dict[str, Any] = {
+        "include_genres": [], "exclude_genres": [],
+        "boost_genres": [], "weight": 0.0,
+    }
+    if not query or not query.strip():
+        return result
+
+    tokens = [w for w in re.findall(r"[a-z]+", query.lower()) if w]
+    seen_include: Set[str] = set()
+    seen_exclude: Set[str] = set()
+    matched_terms: List[str] = []
+
+    for i, word in enumerate(tokens):
+        # Negation-aware: "not too complicated" must not read as wanting
+        # complexity. Check the previous token for a negator.
+        negated = i > 0 and tokens[i - 1] in ("not", "no", "never", "without", "less")
+        intent = QUERY_INTENT.get(word)
+        if not intent:
+            continue
+        matched_terms.append(word)
+
+        for g in intent.get("genres", []):
+            if negated:
+                seen_exclude.add(g)
+            else:
+                seen_include.add(g)
+                if g not in result["boost_genres"]:
+                    result["boost_genres"].append(g)
+
+        for g in intent.get("exclude_genres", []):
+            # "not too complicated" negates the *exclusion* this term implies.
+            if negated:
+                seen_include.add(g)
+            else:
+                seen_exclude.add(g)
+
+        if not negated:
+            result["weight"] += intent.get("weight", 0.2)
+
+    result["include_genres"] = sorted(seen_include)
+    result["exclude_genres"] = sorted(seen_exclude)
+    result["weight"] = round(min(result["weight"], 1.0), 2)
+    result["matched_terms"] = matched_terms
+
+    # Content words worth matching against overviews/titles: intent words are
+    # already handled structurally, and stopwords carry no signal.
+    result["content_words"] = sorted(
+        w for w in set(tokens)
+        if len(w) > 3 and w not in QUERY_STOPWORDS
+        and w not in QUERY_INTENT and w not in QUERY_NON_GENRE
+    )
+    return result
+
+
+def resolve_effective_genres(
+    mood_genres: Optional[List[str]],
+    chip_genres: Optional[List[str]],
+    query: Optional[str],
+) -> Dict[str, Any]:
+    """Combine mood genres + user's chips + query intent into one filter spec.
+
+    Precedence: explicit chips win (the user clicked them deliberately), then
+    query intent, then the mood's own genres. Exclusions apply regardless —
+    asking for "relaxing, not too complicated" should veto a violent film even
+    if Horror is among the chips, because the phrase is a contradiction rather
+    than a narrowing choice.
+    """
+    intent = parse_query_intent(query)
+    chip_list = list(chip_genres or [])
+    mood_list = list(mood_genres or [])
+
+    include: List[str] = []
+    for g in chip_list + intent["include_genres"] + mood_list:
+        if g not in include:
+            include.append(g)
+
+    # Only apply exclusion filtering when the query actually expressed one,
+    # and never let a mood's own genre veto its films (mood 4 = Horror must
+    # still be able to return horror).
+    exclude: List[str] = []
+    if intent["exclude_genres"]:
+        for g in intent["exclude_genres"]:
+            if g in include and g in mood_list and mood_list and intent["weight"] < 0.3:
+                continue
+            if g not in exclude:
+                exclude.append(g)
+
+    return {
+        "include": include,
+        "exclude": exclude,
+        "boost": intent["boost_genres"],
+        "weight": intent["weight"],
+        "content_words": intent.get("content_words", []),
+        "matched_terms": intent.get("matched_terms", []),
+    }
+
+
 class RecommenderService:
     def __init__(
         self,
@@ -216,6 +372,9 @@ class RecommenderService:
         profile: str = "together",
         query: Optional[str] = None,
         exclude_ids: Optional[Set[int]] = None,
+        content_words: Optional[List[str]] = None,
+        intent_boost_genres: Optional[Set[str]] = None,
+        intent_bonus: float = 0.0,
     ) -> List[Dict[str, Any]]:
         """Profile-aware scoring: Bayesian quality + blended taste + co-view tier.
 
@@ -262,7 +421,12 @@ class RecommenderService:
         }
         if profile in ("me", "partner"):
             exclude = exclude | viewer_seen_ids
-        query_words = set(re.findall(r"\w+", query.lower())) if query else set()
+        query_words = set(content_words) if content_words else set()
+        # `intent_boost_genres` / `intent_bonus` come pre-computed from the
+        # caller's query spec: genres the prompt asked for ("funny" -> Comedy)
+        # get a real score bump. Previously only free-text overview matching
+        # contributed, so a query could pull a film in and still rank it
+        # mid-table.
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
@@ -276,6 +440,11 @@ class RecommenderService:
 
             item_genres = set(_split_lower(item.get("genres")))
             item_keywords = set(_split_lower(item.get("tier2_keywords")))
+            relevance_boost = 0.0
+            # Query intent bump: the film carries a genre the prompt asked for
+            # ("funny" -> Comedy), independent of either person's taste.
+            if intent_boost_genres and (item_genres & intent_boost_genres):
+                relevance_boost += intent_bonus
             taste_bonus, own_bonus, other_bonus = self._taste_bonus(
                 item_genres, item_keywords, own_taste, other_taste, mix
             )
@@ -284,7 +453,6 @@ class RecommenderService:
             tier = cv.get("tier", "C")
             tier_boost = TIER_BOOSTS.get(tier, 0.0)
 
-            relevance_boost = 0.0
             if query_words:
                 item_text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
                 matches = sum(1 for w in query_words if len(w) > 3 and w in item_text)
@@ -435,17 +603,27 @@ class RecommenderService:
         """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination."""
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
 
-        # Resolve Genres
-        if genres_override:
-            genres = genres_override
-        else:
-            genres = mood_info["genres"]
+        # Resolve Genres. The free-text query is a first-class filter input, not
+        # just a scoring nudge: "relaxing, not too complicated" has to be able to
+        # veto a violent film even when the mood's own genres include it.
+        chip_genres = genres_override
+        genre_spec = resolve_effective_genres(mood_info["genres"], chip_genres, query)
+        genres = genre_spec["include"] or None
+        excluded_genres = genre_spec["exclude"]
+        intent_weight = genre_spec["weight"]
+        content_words = genre_spec["content_words"]
 
         if media_type == "tv" and genres:
             expanded = list(genres)
             for g in genres:
                 expanded.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
             genres = list(dict.fromkeys(expanded))
+        if media_type == "tv" and excluded_genres:
+            expanded_ex = []
+            for g in excluded_genres:
+                expanded_ex.append(g)
+                expanded_ex.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
+            excluded_genres = list(dict.fromkeys(expanded_ex))
 
         # Baseline Minimum Rating Floor
         min_rating = 6.0 if min_rating_override is None else min_rating_override
@@ -465,6 +643,7 @@ class RecommenderService:
         candidates = self.db.get_top_candidates(
             media_type=media_type,
             genres=genres if genres else None,
+            exclude_genres=excluded_genres or None,
             exclude_watched=sql_exclude_watched,
             min_rating=min_rating,
             era=era_preference,
@@ -513,7 +692,13 @@ class RecommenderService:
         )
         if has_profile_signal:
             ranked = self.rank_candidates_profile_aware(
-                candidates, profile=profile, query=query
+                candidates, profile=profile, query=query,
+                content_words=content_words,
+                intent_boost_genres={
+                    g.strip().lower()
+                    for g in (genre_spec.get("boost") or []) if g and g.strip()
+                },
+                intent_bonus=0.5 * intent_weight,
             )
         else:
             taste = self.db.get_user_taste_profile(min_rating=7.0)

@@ -572,6 +572,7 @@ class DatabaseManager:
         self,
         media_type: str = "movie",
         genres: Optional[List[str]] = None,
+        exclude_genres: Optional[List[str]] = None,
         exclude_watched: bool = True,
         min_rating: float = 0.0,
         era: Optional[str] = None,
@@ -645,6 +646,29 @@ class DatabaseManager:
                     params.append(f"%,{needle},%")
             if genre_clauses:
                 query += " AND (" + " OR ".join(genre_clauses) + ")"
+
+            # Genre *exclusion* (query intent like "relaxing, not too
+            # complicated"). Applied in SQL so a contradicting genre can never
+            # enter the shortlist — filtering in Python after the Bayesian cut
+            # would silently shrink the pool and return fewer results than the
+            # user asked for.
+            #
+            # The predicate MUST be `NOT (... LIKE ...)` and NOT
+            # `(... NOT LIKE ... OR ...)`. Both look equivalent, but SQLite
+            # treats the 0 result of `NOT LIKE` as falsy rather than as a
+            # boolean for `NOT` to invert, so the negated form dropped EVERY
+            # row (912 clean animation films -> 0 results). Positives inside,
+            # NOT outside.
+            exclude_clauses = []
+            for g in exclude_genres or []:
+                needle = (g or "").strip().lower().replace(" ", "")
+                if needle:
+                    exclude_clauses.append(
+                        "',' || REPLACE(LOWER(COALESCE(mi.genres, '')), ' ', '') || ',' LIKE ?"
+                    )
+                    params.append(f"%,{needle},%")
+            if exclude_clauses:
+                query += " AND NOT (" + " OR ".join(exclude_clauses) + ")"
 
             query += f" GROUP BY mi.id ORDER BY {order_expr} DESC, mi.rating DESC, mi.release_year DESC"
             query += " LIMIT ?"

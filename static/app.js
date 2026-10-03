@@ -4,6 +4,8 @@ const state = {
   activeTab: 'discover',
   recMediaType: 'movie',    // 'movie' or 'tv'
   recProfile: 'together',  // 'me' | 'partner' | 'together' — whose taste to optimise for
+  recPage: 1,            // recommendation page for "load more"
+  recHasMore: false,     // more results available in the pool
   dismissedIds: new Set(), // items tapped away ("not this one")
   directMediaType: 'movie', // 'movie' or 'tv'
   activeMoodId: 8,
@@ -261,36 +263,84 @@ async function fetchRecommendations() {
   btn.disabled = true;
 
   try {
-    const payload = {
-      mood_id: state.activeMoodId,
-      sub_mood: state.activeSubMood || null,
-      media_type: state.recMediaType,
-      genres: state.selectedGenres.size > 0 ? Array.from(state.selectedGenres) : null,
-      era: state.era || null,
-      duration: state.recMediaType === 'movie' ? (state.duration || null) : null,
-      min_rating: state.minRating,
-      top_n: 4,
-      include_watched: state.includeWatched,
-      query: query || null,
-      profile: state.recProfile
-    };
-
-    const res = await fetch('/api/recommend', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    // The API returns a paginated payload object; renderRecommendations expects the items array.
-    const data = await res.json();
+    state.recPage = 1;
+    const data = await requestRecommendations(1);
+    state.recHasMore = !!data.has_more;
     renderRecommendations(data.items || [], data.engine);
+    updateLoadMoreButton();
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     container.innerHTML = '<p style="text-align:center; color:var(--danger)">Failed to load recommendations.</p>';
+    updateLoadMoreButton();
   } finally {
     btn.innerHTML = `<span>✨ Find ${state.recMediaType === 'tv' ? 'TV Show' : 'Movie'} for Tonight</span>`;
     btn.disabled = false;
   }
+}
+
+// The recommendation pool holds 50 items and pagination serves from it, so
+// "more" exists beyond the first page. Without this the UI silently capped the
+// user at one page — the request used to send top_n: 4, overriding page_size
+// and returning only 4 of 50 results.
+async function loadMoreRecommendations() {
+  if (!state.recHasMore) return;
+  state.recPage += 1;
+  const btn = document.getElementById('loadMoreBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const data = await requestRecommendations(state.recPage);
+    state.recHasMore = !!data.has_more;
+    appendRecommendations(data.items || [], data.engine);
+  } catch (err) {
+    console.error('Error loading more:', err);
+    state.recPage -= 1;
+  }
+  updateLoadMoreButton();
+}
+
+// Single place that builds and sends the recommend request, shared by the
+// initial search and "Show more" so the two can't drift apart.
+async function requestRecommendations(page) {
+  const query = document.getElementById('queryInput').value.trim();
+  const payload = {
+    mood_id: state.activeMoodId,
+    sub_mood: state.activeSubMood || null,
+    media_type: state.recMediaType,
+    genres: state.selectedGenres.size > 0 ? Array.from(state.selectedGenres) : null,
+    era: state.era || null,
+    duration: state.recMediaType === 'movie' ? (state.duration || null) : null,
+    min_rating: state.minRating,
+    // `top_n` must stay null: it aliases page_size server-side, so a stale
+    // value silently caps the page.
+    top_n: null,
+    page: page,
+    page_size: 20,
+    include_watched: state.includeWatched,
+    query: query || null,
+    profile: state.recProfile
+  };
+  const res = await fetch('/api/recommend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  return await res.json();
+}
+
+function updateLoadMoreButton() {
+  const btn = document.getElementById('loadMoreBtn');
+  if (!btn) return;
+  btn.style.display = state.recHasMore ? 'inline-flex' : 'none';
+  btn.disabled = false;
+  btn.textContent = 'Show more';
+}
+
+function appendRecommendations(movies, engine) {
+  const container = document.getElementById('resultsContainer');
+  if (!movies || movies.length === 0) { updateLoadMoreButton(); return; }
+  movies.forEach((m) => container.appendChild(buildMovieCard(m, engine)));
+  updateLoadMoreButton();
 }
 
 function renderRecommendations(movies, engine) {
@@ -308,7 +358,11 @@ function renderRecommendations(movies, engine) {
     return;
   }
 
-  movies.forEach((m) => {
+  movies.forEach((m) => container.appendChild(buildMovieCard(m, engine)));
+}
+
+// Extracted so "Show more" and the initial render build identical cards.
+function buildMovieCard(m, engine) {
     const card = document.createElement('div');
     card.className = 'movie-card';
 
@@ -371,8 +425,7 @@ function renderRecommendations(movies, engine) {
         </a>
       </div>
     `;
-    container.appendChild(card);
-  });
+    return card;
 }
 
 // ---------------------------------------------------------------------------

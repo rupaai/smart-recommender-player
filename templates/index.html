@@ -168,6 +168,14 @@
       <div id="resultsContainer" class="results-container">
         <!-- Rendered dynamically -->
       </div>
+
+      <!-- Pagination. The pool holds 50 items and the first page returns 20,
+           so more is the normal case; hidden until the API reports has_more. -->
+      <div class="load-more-row">
+        <button id="loadMoreBtn" class="btn-load-more" onclick="loadMoreRecommendations()" style="display: none;">
+          Show more
+        </button>
+      </div>
     </main>
 
     <!-- Direct Download View -->

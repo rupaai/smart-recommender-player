@@ -416,6 +416,132 @@ def test_balanced_queue(build):
     check("balanced respects limit", len(q) <= 20, len(q))
 
 
+def test_query_intent(build):
+    print("\n[12] Free-text query intent: exclusions, negation, mood genres")
+    from services.recommender_service import (
+        MOOD_MAPPINGS, parse_query_intent, resolve_effective_genres,
+    )
+    db = build()
+
+    q = ("We would like to see a high quality movie which is relaxing to watch "
+         "but not too complicated, it should be a bit funny, but it should have "
+         "good concepts.")
+
+    intent = parse_query_intent(q)
+    check("'relaxing' is recognised as intent, not a content word",
+          "relaxing" in intent["matched_terms"], intent["matched_terms"])
+    check("'funny' pulls in Comedy", "Comedy" in intent["boost_genres"],
+          intent["boost_genres"])
+    check("'relaxing' excludes violent genres",
+          {"Crime", "Horror", "Thriller"} <= set(intent["exclude_genres"]),
+          intent["exclude_genres"])
+    check("generic adjectives are dropped as content words",
+          not ({"high", "quality", "movie", "good", "want"} & set(intent["content_words"])),
+          intent["content_words"])
+    check("intent weight is bounded", 0 < intent["weight"] <= 1.0, intent["weight"])
+
+    # "not too complicated" must not be read as a request for complexity.
+    neg = parse_query_intent("something scary not relaxing")
+    check("negated intent term inverts its effect",
+          "Horror" in neg["include_genres"], neg["include_genres"])
+
+    # Relaxing mood should not map to Documentary (nature docs / preschool TV).
+    check("relaxing mood includes Comedy",
+          "Comedy" in MOOD_MAPPINGS[7]["genres"], MOOD_MAPPINGS[7]["genres"])
+    check("relaxing mood dropped Documentary",
+          "Documentary" not in MOOD_MAPPINGS[7]["genres"], MOOD_MAPPINGS[7]["genres"])
+
+    # Chips + intent combine, with exclusions surviving the merge.
+    spec = resolve_effective_genres(
+        MOOD_MAPPINGS[7]["genres"], ["Action", "Mystery"], q)
+    check("chips are kept in the include set",
+          {"Action", "Mystery"} <= set(spec["include"]), spec["include"])
+    check("query exclusions survive the chip merge",
+          "Thriller" in spec["exclude"], spec["exclude"])
+
+    # A mood must never veto its own genres (mood 4 = Horror must return horror).
+    scary = resolve_effective_genres(MOOD_MAPPINGS[4]["genres"], [], "I want something scary")
+    check("a scary query does not exclude Horror", "Horror" not in scary["exclude"],
+          scary["exclude"])
+
+
+def test_genre_exclusion_sql(build):
+    print("\n[13] SQL genre exclusion returns rows (regression: NOT LIKE trap)")
+    db = build()
+    with db.get_connection() as conn:
+        for i in range(40):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres) VALUES (?, 2020, 'movie', 7.5, 9000, ?);",
+                (f"Clean {i}", "Animation, Comedy, Family"),
+            )
+        for i in range(40):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres) VALUES (?, 2020, 'movie', 7.5, 9000, ?);",
+                (f"Bad {i}", "Animation, Thriller, Crime"),
+            )
+
+    keep = db.get_top_candidates(media_type="movie", genres=["Animation"],
+                                 exclude_watched=False, min_rating=6.0, limit=500)
+    check("include-only returns both groups", len(keep) == 80, len(keep))
+
+    clean = db.get_top_candidates(media_type="movie", genres=["Animation"],
+                                  exclude_genres=["Thriller", "Crime"],
+                                  exclude_watched=False, min_rating=6.0, limit=500)
+    # Regression guard: `NOT (a NOT LIKE .. OR b NOT LIKE ..)` returned 0 rows
+    # in SQLite because a falsy NOT LIKE is not inverted by the outer NOT.
+    check("exclusion keeps the clean rows (NOT LIKE trap regression)",
+          len(clean) == 40, len(clean))
+    check("exclusion drops the contradicting rows",
+          all("Clean" in c["title"] for c in clean),
+          [c["title"] for c in clean[:3]])
+
+    # A genre nobody has must not empty the result set.
+    none_match = db.get_top_candidates(media_type="movie", genres=["Animation"],
+                                       exclude_genres=["Musical"],
+                                       exclude_watched=False, min_rating=6.0, limit=500)
+    check("excluding an absent genre changes nothing", len(none_match) == 80,
+          len(none_match))
+
+
+def test_pagination_shape(build):
+    print("\n[14] Pagination: pages are disjoint and cover the pool")
+    db = build()
+    # The shared fixture catalogue is small; a 50-item pool needs 50+ rows to
+    # assert page 1 is full. Grow it rather than weakening the assertions.
+    with db.get_connection() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM media_items").fetchone()[0]
+        for i in range(70):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres) VALUES (?, 2020, 'movie', 7.5, 9000, ?);",
+                (f"Pool {n + i}", "Drama, Comedy"),
+            )
+    from services.recommender_service import RecommenderService
+    r = RecommenderService(db, shortlist_size=250, final_pool=50)
+
+    p1 = r.recommend(mood_id=8, media_type="movie", profile="together",
+                     page=1, page_size=20)
+    check("page 1 is full", len(p1["items"]) == 20, len(p1["items"]))
+    check("page 1 advertises more", p1["has_more"] is True, p1.get("has_more"))
+    check("total reflects the pool, not the page", p1["total_results"] == 50,
+          p1["total_results"])
+
+    p2 = r.recommend(mood_id=8, media_type="movie", profile="together",
+                     page=2, page_size=20)
+    p3 = r.recommend(mood_id=8, media_type="movie", profile="together",
+                     page=3, page_size=20)
+    ids = [i["id"] for pg in (p1, p2, p3) for i in pg["items"]]
+    check("pages do not repeat items", len(ids) == len(set(ids)),
+          f"{len(ids)} ids, {len(set(ids))} unique")
+    check("pagination reaches the whole pool", len(ids) == 50, len(ids))
+    check("last page reports no more", p3["has_more"] is False, p3.get("has_more"))
+    check("page beyond the pool is empty",
+          r.recommend(mood_id=8, media_type="movie", profile="together",
+                      page=99, page_size=20)["items"] == [])
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -438,6 +564,9 @@ def main():
         test_genre_sql(build)
         test_profile_scoring(build)
         test_balanced_queue(build)
+        test_query_intent(build)
+        test_genre_exclusion_sql(build)
+        test_pagination_shape(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

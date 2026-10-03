@@ -1333,3 +1333,24 @@ body {
   color: #6ee7b7;
   border: 1px solid rgba(16, 185, 129, 0.3);
 }
+
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  margin: 24px 0 40px;
+}
+
+.btn-load-more {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 12px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s;
+}
+
+.btn-load-more:hover:not(:disabled) { opacity: 0.9; }
+.btn-load-more:disabled { opacity: 0.5; cursor: wait; }

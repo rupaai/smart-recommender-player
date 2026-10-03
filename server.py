@@ -353,6 +353,13 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
         results["items"] = [i for i in results["items"] if i.get("id") not in excluded]
         results["total_results"] = len(results["items"])
         results["has_more"] = False
+    # Always advertise pagination. The engines already emit `has_more`, but a
+    # result path that omits it (or an error envelope) previously left the UI
+    # with no way to tell "that's everything" from "there's more" — and the UI
+    # then hid its Show-more button, silently capping the user at one page.
+    results.setdefault("has_more", False)
+    results.setdefault("page", 1)
+    results.setdefault("page_size", len(results.get("items") or []))
     return results
 
 
