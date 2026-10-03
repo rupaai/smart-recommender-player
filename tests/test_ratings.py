@@ -542,6 +542,65 @@ def test_pagination_shape(build):
                       page=99, page_size=20)["items"] == [])
 
 
+def test_rating_genre_endpoint(build):
+    print("\n[15] Rating-queue genre chips reflect the catalogue")
+    import asyncio
+    import server as server_mod
+
+    db = build()
+    with db.get_connection() as conn:
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres) VALUES (?, 2020, 'movie', 7.5, 9000, ?);",
+                (f"Big {i}", "Drama, Comedy"),
+            )
+        # A genre too small to fill a page must not be offered as a chip.
+        conn.execute(
+            "INSERT INTO media_items (title, release_year, media_type, rating, "
+            "vote_count, genres) VALUES ('Rare', 2020, 'movie', 7.5, 9000, 'Curtain');"
+        )
+
+    original = server_mod.db
+    server_mod.db = db
+    try:
+        payload = asyncio.run(server_mod.list_rating_genres())
+    finally:
+        server_mod.db = original
+
+    names = {g["name"] for g in payload["genres"]}
+    check("a genre with enough films is offered", "Comedy" in names, sorted(names))
+    check("a genre too small to fill a page is omitted", "Curtain" not in names,
+          sorted(names))
+    check("counts are reported per genre",
+          all(isinstance(g.get("count"), int) and g["count"] > 0 for g in payload["genres"]),
+          payload["genres"][:2])
+    # Every offered chip must be able to fill a page — the bug was a chip that
+    # produced a 1–2 card queue and looked broken.
+    for g in payload["genres"]:
+        q = db.get_rating_queue(profile_id=1, limit=25, genres=[g["name"]],
+                                balanced=True, seed=3)
+        check(f"chip '{g['name']}' fills a 25-card queue",
+              len(q) >= 20, len(q))
+
+
+def test_download_survives_refresh(build):
+    print("\n[16] Downloads are server-owned, so a browser refresh can't stop them")
+    import inspect
+    from services.torrent_service import downloads_store
+    import server as server_mod
+
+    src = inspect.getsource(server_mod.download_torrent)
+    check("download is dispatched with asyncio.create_task",
+          "asyncio.create_task" in src)
+    check("no binding to an HTTP client session/websocket",
+          not any(k in src for k in ("WebSocket", "request.state", "BackgroundTask")))
+    check("progress state lives in a module-level dict",
+          isinstance(downloads_store, dict))
+    check("the store is importable from outside the request handler",
+          downloads_store is server_mod.downloads_store)
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -567,6 +626,8 @@ def main():
         test_query_intent(build)
         test_genre_exclusion_sql(build)
         test_pagination_shape(build)
+        test_rating_genre_endpoint(build)
+        test_download_survives_refresh(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

@@ -33,6 +33,7 @@ const state = {
   rateIndex: 0,
   rateCursor: 0,           // how many items fetched so far (for "Load more")
   rateGenres: [],          // active genre chips ([] = anything)
+  rateGenreList: [],       // catalogue-derived [{name, count}]
   rateSeed: null,          // null = 10-minute rotation bucket
   rateBalanced: true,      // walk the genre wheel (build a profile fast)
   rateSkipped: new Set()   // item ids skipped this session
@@ -1203,9 +1204,15 @@ function escapeHtml(str) {
 }
 
 const RATE_PAGE = 25;
+// Used only if /api/ratings/genres is unreachable; the real list comes from
+// the catalogue so chips never offer a genre with too few films to rate.
+const DEFAULT_RATE_GENRES = ['Comedy', 'Drama', 'Action', 'Thriller', 'Adventure',
+  'Crime', 'Family', 'Science Fiction', 'Fantasy', 'Horror', 'Romance',
+  'Animation', 'Mystery', 'History', 'War', 'Music', 'Western'];
 
 function initRateTab() {
   renderRateGenres();
+  if (!state.rateGenreList.length) loadRateGenres();
   if (state.rateProfiles.length === 0) {
     loadProfiles();
   } else {
@@ -1310,6 +1317,11 @@ function setRateGenre(genre) {
   } else {
     state.rateGenres.push(genre);
   }
+  // Re-render before reloading: without this the chip's `active` class was
+  // never refreshed, so a genre stayed highlighted after being switched off
+  // (and a newly picked one never lit up). The queue reload below is async,
+  // so the stale highlight stayed on screen for the whole fetch.
+  renderRateGenres();
   loadRatingQueue(true);
 }
 
@@ -1328,18 +1340,40 @@ function setRateBalanced() {
 function renderRateGenres() {
   const container = document.getElementById('rateGenreChips');
   if (!container) return;
-  const genres = ['Comedy', 'Drama', 'Action', 'Horror', 'Romance',
-                  'Science Fiction', 'Animation', 'Thriller', 'Documentary'];
+  const list = state.rateGenreList.length ? state.rateGenreList : DEFAULT_RATE_GENRES;
   const balancedChip = `
     <button class="chip ${state.rateBalanced ? 'active' : ''}"
             onclick="setRateBalanced()"
             title="Rate one film per genre before repeating — builds your profile faster">
       🌈 Balanced
     </button>`;
-  container.innerHTML = balancedChip + genres.map(g => `
-    <button class="chip ${state.rateGenres.includes(g) ? 'active' : ''}"
-            onclick="setRateGenre('${g}')">${g}</button>
-  `).join('');
+  // Multiple chips are OR'd (any of the chosen genres), so a multi-select shows
+  // a mix. The hint keeps that legible instead of looking like a broken filter.
+  const hint = state.rateGenres.length > 1
+    ? `<span class="rate-genre-hint">Showing ${state.rateGenres.length} genres — clear one to narrow it</span>`
+    : '';
+  container.innerHTML = balancedChip + hint + list.map(entry => {
+    const name = typeof entry === 'string' ? entry : entry.name;
+    const count = typeof entry === 'string' ? null : entry.count;
+    return `<button class="chip ${state.rateGenres.includes(name) ? 'active' : ''}"
+            onclick="setRateGenre('${name}')">${name}${
+      count ? `<span class="chip-count">${count}</span>` : ''}</button>`;
+  }).join('');
+}
+
+// Fetched from the catalogue so the chips reflect genres that actually have
+// films to rate. Falls back to a sane static list offline.
+async function loadRateGenres() {
+  try {
+    const res = await fetch('/api/ratings/genres');
+    const data = await res.json();
+    if (data && Array.isArray(data.genres) && data.genres.length) {
+      state.rateGenreList = data.genres;
+    }
+  } catch (err) {
+    console.warn('Falling back to static rating genres:', err);
+  }
+  renderRateGenres();
 }
 
 function resetRatingQueue() {

@@ -1354,3 +1354,20 @@ body {
 
 .btn-load-more:hover:not(:disabled) { opacity: 0.9; }
 .btn-load-more:disabled { opacity: 0.5; cursor: wait; }
+
+/* Rating-queue genre chips: catalogue depth per genre, and a legend when more
+   than one chip is active (multi-select is OR'd, so results are a mix). */
+.rate-genre-chips .chip-count {
+  margin-left: 5px;
+  opacity: 0.55;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rate-genre-hint {
+  align-self: center;
+  margin: 0 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}

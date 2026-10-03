@@ -439,6 +439,38 @@ async def rename_profile(profile_id: int, req: RenameProfileRequest) -> Dict[str
     return {"ok": True, "profiles": db.get_profiles()}
 
 
+@app.get("/api/ratings/genres")
+async def list_rating_genres():
+    """Genres worth offering as rating-queue chips.
+
+    Derived from the catalogue rather than hardcoded in the UI: the old fixed
+    list of 9 included "Documentary", which only 7 films in the catalogue
+    carry — clicking it produced a 1–2 card queue that felt broken. Anything
+    below the floor is omitted, and the count lets the UI show how deep each
+    genre actually goes.
+    """
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
+        rows = cursor.execute(
+            "SELECT genres FROM media_items WHERE genres IS NOT NULL AND genres != ''"
+        ).fetchall()
+
+    counts: Dict[str, int] = {}
+    for (raw,) in rows:
+        for g in (raw or "").split(","):
+            name = g.strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+
+    # Below this a genre can't fill a 20-card page, so offering it is a trap.
+    floor = 20
+    ranked = sorted(
+        ((name, n) for name, n in counts.items() if n >= floor),
+        key=lambda kv: (-kv[1], kv[0]),
+    )
+    return {"genres": [{"name": name, "count": n} for name, n in ranked]}
+
+
 @app.get("/api/ratings/queue")
 async def get_rating_queue(
     profile_id: int = 1,
