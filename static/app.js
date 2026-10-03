@@ -5,6 +5,7 @@ const state = {
   recMediaType: 'movie',    // 'movie' or 'tv'
   recProfile: 'together',  // 'me' | 'partner' | 'together' — whose taste to optimise for
   recPage: 1,            // recommendation page for "load more"
+  originsLoaded: false,  // "From" chips fetched from /api/origins
   recHasMore: false,     // more results available in the pool
   dismissedIds: new Set(), // items tapped away ("not this one")
   directMediaType: 'movie', // 'movie' or 'tv'
@@ -101,11 +102,81 @@ function switchTab(tab) {
   if (tab === 'rate') {
     initRateTab();
   }
+  if (tab === 'discover' && !state.originsLoaded) {
+    state.originsLoaded = true;
+    initDiscoverTab();
+  }
 }
 
 // ---------------------------------------------------------------------------
 // 3. Recommender: Movie / TV Toggle & Mood Picker
 // ---------------------------------------------------------------------------
+// Origin chips. A region is a PLACE, not a genre, so it cannot be expressed
+// with the genre chips — the recommender parses it out of the free-text query.
+// Selecting one writes the phrase the parser recognises into the query box,
+// so there is a single code path for "South Asian" whether typed or clicked.
+const ORIGIN_PHRASES = {
+  IN: 'south asian', JP: 'japanese', KR: 'korean', CN: 'chinese',
+  HK: 'chinese', TW: 'chinese', ES: 'spanish language', FR: 'french',
+  DE: 'german', IT: 'italian', BR: 'portuguese', MX: 'spanish language',
+  NG: 'nigerian', IR: 'iranian', EG: 'egyptian', TR: 'turkish', RU: 'russian'
+};
+
+async function loadOrigins() {
+  const container = document.getElementById('originChips');
+  if (!container) return;
+  try {
+    const res = await fetch('/api/origins');
+    const data = await res.json();
+    const origins = data.origins || [];
+    if (!origins.length) { container.innerHTML = ''; return; }
+    container.innerHTML = origins.map(o => `
+      <button class="chip" data-origin-code="${o.code}"
+              onclick="setOrigin('${o.code}')"
+              title="${o.count} films from this region in your catalogue">
+        ${o.name}<span class="chip-count">${o.count}</span>
+      </button>`).join('');
+  } catch (err) {
+    console.warn('Could not load origin chips:', err);
+    container.innerHTML = '';
+  }
+}
+
+// Keeps the "From" chip highlighted when the origin phrase was typed by hand
+// rather than clicked, so the UI never disagrees with the request it sent.
+function syncOriginChipFromQuery(query) {
+  const text = (query || '').toLowerCase();
+  let matched = null;
+  document.querySelectorAll('[data-origin-code]').forEach(btn => {
+    const code = btn.dataset.originCode;
+    const phrase = ORIGIN_PHRASES[code];
+    const on = phrase && text.includes(phrase);
+    btn.classList.toggle('active', !!on);
+    if (on && !matched) matched = code;
+  });
+  return matched;
+}
+
+function setOrigin(code) {
+  const phrase = ORIGIN_PHRASES[code] || code.toLowerCase();
+  const input = document.getElementById('queryInput');
+  const current = (input.value || '').trim();
+  const active = document.querySelector('.chip[data-origin-code].active');
+  const already = active && active.dataset.originCode === code;
+
+  // Tapping the active region clears it, so the chip is a toggle.
+  if (already) {
+    input.value = current.replace(new RegExp(`\\b${phrase}\\b`, 'i'), '').trim();
+  } else {
+    input.value = current ? `${phrase} ${current}` : `${phrase} movies`;
+  }
+  document.querySelectorAll('[data-origin-code]').forEach(b => b.classList.remove('active'));
+  if (!already) {
+    const btn = document.querySelector(`[data-origin-code="${code}"]`);
+    if (btn) btn.classList.add('active');
+  }
+}
+
 function setRecProfile(profile) {
   if (state.recProfile === profile) return;
   state.recProfile = profile;
@@ -303,6 +374,7 @@ async function loadMoreRecommendations() {
 // initial search and "Show more" so the two can't drift apart.
 async function requestRecommendations(page) {
   const query = document.getElementById('queryInput').value.trim();
+  syncOriginChipFromQuery(query);
   const payload = {
     mood_id: state.activeMoodId,
     sub_mood: state.activeSubMood || null,
@@ -1234,6 +1306,10 @@ const RATE_PAGE = 25;
 const DEFAULT_RATE_GENRES = ['Comedy', 'Drama', 'Action', 'Thriller', 'Adventure',
   'Crime', 'Family', 'Science Fiction', 'Fantasy', 'Horror', 'Romance',
   'Animation', 'Mystery', 'History', 'War', 'Music', 'Western'];
+
+function initDiscoverTab() {
+  loadOrigins();
+}
 
 function initRateTab() {
   renderRateGenres();

@@ -41,6 +41,7 @@ from database import DatabaseManager
 from services.recommender_service import (  # noqa: E402  (shared scoring helpers)
     _split_lower,
     calculate_weighted_rating,
+    parse_origin_intent,
     TV_GENRE_ALIASES,
 )
 
@@ -331,6 +332,7 @@ class GenerativeRetriever:
         genres_override: Optional[List[str]] = None,
         min_rating_override: Optional[float] = None,
         variety: bool = False,
+        profile: str = "together",
     ) -> Dict[str, Any]:
         """Generative retrieval pipeline producing the *unified* legacy payload shape.
 
@@ -357,9 +359,35 @@ class GenerativeRetriever:
         )
         by_id = {int(r["id"]): r for r in rows}
 
-        taste = self.db.get_user_taste_profile(min_rating=7.0)
-        preferred_genres = taste.get("preferred_genres", {})
-        preferred_keywords = taste.get("preferred_keywords", {})
+        # Profile-aware taste. This engine previously read only the blended
+        # single-profile taste, so "just me" and "his picks" produced identical
+        # results here even after the legacy engine was fixed. Mirror the mix
+        # the legacy path uses.
+        from services.recommender_service import PROFILE_MIX
+        if profile == "partner":
+            primary_id, other_id = 2, 1
+            own_w, other_w = PROFILE_MIX["partner"]
+        elif profile == "me":
+            primary_id, other_id = 1, 2
+            own_w, other_w = PROFILE_MIX["me"]
+        else:
+            primary_id, other_id = 1, 2
+            own_w, other_w = PROFILE_MIX["together"]
+        all_tastes = self.db.get_all_profile_tastes()
+        taste = dict(all_tastes.get(primary_id) or {})
+        other_taste = all_tastes.get(other_id) or {}
+        preferred_genres = {
+            g: (own_w * (taste.get("preferred_genres", {}).get(g, 0.0))
+                + other_w * (other_taste.get("preferred_genres", {}).get(g, 0.0)))
+            for g in set(taste.get("preferred_genres", {}))
+            | set(other_taste.get("preferred_genres", {}))
+        }
+        preferred_keywords = {
+            k: (own_w * (taste.get("preferred_keywords", {}).get(k, 0.0))
+                + other_w * (other_taste.get("preferred_keywords", {}).get(k, 0.0)))
+            for k in set(taste.get("preferred_keywords", {}))
+            | set(other_taste.get("preferred_keywords", {}))
+        }
         request_genres = {g.strip().lower() for g in (genres_override or []) if g}
         if media_type == "tv":
             expanded = set(request_genres)
@@ -550,6 +578,16 @@ def route_recommend(
 
     if mode == "legacy_only":
         return _legacy()
+
+    # A request naming a country of origin ("South Asian movies") cannot be
+    # served here: the predictor generates semantic IDs from watch history and
+    # has no concept of a film's country, so it happily returns Hollywood. The
+    # legacy engine filters on origin_country/original_language in SQL. Route
+    # those requests to legacy rather than returning confidently wrong results.
+    if parse_origin_intent(kwargs.get("query")):
+        result = _legacy()
+        result["origin_routed_to"] = "legacy"
+        return result
 
     if mode == "fallback" and not generative_retriever.is_ready():
         return _legacy()

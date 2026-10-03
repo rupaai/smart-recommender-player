@@ -353,11 +353,41 @@ def test_profile_scoring(build):
           TIER_BOOSTS["A"] > TIER_BOOSTS["B"] > TIER_BOOSTS["C"] == 0.0, TIER_BOOSTS)
     check("together weights are asymmetric toward the viewer",
           PROFILE_MIX["together"][0] > PROFILE_MIX["together"][1], PROFILE_MIX)
-    check("single-profile views invert the weights",
+    # "own" means the viewer, never profile 1 — so me/partner share weights
+    # and the id swap re-points "own". Encoding a lower own-weight for partner
+    # once ranked the viewer's own taste first in "his picks".
+    check("single-profile views weight the viewer above the other",
           PROFILE_MIX["me"][0] > PROFILE_MIX["me"][1]
-          and PROFILE_MIX["partner"][1] > PROFILE_MIX["partner"][0], PROFILE_MIX)
+          and PROFILE_MIX["partner"][0] > PROFILE_MIX["partner"][1], PROFILE_MIX)
+    check("me and partner use the same own-weight (ids are swapped instead)",
+          PROFILE_MIX["me"] == PROFILE_MIX["partner"], PROFILE_MIX)
 
     # Ranking: profile-aware path engages and me != partner.
+    # The fixtures above are all watched by *someone*, and every profile mode
+    # now excludes anything anyone has seen — that is the point, do not
+    # recommend a film back to someone who watched it. So each profile gets a
+    # distinct taste to rank the UNWATCHED remainder by.
+    # The 5-fixture catalogue is fully watched by someone after the ratings
+    # above, and every profile mode now excludes anything anyone has seen. So
+    # grow a distinct catalogue with clear genre identities for each profile.
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM media_items WHERE media_type = 'movie';")
+        extra = [
+            ("Anim One", "Animation, Family"), ("Anim Two", "Animation, Adventure"),
+            ("Scary One", "Horror"), ("Scary Two", "Horror, Thriller"),
+            ("Rom One", "Romance, Drama"), ("Rom Two", "Romance, Comedy"),
+            ("Fun One", "Comedy"), ("Fun Two", "Comedy, Family"),
+        ]
+        for title, g in extra:
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres) VALUES (?, 2020, 'movie', 7.8, 5000, ?);", (title, g)
+            )
+        ids = [r[0] for r in conn.execute(
+            "SELECT id FROM media_items WHERE media_type='movie' ORDER BY id;").fetchall()]
+    db.rate_item(ids[0], profile_id=1, user_rating=9.0)   # me likes animation
+    db.rate_item(ids[3], profile_id=2, user_rating=9.0)   # he likes horror
+
     r = RecommenderService(db, shortlist_size=50, final_pool=20)
     together = r.recommend(mood_id=8, media_type="movie", profile="together", page=1, page_size=10)
     check("profile-aware scoring used (tier field present)",
@@ -366,13 +396,23 @@ def test_profile_scoring(build):
     me = r.recommend(mood_id=8, media_type="movie", profile="me", page=1, page_size=10)
     him = r.recommend(mood_id=8, media_type="movie", profile="partner", page=1, page_size=10)
     check("'me' and 'partner' are NOT the same list",
-          [i["id"] for i in me["items"]] != [i["id"] for i in him["items"]])
+          [i["id"] for i in me["items"]] != [i["id"] for i in him["items"]],
+          ([i["id"] for i in me["items"][:4]], [i["id"] for i in him["items"][:4]]))
     check("own/other taste bonuses actually differ",
           any(i["taste_bonus_own"] != i["taste_bonus_other"] for i in me["items"]),
           [(i["taste_bonus_own"], i["taste_bonus_other"]) for i in me["items"][:3]])
-    check("films the viewer already rated are excluded",
-          all(i["id"] not in (1, 3, 4) for i in me["items"]),
-          [i["id"] for i in me["items"]])
+    # Watched exclusion is now universal: nothing any profile has seen comes back.
+    # ids[0] and ids[3] were just rated by someone, so both views must omit
+    # them — the exclusion is universal, not "seen by both".
+    watched = {ids[0], ids[3]}
+    check("films already watched by anyone are excluded from both views",
+          not (watched & {i["id"] for i in me["items"]})
+          and not (watched & {i["id"] for i in him["items"]}),
+          (sorted(i["id"] for i in me["items"]), sorted(i["id"] for i in him["items"])))
+    check("me ranks animation first", me["items"][0]["genres"].startswith("Animation"),
+          (me["items"][0]["title"], me["items"][0]["genres"]))
+    check("he ranks horror first", him["items"][0]["genres"].startswith("Horror"),
+          (him["items"][0]["title"], him["items"][0]["genres"]))
 
     # The tier boost must actually change the order.
     a_item = [i for i in together["items"] if i["co_view_tier"] == "A"]
@@ -679,6 +719,66 @@ def test_resume_and_eta(build):
     downloads_store.pop(2, None)
 
 
+def test_origin_intent(build):
+    print("\n[18] Origin-of-cinema requests (South Asian, Korean, ...)")
+    from services.recommender_service import parse_origin_intent
+    db = build()
+
+    spec = parse_origin_intent("show me south asian movies")
+    check("'south asian' is recognised as an origin request", spec is not None, spec)
+    check("maps to India (+ neighbours)", "IN" in spec["countries"], spec["countries"])
+    check("includes the South Asian language codes",
+          {"hi", "ta", "te", "ml", "kn"} <= set(spec["languages"]), spec["languages"])
+    check("a plain genre query is not an origin request",
+          parse_origin_intent("a funny film") is None)
+    check("no query is not an origin request", parse_origin_intent(None) is None)
+    check("korean maps to ko", "ko" in parse_origin_intent("korean drama")["languages"])
+    # Longer, more specific phrases must win over shorter ones.
+    check("the more specific phrase wins",
+          "hi" in parse_origin_intent("bollywood")["languages"]
+          and "ko" not in parse_origin_intent("bollywood")["languages"])
+
+    # SQL: country AND language, so TMDB origin mislabels don't leak through.
+    with db.get_connection() as conn:
+        for title, country, lang in [
+            ("Real Hindi", "IN", "hi"), ("Real Tamil", "IN", "ta"),
+            ("Hollywood Labeled IN", "IN", "en"),   # TMDB mislabel
+            ("Korean Film", "KR", "ko"),
+        ]:
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, "
+                "vote_count, genres, origin_country, original_language) "
+                "VALUES (?, 2020, 'movie', 7.8, 9000, 'Drama', ?, ?);",
+                (title, country, lang))
+
+    sa = db.get_top_candidates(media_type="movie", origin_countries=["IN"],
+                               origin_languages=["hi", "ta"],
+                               exclude_watched=False, min_rating=6.0, limit=100)
+    titles = {c["title"] for c in sa}
+    check("origin filter returns the matching films",
+          {"Real Hindi", "Real Tamil"} <= titles, sorted(titles))
+    check("language requirement excludes a mislabelled Hollywood title",
+          "Hollywood Labeled IN" not in titles, sorted(titles))
+    check("another region is excluded", "Korean Film" not in titles, sorted(titles))
+
+    # With no language requirement, the country filter still works on its own.
+    by_country = db.get_top_candidates(media_type="movie", origin_countries=["IN"],
+                                       exclude_watched=False, min_rating=6.0, limit=100)
+    check("country-only filter includes IN titles",
+          "Hollywood Labeled IN" in {c["title"] for c in by_country},
+          sorted(c["title"] for c in by_country))
+
+    # End to end through the recommender.
+    from services.recommender_service import RecommenderService
+    r = RecommenderService(db, shortlist_size=50, final_pool=20)
+    out = r.recommend(mood_id=8, media_type="movie", query="south asian movies",
+                      profile="together", page=1, page_size=10)
+    langs = {i.get("original_language") for i in out["items"]}
+    check("recommender returns only South Asian films for that query",
+          langs and langs <= {"hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur"},
+          sorted(x for x in langs if x))
+
+
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")
     counter = [0]
@@ -707,6 +807,7 @@ def main():
         test_rating_genre_endpoint(build)
         test_download_survives_refresh(build)
         test_resume_and_eta(build)
+        test_origin_intent(build)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 

@@ -115,6 +115,11 @@ def discover_rows(
                 "genre_ids": ", ".join(str(g) for g in gids) or None,
                 "rating": round(float(r.get("vote_average") or 0.0), 1),
                 "runtime": None,
+                # Free on the discover payload and the basis for origin-based
+                # filtering ("South Asian" -> hi/ta/te/ml/kn/bn). Country of
+                # production is NOT on this payload, so origin_country is
+                # filled by utils/backfill_origin_country.py.
+                "original_language": r.get("original_language"),
                 "poster_url": f"{IMAGE_BASE_URL}{r['poster_path']}" if r.get("poster_path") else None,
             })
         inserted_total += db.upsert_catalogue_items(rows)

@@ -439,6 +439,59 @@ async def rename_profile(profile_id: int, req: RenameProfileRequest) -> Dict[str
     return {"ok": True, "profiles": db.get_profiles()}
 
 
+# Display names for the origin chips. The phrase written into the query must
+# be one the recommender's parse_origin_intent() recognises.
+ORIGIN_LABELS: Dict[str, str] = {
+    "IN": "🇮🇳 South Asian",
+    "JP": "🇯🇵 Japanese",
+    "KR": "🇰🇷 Korean",
+    "CN": "🇨🇳 Chinese",
+    "HK": "🇭🇰 Hong Kong",
+    "TW": "🇹🇼 Taiwanese",
+    "ES": "🇪🇸 Spanish",
+    "FR": "🇫🇷 French",
+    "DE": "🇩🇪 German",
+    "IT": "🇮🇹 Italian",
+    "BR": "🇧🇷 Brazilian",
+    "MX": "🇲🇽 Mexican",
+    "NG": "🇳🇬 Nigerian",
+    "IR": "🇮🇷 Iranian",
+    "EG": "🇪🇬 Egyptian",
+    "TR": "🇹🇷 Turkish",
+    "RU": "🇷🇺 Russian",
+}
+
+
+@app.get("/api/origins")
+async def list_origins():
+    """Countries of origin present in the catalogue, with counts.
+
+    Only regions actually imported (utils/backfill_origin_country.py) appear,
+    so the UI never offers a region with nothing to show. Feeds the "From"
+    chips, which write an origin phrase into the free-text query — origin is a
+    place, so it cannot be expressed as a genre.
+    """
+    with db.get_connection() as conn:
+        rows = conn.execute(
+            "SELECT origin_country, COUNT(*) AS n FROM media_items "
+            "WHERE origin_country IS NOT NULL AND origin_country != '' "
+            "GROUP BY origin_country ORDER BY n DESC;"
+        ).fetchall()
+    # A row can carry several codes ("IN,GB") for co-productions; count each.
+    counts: Dict[str, int] = {}
+    for raw, n in rows:
+        for code in (raw or "").split(","):
+            code = code.strip().upper()
+            if code:
+                counts[code] = counts.get(code, 0) + n
+    labelled = [
+        {"code": code, "name": ORIGIN_LABELS.get(code, code), "count": counts[code]}
+        for code in sorted(counts, key=lambda c: -counts[c])
+        if counts[code] >= 20
+    ]
+    return {"origins": labelled}
+
+
 @app.get("/api/ratings/genres")
 async def list_rating_genres():
     """Genres worth offering as rating-queue chips.

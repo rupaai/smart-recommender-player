@@ -125,6 +125,7 @@ class DatabaseManager:
             self._migrate_v1_media_items_unique(cursor, conn)
             self._migrate_v2_vote_count(cursor)
             self._migrate_v3_profiles(cursor)
+            self._migrate_v4_origin_country(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -264,6 +265,48 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_watch_history_item ON watch_history(media_item_id);")
         cursor.execute("PRAGMA user_version = 3;")
         print("[Database] Migration v3 applied: profiles + watch_history.profile_id/status added.")
+
+    def _migrate_v4_origin_country(self, cursor: sqlite3.Cursor) -> None:
+        """Adds country-of-origin columns so 'South Asian', 'Korean' etc. work.
+
+        "South Asian" is a place, not a genre, so genre filtering could never
+        satisfy it — the recommender had no country signal at all and returned
+        Hollywood regardless. TMDB's discover endpoint does not return
+        `origin_country` per result, but it *does* filter on it via
+        `with_origin_country`, and `with_original_language` narrows the same
+        set. Storing both lets the recommender filter by origin without
+        re-querying TMDB on every request.
+
+        Idempotent (user_version gate + column-exists check). Additive
+        ALTER TABLEs, so existing rows and ids are untouched.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 4:
+            return
+
+        cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(media_items);").fetchall()
+        }
+        # ISO 3166-1 alpha-2 codes, comma-separated, e.g. "IN,GB".
+        if "origin_country" not in cols:
+            cursor.execute(
+                "ALTER TABLE media_items ADD COLUMN origin_country TEXT;"
+            )
+        # ISO 639-1 code of the original audio language, e.g. "hi".
+        if "original_language" not in cols:
+            cursor.execute(
+                "ALTER TABLE media_items ADD COLUMN original_language TEXT;"
+            )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_media_items_origin_country "
+            "ON media_items(origin_country);"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_media_items_original_language "
+            "ON media_items(original_language);"
+        )
+        cursor.execute("PRAGMA user_version = 4;")
+        print("[Database] Migration v4 applied: media_items.origin_country/original_language added.")
 
     def register_source_file(
         self,
@@ -456,14 +499,20 @@ class DatabaseManager:
         """
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            before = conn.total_changes
+            # `total_changes` is the only reliable signal for whether an INSERT
+            # conflicted — cursor.rowcount is not. It is sampled directly after
+            # each INSERT, before the backfill UPDATE below runs, since that
+            # UPDATE also bumps the counter and would inflate the figure.
+            inserted = 0
             for it in items:
+                before_insert = conn.total_changes
                 cursor.execute(
                     """
                     INSERT INTO media_items
                         (media_type, tmdb_id, title, original_title, release_year,
-                         overview, genres, genre_ids, rating, runtime, poster_url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         overview, genres, genre_ids, rating, runtime, poster_url,
+                         original_language, origin_country)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(media_type, tmdb_id) DO NOTHING;
                     """,
                     (
@@ -478,11 +527,31 @@ class DatabaseManager:
                         it.get("rating", 0.0),
                         it.get("runtime"),
                         it.get("poster_url"),
+                        it.get("original_language"),
+                        it.get("origin_country"),
                     ),
                 )
-            # NOTE: cursor.rowcount is unreliable with ON CONFLICT DO NOTHING;
-            # total_changes counts actual inserts.
-            inserted = conn.total_changes - before
+                inserted += conn.total_changes - before_insert
+                # DO NOTHING means a pre-existing row never receives the newly
+                # available columns. The region importer re-visits titles that
+                # are already in the catalogue precisely to stamp origin on
+                # them, so fill in only what is still missing — never clobber
+                # data that is already set.
+                if it.get("origin_country") or it.get("original_language"):
+                    cursor.execute(
+                        """
+                        UPDATE media_items
+                        SET origin_country = COALESCE(NULLIF(media_items.origin_country, ''), ?),
+                            original_language = COALESCE(NULLIF(media_items.original_language, ''), ?)
+                        WHERE media_type = ? AND tmdb_id = ?;
+                        """,
+                        (
+                            it.get("origin_country"),
+                            it.get("original_language"),
+                            it["media_type"],
+                            it["tmdb_id"],
+                        ),
+                    )
         return inserted
 
     def update_tier2_profile(
@@ -573,6 +642,8 @@ class DatabaseManager:
         media_type: str = "movie",
         genres: Optional[List[str]] = None,
         exclude_genres: Optional[List[str]] = None,
+        origin_countries: Optional[List[str]] = None,
+        origin_languages: Optional[List[str]] = None,
         exclude_watched: bool = True,
         min_rating: float = 0.0,
         era: Optional[str] = None,
@@ -669,6 +740,37 @@ class DatabaseManager:
                     params.append(f"%,{needle},%")
             if exclude_clauses:
                 query += " AND NOT (" + " OR ".join(exclude_clauses) + ")"
+
+            # Country-of-origin filter ("South Asian", "Korean"). `genres` is
+            # stored comma-separated, same shape, so reuse the padding trick.
+            #
+            # When origin_languages is supplied it is ANDed with the country
+            # rather than used as an alternative: TMDB mislabels origin for
+            # co-productions (it files Point Break as `IN`), while a film's
+            # original_language is reliable. Requiring both keeps the
+            # Hollywood false positives out.
+            country_clauses = []
+            for c in origin_countries or []:
+                code = (c or "").strip().lower()
+                if code:
+                    country_clauses.append(
+                        "',' || REPLACE(LOWER(COALESCE(mi.origin_country, '')), ' ', '') || ',' LIKE ?"
+                    )
+                    params.append(f"%,{code},%")
+            if country_clauses:
+                query += " AND (" + " OR ".join(country_clauses) + ")"
+
+            if origin_languages:
+                lang_clauses = []
+                for lang in origin_languages:
+                    code = (lang or "").strip().lower()
+                    if code:
+                        lang_clauses.append(
+                            "LOWER(COALESCE(mi.original_language, '')) = ?"
+                        )
+                        params.append(code)
+                if lang_clauses:
+                    query += " AND (" + " OR ".join(lang_clauses) + ")"
 
             query += f" GROUP BY mi.id ORDER BY {order_expr} DESC, mi.rating DESC, mi.release_year DESC"
             query += " LIMIT ?"

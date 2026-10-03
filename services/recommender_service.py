@@ -87,6 +87,53 @@ MOOD_MAPPINGS: Dict[int, Dict[str, Any]] = {
 # "relaxing but not too complicated, a bit funny" scored every film whose
 # blurb happened to contain "funny" — noise, not intent. These are weighted,
 # genre-mapped signals so the query steers the *filter*, not just the ranking.
+# "South Asian", "Korean", "Nigerian" are PLACES, not genres. The recommender
+# had no country signal at all, so asking for South Asian films returned
+# Hollywood every time — genre filters could never match a place. Each entry
+# maps a phrase to the region and to the audio languages that actually
+# identify that region's cinema.
+#
+# Language is the primary signal, not country: TMDB mislabels origin for
+# co-productions and outright wrong entries (it files Point Break as `IN`), but
+# a film's original_language is reliable. Both are required — the region must
+# match AND the language must belong to it.
+ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
+    "south asian": {
+        "countries": ["IN"], "also_countries": ["BD", "PK", "LK", "NP"],
+        "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur", "si", "ne"],
+        "label": "South Asian",
+    },
+    "indian": {"countries": ["IN"],
+               "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur"],
+               "label": "Indian"},
+    "bollywood": {"countries": ["IN"], "languages": ["hi"],
+                  "label": "Bollywood (Hindi)"},
+    "kollywood": {"countries": ["IN"], "languages": ["te"], "label": "Telugu"},
+    "tollywood": {"countries": ["IN"], "languages": ["ta", "te"], "label": "Tamil/Telugu"},
+    "malayalam": {"countries": ["IN"], "languages": ["ml"], "label": "Malayalam"},
+    "korean": {"countries": ["KR"], "languages": ["ko"], "label": "Korean"},
+    "k-drama": {"countries": ["KR"], "languages": ["ko"], "label": "Korean"},
+    "japanese": {"countries": ["JP"], "languages": ["ja"], "label": "Japanese"},
+    "anime": {"countries": ["JP"], "languages": ["ja"], "label": "Japanese (anime)"},
+    "chinese": {"countries": ["CN", "HK", "TW"], "languages": ["zh", "cn"],
+                "label": "Chinese"},
+    "bollywood hollywood": {"countries": ["IN"], "languages": ["hi", "ta", "te", "ml", "kn"],
+                            "label": "South Asian"},
+    "nigerian": {"countries": ["NG"], "languages": ["yo"], "label": "Nigerian"},
+    "spanish": {"countries": ["ES", "MX", "AR", "CO", "CL"], "languages": ["es"],
+                "label": "Spanish-language"},
+    "french": {"countries": ["FR"], "languages": ["fr"], "label": "French"},
+    "german": {"countries": ["DE"], "languages": ["de"], "label": "German"},
+    "italian": {"countries": ["IT"], "languages": ["it"], "label": "Italian"},
+    "portuguese": {"countries": ["BR", "PT"], "languages": ["pt"], "label": "Portuguese"},
+    "russian": {"countries": ["RU"], "languages": ["ru"], "label": "Russian"},
+    "turkish": {"countries": ["TR"], "languages": ["tr"], "label": "Turkish"},
+    "iranian": {"countries": ["IR"], "languages": ["fa"], "label": "Iranian"},
+    "egyptian": {"countries": ["EG"], "languages": ["ar"], "label": "Egyptian/Arabic"},
+    "nordic": {"countries": ["SE", "NO", "DK", "FI", "IS"], "languages": ["sv", "no", "da", "fi"],
+               "label": "Nordic"},
+}
+
 QUERY_INTENT: Dict[str, Dict[str, Any]] = {
     "relaxing": {"genres": ["Animation", "Family", "Comedy", "Romance", "Music"],
                  "exclude_genres": ["Horror", "Thriller", "War", "Crime"],
@@ -174,12 +221,20 @@ def get_vector_embeddings(text: str) -> Optional[List[float]]:
 # Recommender Service Engine
 # ===========================================================================
 PROFILE_MIX: Dict[str, Tuple[float, float]] = {
-    # (own weight, other weight). Asymmetric on purpose: this is one person's
-    # evening informed by the other's taste, not a committee. Averaging 50/50
-    # would recommend the compromise, which neither of them asked for.
+    # (own weight, other weight), where "own" ALWAYS means the viewer the
+    # result is for, never profile 1. Asymmetric on purpose: this is one
+    # person's evening informed by the other's taste, not a committee.
+    # Averaging 50/50 would recommend the compromise, which neither of them
+    # asked for.
+    #
+    # `me` and `partner` deliberately share the same weights. The id swap in
+    # rank_candidates_profile_aware already re-points "own" at the right
+    # profile, so encoding a lower own-weight here would have inverted the
+    # intent — "his picks" once weighted HIS taste at 0.25 and ranked the
+    # viewer's own films first.
     "together": (0.6, 0.4),
     "me": (0.75, 0.25),
-    "partner": (0.25, 0.75),
+    "partner": (0.75, 0.25),
 }
 
 TIER_BOOSTS: Dict[str, float] = {
@@ -190,6 +245,42 @@ TIER_BOOSTS: Dict[str, float] = {
     "B": 0.8,
     "C": 0.0,
 }
+
+
+def parse_origin_intent(query: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Detect a request for cinema of a PLACE rather than a genre.
+
+    "South Asian movies" names an origin, not a genre, so the genre filters
+    could never match it and the recommender returned Hollywood regardless.
+    Matches the longest phrase first ("south asian" before "asian") so the more
+    specific region wins.
+
+    Returns countries + languages to filter on, or None if the query names no
+    origin.
+    """
+    if not query:
+        return None
+    text = query.lower()
+    best = None
+    for phrase, spec in ORIGIN_INTENT.items():
+        if phrase in text:
+            # Prefer the longest matching phrase (most specific region).
+            if best is None or len(phrase) > len(best[0]):
+                best = (phrase, spec)
+    if best is None:
+        return None
+    phrase, spec = best
+    countries = list(spec.get("countries", []))
+    # "South Asian" covers several countries, so allow the extras too.
+    for extra in spec.get("also_countries", []):
+        if extra not in countries:
+            countries.append(extra)
+    return {
+        "phrase": phrase,
+        "label": spec.get("label", phrase.title()),
+        "countries": countries,
+        "languages": list(spec.get("languages", [])),
+    }
 
 
 def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
@@ -613,6 +704,19 @@ class RecommenderService:
         intent_weight = genre_spec["weight"]
         content_words = genre_spec["content_words"]
 
+        # Origin-of-cinema requests ("South Asian movies") are places, not
+        # genres. Filter on country AND language so TMDB's origin mislabels
+        # (Point Break filed as IN) don't leak Hollywood back in.
+        origin_spec = parse_origin_intent(query)
+        origin_countries = origin_spec["countries"] if origin_spec else None
+        origin_languages = origin_spec["languages"] if origin_spec else None
+        if origin_spec:
+            print(
+                f"[Recommender] Origin request '{origin_spec['label']}': "
+                f"countries={origin_countries} languages={origin_languages}",
+                flush=True,
+            )
+
         if media_type == "tv" and genres:
             expanded = list(genres)
             for g in genres:
@@ -644,6 +748,8 @@ class RecommenderService:
             media_type=media_type,
             genres=genres if genres else None,
             exclude_genres=excluded_genres or None,
+            origin_countries=origin_countries,
+            origin_languages=origin_languages,
             exclude_watched=sql_exclude_watched,
             min_rating=min_rating,
             era=era_preference,
@@ -669,17 +775,22 @@ class RecommenderService:
                 candidates = [c for c in candidates if (c.get("runtime") or 0) > 140] or candidates
 
         # Profile-aware exclusion, applied in Python so "seen by both" can be told
-        # apart from "seen by one". A film only ONE person has seen is exactly
-        # the Tier B pick we want to surface ("he loved it, you haven't"), so it
-        # is kept and badged rather than hidden. A film BOTH have seen is a
-        # genuine "already watched together" and is dropped.
+        # apart from "seen by one".
+        #
+        # In EVERY profile mode, a film the viewer has already watched must not
+        # be recommended back to them. `together` previously excluded only what
+        # BOTH had seen, so a film only she had watched surfaced with a "she
+        # hasn't seen this yet" style tier C badge — which is wrong: in
+        # together mode the point is finding something neither has watched.
+        # Tier B ("he loved it, you haven't") is for the RATING queue, which
+        # decides what he should watch, not what the pair should watch.
         if exclude_watched and profile in PROFILE_MIX:
             coview_all = self.db.get_item_co_view(
                 [c["id"] for c in candidates if c.get("id")], viewer_profile_id=None
             )
             candidates = [
                 c for c in candidates
-                if len((coview_all.get(c["id"]) or {}).get("seen_by") or []) < 2
+                if len((coview_all.get(c["id"]) or {}).get("seen_by") or []) == 0
             ]
             if not candidates:
                 return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
