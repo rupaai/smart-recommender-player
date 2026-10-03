@@ -34,6 +34,10 @@ recommender:
   exclude_watched: true
   enable_tier2_profiling: true
 
+  # Candidate funnel sizes (quality cut → diverse pool):
+  shortlist_size: 250     # top-rated items kept after the Bayesian quality cut
+  final_pool: 50          # diverse pool served for pagination
+
   # Recommendation engine router for the TIGER generative retrieval engine
   # (parallel engine — the legacy SQL/taste recommender is never modified):
   #   "fallback"        generative first; legacy on missing artifacts/history
@@ -41,7 +45,7 @@ recommender:
   #   "generative_only" generative primary; legacy only on unexpected failure
   engine_mode: fallback
   generative:
-    history_threshold: 2    # min usable semantic-ID history before generative is used
+    history_threshold: 5    # cold-start gate: legacy engine until 5+ rated items, then generative
     top_k: 40               # semantic ID tuples beam-decoded per request
     max_seq_len: 10         # sequence length fed to the ONNX predictor
     candidate_pool: 60      # trie-resolved candidates re-ranked per request

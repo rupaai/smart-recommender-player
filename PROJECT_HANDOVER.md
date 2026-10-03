@@ -56,7 +56,8 @@ smart_movie_streamer/
 │   ├── view_db.py            # SQLite database inspector
 │   ├── virtual_updater.py    # Media source updater
 │   ├── add_prowlarr_indexers.py  # Idempotent safe-indexer setup for Prowlarr
-│   └── build_full_catalogue.py   # Full TMDB catalogue builder (10k movies + 10k TV, resumable)
+│   ├── build_full_catalogue.py   # Full TMDB catalogue builder (10k movies + 10k TV, resumable)
+│   └── backfill_vote_counts.py   # Resumable TMDB vote-count backfill for the recommender quality-cut funnel
 ├── sample_library/           # Realistic 0-byte dummy video files for instant zero-download tests
 └── catalogue.db              # SQLite catalogue database (generated)
 ```
@@ -79,6 +80,7 @@ Canonical metadata for movies and TV shows:
 - `genres` (TEXT: comma-separated names, e.g. `"Action, Sci-Fi"`)
 - `genre_ids` (TEXT: comma-separated TMDB IDs)
 - `rating` (REAL: TMDB rating 0.0 - 10.0)
+- `vote_count` (INTEGER: TMDB vote count — added by schema v2 as an idempotent `ALTER TABLE`. 0 = not backfilled yet, -1 = confirmed missing on TMDB. Powers the recommender's SQL quality-cut funnel; backfilled by `utils/backfill_vote_counts.py`)
 - `runtime` (INTEGER: duration in minutes)
 - `poster_url` (TEXT: TMDB poster URL)
 - `tier2_keywords` (TEXT: cached TMDB keywords/themes)
@@ -143,6 +145,14 @@ User review impressions fueling the taste profile:
 4. **Optional ONNX Adaptor:**
    - Checks for `models/model.onnx`. If present, loads via `onnxruntime` for vector re-ranking. Falls back to SQL scoring if absent.
 
+**Large-catalogue candidate funnel (added later on 2026-10-02):**
+1. **Funnel 1 — hard narrowing (SQL):** media type, mood/genre chips (TV aliases expanded), era, runtime bounds, watch status, rating floor.
+2. **Funnel 2 — quality cut (SQL):** `DatabaseManager.get_top_candidates(...)` orders by the Bayesian formula `(votes/(votes+1000))*rating + (1000/(votes+1000))*6.5` computed **in SQL** using real `vote_count`, cut to `recommender.shortlist_size` (250). Items without vote counts yet score a flat 6.5 → graceful rating/year fallback until the backfill runs.
+3. **Funnel 3 — personal scoring (Python, unchanged logic):** taste bonus + free-text query matching over the ~250-item shortlist only (~50× less Python work than scoring the full catalogue; Pi-friendly).
+4. **Funnel 4 — diversity:** MMR pool capped at `recommender.final_pool` (50) → pagination serves from this pool.
+5. **`variety` (opt-in, default False; server passes True):** seeded shuffle rotating every 10 minutes — repeat requests surface different picks while pagination stays coherent within a bucket. Both engines accept the flag.
+6. **`utils/backfill_vote_counts.py`:** resumable threaded TMDB vote-count backfill (fills `vote_count`, refreshes `rating`; confirmed 404s marked -1 and skipped on re-runs). Run: `uv run python utils/backfill_vote_counts.py` (supports `DATABASE_PATH` override).
+
 ### C. Standalone Training Module (`/training`)
 - Fully decoupled from app runtime.
 - `movie_triplets.json`: 15 curated triplets.
@@ -165,6 +175,8 @@ User review impressions fueling the taste profile:
 - Legacy `RecommenderService` is untouched — it is only ever called as-is via the router.
 - Offline tests: `uv run python tests/test_generative_retriever.py` (trie, beam decode, sequence conversion, router modes, artifact-missing readiness).
 - Training runbook: `training/README.md` Steps A–H; artifacts verified: INT8 0.69 MB (<15 MB gate), 0.15 ms CPU (<5 ms gate), trie covers 14,397 items.
+- **Context awareness + variety (added later on 2026-10-02):** `POST /api/recommend` now resolves mood genres server-side and passes them to both engines. The generative engine applies a strong genre boost (+1.5) with genre hard-filter fallback (needs ≥8 matches, else boost-only), TV genre aliases, free-text query boosts (+0.4/word, exposed as `query_boost`), era/duration filters, and genre-matched SQL backfill of the candidate pool (scored without the model boost) when a mood narrows the request. Beam widened (width 64, candidates-per-level 64, `top_k: 40`) so the predictor explores far more tuples. Both engines accept `variety` (same 10-minute seeded rotation as legacy).
+- **Cold-start gate:** `recommender.generative.history_threshold: 5` — the legacy funnel engine serves until 5+ rated items exist, then generative takes over automatically. UI badge on each result card shows the active engine ("🎲 Picks for You" = legacy, "🧠 Learning Your Taste" = generative).
 
 ### E. Search Providers (`services/torrent_service.py`)
 - `TorrentSearcher.search()` provider chain: **Prowlarr → YTS → Apibay** (Prowlarr first only when configured; failures fall through silently with a warning).
@@ -189,6 +201,14 @@ App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
 ---
 
 ## 6. CHANGELOG & VERIFICATION CHECKLIST (2026-10-02)
+
+### Changelog (later update — same day)
+- **`/api/moods` 500 fixed:** the endpoint read a non-existent `vibe` key from `MOOD_MAPPINGS`. Endpoint is now defensive (`info.get("vibe", "")`) and `MOOD_MAPPINGS` gained vibe descriptions (additive metadata only — ranking behavior unchanged).
+- **Frontend render fix:** `app.js` treated the paginated recommend payload as an array (`movies.forEach` TypeError in the browser → "Failed to load recommendations" despite clean 200s server-side). Now renders `data.items` and passes `data.engine`.
+- **Full catalogue is the default:** `config.yaml database_path: catalogue_full.db` — the TIGER artifacts (14,397 semantic IDs) match it (coverage 100%). `DATABASE_PATH` env override still switches catalogues per launch. `server.py` prints `[DB] active catalogue: <path> (<source>)` at startup so DB/artifact mismatches are immediately visible.
+- **Vote-count quality funnel + variety + cold-start gate:** schema v2 (`media_items.vote_count`), `get_top_candidates` SQL funnel (shortlist 250), MMR final pool 50, opt-in `variety` (10-minute seeded rotation) wired through both engines, `history_threshold: 5` cold-start gate, engine badge in the UI, and `utils/backfill_vote_counts.py`. Details in Sections 3/B/F above.
+- **Deferred ideas (discussed, deliberately not implemented):** per-tap exclusion of already-shown items (`exclude_ids`), shuffling *before* MMR so the pool's composition (not just order) varies per bucket, widening `shortlist_size` to 400 for more rotation runway. Note: the final 50-item pool composition is currently static per mood (top-rated cut + deterministic MMR); the variety shuffle only re-orders it, and the vote-count backfill will shift the composition once it runs.
+- **PENDING VERIFICATION (not yet executed — session terminal wedged):** `python3 -m py_compile database.py server.py services/recommender_service.py services/generative_retriever.py utils/backfill_vote_counts.py`, `uv run python tests/test_generative_retriever.py`, server restart + live checks (`/api/moods` 200, `POST /api/recommend` → `engine` field + badge data), and the vote-count backfill run.
 
 ### Changelog
 - **TIGER generative retrieval engine (parallel, feature-flagged):** new `services/generative_retriever.py` (`GenerativeRetriever` + `route_recommend` router) implementing TIGER semantic-ID generative retrieval beside the untouched legacy recommender; `POST /api/recommend` responses now carry `engine: "generative" | "legacy"`. Config: `recommender.engine_mode` (`fallback` default | `legacy_only` | `generative_only`) + `recommender.generative.*` knobs in `config.yaml`.

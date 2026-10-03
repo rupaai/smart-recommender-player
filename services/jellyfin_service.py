@@ -30,8 +30,17 @@ class JellyfinService:
         self.user_id = os.getenv("JELLYFIN_USER_ID")
         self.session = requests.Session()
         if self.api_key:
+            # Send BOTH credential styles carrying the same token:
+            # - X-Emby-Token: accepted by Jellyfin 10.x
+            # - Authorization: MediaBrowser Token="...": required by newer
+            #   Jellyfin builds (12.x) that dropped query-param/legacy auth.
+            # Unknown/legacy styles are ignored by servers that don't use them.
             self.session.headers.update(
-                {"X-Emby-Token": self.api_key, "Accept": "application/json"}
+                {
+                    "X-Emby-Token": self.api_key,
+                    "Authorization": f'MediaBrowser Token="{self.api_key}"',
+                    "Accept": "application/json",
+                }
             )
 
         # Library roots: prefer explicit jellyfin_library config, fall back to
@@ -274,6 +283,232 @@ class JellyfinService:
             "for your TV client"
         )
         return "; ".join(hints)
+    # ------------------------------------------------------------------
+    # Repair: attach paths + force realtime monitoring (Jellyfin 12-proof)
+    # ------------------------------------------------------------------
+    VIDEO_EXT_HINT = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm"}
+
+    def _count_media_files(self, directory: str) -> int:
+        """Recursively counts video files under a directory (0 if missing)."""
+        try:
+            count = 0
+            for _root, _dirs, files in os.walk(directory):
+                count += sum(
+                    1 for f in files if os.path.splitext(f)[1].lower() in self.VIDEO_EXT_HINT
+                )
+            return count
+        except Exception:
+            return 0
+
+    def _add_library_path(self, name: str, directory: str) -> bool:
+        """Tries every known add-path endpoint shape; verifies with VirtualFolders."""
+        attempts = [
+            ("query name + json Path", {"name": name}, {"Path": directory}),
+            ("query name+path", {"name": name, "path": directory}, None),
+            ("query name+path+refresh",
+             {"name": name, "path": directory, "refreshLibrary": "true"}, None),
+        ]
+        for label, params, body in attempts:
+            try:
+                kwargs: Dict[str, Any] = {"params": params, "timeout": 10}
+                if body is not None:
+                    kwargs["json"] = body
+                resp = self.session.post(
+                    f"{self.base_url}/Library/VirtualFolders/Paths", **kwargs
+                )
+                if resp.status_code in (200, 204):
+                    libs = self.get_virtual_folders() or []
+                    lib = next(
+                        (l for l in libs if (l.get("Name") or "").lower() == name.lower()),
+                        None,
+                    )
+                    if lib and self._library_has_path(lib, directory):
+                        print(
+                            f"[Jellyfin] add-path OK via '{label}': {directory} → {name}",
+                            flush=True,
+                        )
+                        return True
+                    print(
+                        f"[Jellyfin] add-path '{label}' returned {resp.status_code} "
+                        "but path not listed yet.",
+                        flush=True,
+                    )
+                else:
+                    print(f"[Jellyfin] add-path '{label}' → HTTP {resp.status_code}", flush=True)
+            except Exception as e:
+                print(f"[Jellyfin] add-path '{label}' failed: {e}", flush=True)
+        return False
+
+
+    def _create_library(self, name: str, collection_type: str, directory: str) -> bool:
+        """Creates a typed library; sends paths BOTH as query param and body."""
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/Library/VirtualFolders",
+                params={
+                    "name": name,
+                    "collectionType": collection_type,
+                    "paths": directory,          # Jellyfin 12 reads this
+                    "refreshLibrary": "false",
+                },
+                json={                            # older builds read this
+                    "EnableRealtimeMonitor": self.realtime_monitor,
+                    "LibraryOptions": {"EnableRealtimeMonitor": self.realtime_monitor},
+                    "PathInfos": [{"Path": directory}],
+                },
+                timeout=10,
+            )
+            libs = self.get_virtual_folders() or []
+            lib = next(
+                (l for l in libs if (l.get("Name") or "").lower() == name.lower()), None
+            )
+            attached = bool(lib and self._library_has_path(lib, directory))
+            print(
+                f"[Jellyfin] create '{name}' → HTTP {resp.status_code}, "
+                f"path registered: {attached}",
+                flush=True,
+            )
+            return resp.status_code in (200, 204) and attached
+        except Exception as e:
+            print(f"[Jellyfin] create '{name}' failed: {e}", flush=True)
+            return False
+
+    def _delete_empty_library(self, name: str) -> bool:
+        """Deletes a library ONLY if it has zero locations (nothing indexed)."""
+        libs = self.get_virtual_folders() or []
+        lib = next((l for l in libs if (l.get("Name") or "").lower() == name.lower()), None)
+        if not lib or (lib.get("Locations") or []):
+            return False
+        try:
+            resp = self.session.delete(
+                f"{self.base_url}/Library/VirtualFolders",
+                params={"name": name, "refreshLibrary": "false"},
+                timeout=10,
+            )
+            print(
+                f"[Jellyfin] delete empty library '{name}' → HTTP {resp.status_code}",
+                flush=True,
+            )
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            print(f"[Jellyfin] delete empty library '{name}' failed: {e}", flush=True)
+            return False
+
+    def _set_realtime_monitor(self, name: str) -> bool:
+        """Forces EnableRealtimeMonitor=true on an existing library, preserving options."""
+        libs = self.get_virtual_folders() or []
+        lib = next((l for l in libs if (l.get("Name") or "").lower() == name.lower()), None)
+        if not lib:
+            return False
+        options = dict(lib.get("LibraryOptions") or {})
+        if options.get("EnableRealtimeMonitor") is True:
+            return True
+        options["EnableRealtimeMonitor"] = True
+        try:
+            resp = self.session.post(
+                f"{self.base_url}/Library/VirtualFolders/LibraryOptions",
+                json={
+                    "Id": lib.get("ItemId") or lib.get("Id"),
+                    "LibraryOptions": options,
+                },
+                timeout=10,
+            )
+            print(
+                f"[Jellyfin] EnableRealtimeMonitor for '{name}' → HTTP {resp.status_code}",
+                flush=True,
+            )
+            return resp.status_code in (200, 204)
+        except Exception as e:
+            print(f"[Jellyfin] realtime-monitor update for '{name}' failed: {e}", flush=True)
+            return False
+
+    def repair_libraries(self) -> Dict[str, Any]:
+        """Ensures both configured libraries point at their dirs with paths attached.
+
+        Strategy per library:
+        1. Already has the path → skip.
+        2. Else try add-path endpoint variants (verified against the server).
+        3. If it still has no path AND has zero locations (empty → nothing to
+           lose), delete + recreate with paths in BOTH query param and body.
+        4. Force EnableRealtimeMonitor=true on the final state.
+        Returns a JSON report (embeds on-disk media counts too).
+        """
+        report: Dict[str, Any] = {"libraries": [], "refresh_triggered": False}
+        if not self.configured:
+            report["error"] = "Jellyfin not configured (JELLYFIN_URL / JELLYFIN_API_KEY)"
+            return report
+
+        wanted = [
+            (self.movies_library_name, "movies", self.movie_dir),
+            (self.tv_library_name, "tvshows", self.tv_dir),
+        ]
+
+        for name, collection_type, directory in wanted:
+            entry: Dict[str, Any] = {
+                "library": name,
+                "target_dir": directory,
+                "media_files_on_disk": self._count_media_files(directory),
+            }
+            libs = self.get_virtual_folders()
+            if libs is None:
+                entry["error"] = "server unreachable"
+                report["libraries"].append(entry)
+                continue
+
+            lib = next((l for l in libs if (l.get("Name") or "").lower() == name.lower()), None)
+            actions: List[str] = []
+
+            if lib and self._library_has_path(lib, directory):
+                entry["result"] = "already-attached"
+            elif not lib:
+                actions.append("create")
+                entry["result"] = (
+                    "created" if self._create_library(name, collection_type, directory)
+                    else "create-failed"
+                )
+            else:
+                locations = lib.get("Locations") or []
+                actions.append(f"add-path (existing locations: {locations or 'NONE'})")
+                if self._add_library_path(name, directory):
+                    entry["result"] = "path-added"
+                elif not locations:
+                    # Empty library: recreate — nothing indexed, nothing lost.
+                    actions.append("recreate-empty-library")
+                    if self._delete_empty_library(name) and self._create_library(
+                        name, collection_type, directory
+                    ):
+                        entry["result"] = "recreated"
+                    else:
+                        entry["result"] = "recreate-failed"
+                else:
+                    entry["result"] = "add-path-failed-nonempty"
+                    entry["hint"] = (
+                        "library has existing paths — remove the stale ones manually "
+                        "in the Jellyfin dashboard, then re-run"
+                    )
+            entry["actions"] = actions
+
+            entry["realtime_monitor_set"] = self._set_realtime_monitor(name)
+            report["libraries"].append(entry)
+
+        # Final verification + refresh.
+        libs = self.get_virtual_folders() or []
+        report["final_state"] = [
+            {
+                "name": l.get("Name"),
+                "collection_type": l.get("CollectionType"),
+                "locations": l.get("Locations") or [],
+                "realtime_monitor": (l.get("LibraryOptions") or {}).get("EnableRealtimeMonitor"),
+            }
+            for l in libs
+        ]
+        try:
+            resp = self.session.post(f"{self.base_url}/Library/Refresh", timeout=10)
+            report["refresh_triggered"] = resp.status_code in (200, 204)
+            report["refresh_http"] = resp.status_code
+        except Exception as e:
+            report["refresh_error"] = str(e)
+        return report
 
     # ------------------------------------------------------------------
     # Diagnostics (GET /api/jellyfin/status)
@@ -304,6 +539,9 @@ class JellyfinService:
                     "name": lib.get("Name"),
                     "collection_type": lib.get("CollectionType"),
                     "locations": lib.get("Locations") or [],
+                    "realtime_monitor": (lib.get("LibraryOptions") or {}).get(
+                        "EnableRealtimeMonitor"
+                    ),
                 }
                 for lib in libs
             ]

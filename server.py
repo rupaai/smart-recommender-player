@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import socket
 from typing import Any, Dict, List, Optional
 
@@ -27,7 +28,12 @@ from scanner import LocalFileScanner
 from services.jellyfin_service import JellyfinService
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
-from services.torrent_service import TorrentDownloader, TorrentSearcher, downloads_store
+from services.torrent_service import (
+    TorrentDownloader,
+    TorrentSearcher,
+    _clean_release_title,
+    downloads_store,
+)
 
 load_dotenv()
 api_key = os.getenv("TMDB_API_KEY", "").strip()
@@ -53,6 +59,8 @@ recommender_service = RecommenderService(
     db_manager=db,
     api_key=api_key,
     enable_tier2=enable_tier2,
+    shortlist_size=recommender_cfg.get("shortlist_size", 250),
+    final_pool=recommender_cfg.get("final_pool", 50),
 )
 
 # TIGER generative retrieval engine (parallel — legacy recommender untouched).
@@ -173,6 +181,11 @@ class TorrentCancelRequest(BaseModel):
     movie_id: int
 
 
+class MediaCleanupRequest(BaseModel):
+    paths: List[str]
+    item_ids: Optional[List[int]] = None
+
+
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_index(request: Request) -> Any:
@@ -203,6 +216,61 @@ async def get_status() -> Dict[str, Any]:
 async def get_jellyfin_status() -> Dict[str, Any]:
     """Jellyfin diagnostics: server online, libraries (types + locations), env config."""
     return await asyncio.to_thread(jellyfin_service.diagnostics)
+
+
+@app.post("/api/jellyfin/repair")
+async def repair_jellyfin_libraries() -> Dict[str, Any]:
+    """Attaches missing paths to Movies/TV Shows libraries, forces realtime
+    monitoring, recreates EMPTY libraries as a fallback, then refreshes."""
+    return await asyncio.to_thread(jellyfin_service.repair_libraries)
+
+
+@app.get("/api/jellyfin/repair")
+async def repair_jellyfin_libraries_get(apply: int = 0) -> Dict[str, Any]:
+    """GET form of the repair endpoint (for curl/fetch-tooling convenience).
+    Pass ?apply=1 to actually mutate; without it this only reports."""
+    if not apply:
+        diag = await asyncio.to_thread(jellyfin_service.diagnostics)
+        return {
+            "mode": "dry-run",
+            "note": "call /api/jellyfin/repair (POST) or ?apply=1 to fix libraries",
+            "current_state": diag,
+        }
+    return await asyncio.to_thread(jellyfin_service.repair_libraries)
+
+
+@app.get("/api/media/files")
+async def list_media_files() -> Dict[str, Any]:
+    """Read-only listing of every video file under the configured media roots.
+
+    Diagnostic helper (e.g. verifying the organizer's folder layout):
+    returns per-root absolute file paths with sizes and mtimes.
+    """
+    VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm"}
+
+    def _scan() -> Dict[str, Any]:
+        out: Dict[str, Any] = {"roots": {}}
+        for root_dir in config.get("media_folders", []) or []:
+            files: List[Dict[str, Any]] = []
+            if os.path.isdir(root_dir):
+                for dirpath, _dirnames, filenames in os.walk(root_dir):
+                    for fname in filenames:
+                        if os.path.splitext(fname)[1].lower() in VIDEO_EXTS:
+                            fpath = os.path.join(dirpath, fname)
+                            try:
+                                st = os.stat(fpath)
+                                files.append({
+                                    "path": fpath,
+                                    "size": st.st_size,
+                                    "mtime": st.st_mtime,
+                                })
+                            except OSError:
+                                continue
+            files.sort(key=lambda f: f["path"])
+            out["roots"][root_dir] = {"exists": os.path.isdir(root_dir), "files": files}
+        return out
+
+    return await asyncio.to_thread(_scan)
 
 
 @app.get("/api/moods")
@@ -248,6 +316,7 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
         media_type=req.media_type,
         genres_override=genres or None,
         min_rating_override=req.min_rating,
+        variety=True,   # cold-start freshness: seeded 10-minute rotation
     )
 
     # Feature-flag router: dispatches between the untouched legacy recommender
@@ -340,9 +409,13 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
     """Launches torrent download as a background task and returns immediately."""
     try:
         movie_id = req.movie_id
+        # Torrent release names must never become catalogue titles or folder
+        # names ("New Girl S05E12 D-Day 1080p DSNP WEB-DL...") — clean once,
+        # here, so the DB item AND the organizer both use the real title.
+        clean_movie_title = _clean_release_title(req.movie_title)
         if not movie_id or movie_id <= 0:
             movie_id = db.get_or_create_media_item(
-                title=req.movie_title,
+                title=clean_movie_title,
                 media_type=req.media_type,
             )
 
@@ -350,13 +423,14 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
             torrent_downloader.download(
                 req.magnet_link,
                 movie_id,
-                req.movie_title,
+                clean_movie_title,
                 media_type=req.media_type,
             )
         )
         return {
             "success": True,
             "movie_id": movie_id,
+            "clean_title": clean_movie_title,
             "message": f"Download task started for {req.media_type}.",
         }
     except Exception as e:
@@ -378,6 +452,115 @@ async def get_torrent_status(movie_id: int) -> Dict[str, Any]:
         {"status": "idle", "progress": 0.0, "movie_id": movie_id},
     )
     return status_data
+
+
+@app.post("/api/media/cleanup")
+async def cleanup_media(req: MediaCleanupRequest) -> Dict[str, Any]:
+    """Deletes the given media files/trees (guarded), removes their DB rows,
+    prunes orphaned stub items, and triggers a Jellyfin refresh.
+
+    Guardrails: every path must be absolute AND inside a configured media
+    root (media_folders). Refuses anything else — never touches other paths.
+    """
+    roots = {os.path.abspath(r) for r in (config.get("media_folders", []) or [])}
+
+    def _guarded(path: str) -> Optional[str]:
+        ap = os.path.abspath(path)
+        if any(ap == r or ap.startswith(r + os.sep) for r in roots):
+            return ap
+        return None
+
+    report: Dict[str, Any] = {"deleted_paths": [], "skipped_paths": [], "removed_sources": 0,
+                              "pruned_items": [], "jellyfin_refresh": False}
+
+    def _do_cleanup() -> Dict[str, Any]:
+        for raw_path in req.paths:
+            ap = _guarded(raw_path)
+            if ap is None:
+                report["skipped_paths"].append(f"outside media roots: {raw_path}")
+                continue
+            if os.path.isdir(ap):
+                shutil.rmtree(ap, ignore_errors=True)
+            elif os.path.isfile(ap):
+                os.remove(ap)
+            report["deleted_paths"].append(ap)
+
+        # DB rows: sources matching any deleted file (exact match per file),
+        # then items that no longer have any source / history / tmdb_id.
+        file_paths = [p for p in report["deleted_paths"] if not os.path.exists(p)]
+        report["removed_sources"] = db.remove_source_files(file_paths)
+        if req.item_ids:
+            with db.get_connection() as conn:
+                for item_id in req.item_ids:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT COUNT(*) AS n FROM watch_history WHERE media_item_id = ?;",
+                        (item_id,),
+                    )
+                    if cur.fetchone()["n"] == 0:
+                        cur.execute("DELETE FROM media_items WHERE id = ?;", (item_id,))
+                        report["pruned_items"].append(str(item_id))
+                conn.commit()
+        report["pruned_items"] += db.prune_orphan_stub_items()
+
+        # Refresh Jellyfin so deleted content disappears promptly.
+        try:
+            resp = jellyfin_service.session.post(
+                f"{jellyfin_service.base_url}/Library/Refresh", timeout=10
+            )
+            report["jellyfin_refresh"] = resp.status_code in (200, 204)
+        except Exception as e:
+            report["jellyfin_refresh_error"] = str(e)
+        return report
+
+    return await asyncio.to_thread(_do_cleanup)
+
+
+@app.get("/api/db/sources")
+async def list_db_sources() -> Dict[str, Any]:
+    """Read-only dump of media_sources rows + their parent item titles.
+
+    Diagnostic helper for spotting stale source rows pointing at deleted files.
+    """
+    def _dump() -> Dict[str, Any]:
+        with db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT s.id, s.file_path, s.source_type, s.file_size,
+                       s.season_number, s.episode_number,
+                       s.media_item_id, i.title, i.media_type, i.tmdb_id
+                FROM media_sources s
+                LEFT JOIN media_items i ON i.id = s.media_item_id
+                ORDER BY s.id;
+                """
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["file_exists"] = os.path.isfile(r["file_path"])
+        return {"count": len(rows), "rows": rows}
+
+    return await asyncio.to_thread(_dump)
+
+
+@app.post("/api/db/sources/prune")
+async def prune_stale_db_sources() -> Dict[str, Any]:
+    """Removes media_sources rows whose file_path no longer exists on disk,
+    then prunes orphaned stub items. Never deletes files."""
+    def _prune() -> Dict[str, Any]:
+        removed: List[str] = []
+        with db.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, file_path FROM media_sources;")
+            for row in cur.fetchall():
+                if not os.path.isfile(row["file_path"]):
+                    removed.append(row["file_path"])
+            if removed:
+                db.remove_source_files(removed)
+        pruned = db.prune_orphan_stub_items()
+        return {"removed_source_rows": removed, "pruned_items": pruned}
+
+    return await asyncio.to_thread(_prune)
 
 
 @app.post("/api/sync")

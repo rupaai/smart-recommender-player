@@ -255,7 +255,7 @@ async function fetchRecommendations() {
 
     // The API returns a paginated payload object; renderRecommendations expects the items array.
     const data = await res.json();
-    renderRecommendations(data.items || []);
+    renderRecommendations(data.items || [], data.engine);
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     container.innerHTML = '<p style="text-align:center; color:var(--danger)">Failed to load recommendations.</p>';
@@ -265,7 +265,7 @@ async function fetchRecommendations() {
   }
 }
 
-function renderRecommendations(movies) {
+function renderRecommendations(movies, engine) {
   const container = document.getElementById('resultsContainer');
   container.innerHTML = '';
 
@@ -288,6 +288,9 @@ function renderRecommendations(movies) {
     const tasteBonus = m.taste_bonus > 0 ? `<span class="badge badge-bonus">+${m.taste_bonus} Taste Boost</span>` : '';
     const queryBoost = m.query_boost > 0 ? `<span class="badge badge-query">+${m.query_boost} Match</span>` : '';
     const runtimeStr = m.runtime ? `<span class="badge badge-runtime">⏱ ${m.runtime}m</span>` : '';
+    const engineBadge = engine === 'generative'
+      ? '<span class="engine-badge badge-generative">🧠 Learning Your Taste</span>'
+      : '<span class="engine-badge badge-legacy">🎲 Picks for You</span>';
     const reviewsBuzz = m.tier2_reviews_summary ? `<div class="movie-buzz">💬 ${m.tier2_reviews_summary}</div>` : '';
 
     const hasLocalFile = m.file_path && m.file_path.length > 0;
@@ -309,6 +312,7 @@ function renderRecommendations(movies) {
           </div>
           <div class="movie-badges">
             <span class="badge badge-tmdb">★ ${m.rating || 'N/A'}</span>
+            ${engineBadge}
             ${tasteBonus}
             ${queryBoost}
             ${runtimeStr}

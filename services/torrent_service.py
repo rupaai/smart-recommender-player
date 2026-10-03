@@ -123,6 +123,86 @@ def _log_transcode_hint(path: str) -> None:
             flush=True,
         )
 
+_RELEASE_NOISE_TOKENS = {
+    "2160p", "1080p", "720p", "480p", "web", "webrip", "webdl", "web-dl",
+    "webdl-480p", "h264", "h265", "x264", "x265", "hevc", "aac", "aac2",
+    "bluray", "blu-ray", "brrip", "bdrip", "dvdrip", "hdr", "hdr10", "dv",
+    "proper", "repack", "amzn", "nf", "netflix", "hdtv", "dsnp", "atvp",
+    "remux", "truehd", "atmos", "ddp", "dd5", "ac3", "dts", "5", "1", "2",
+    "0", "multi", "subs", "rarbg", "yts", "yify", "ettv", "eztv", "tgx",
+    "mp4", "mkv", "avi", "1080i", "2160i", "pal", "ntsc", "complete",
+    "season", "s", "part", "pt",
+}
+
+
+def _release_show_tokens(filename: str) -> set:
+    """Extracts plausible show-name tokens from a release filename.
+
+    Cuts at the SxxEyy tag (or 1xYY), drops quality/release noise and digits,
+    lowercases. Empty set when nothing usable remains.
+    """
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    m = re.search(r"(?i)(?<!\d)s\d{1,2}e\d{1,3}", stem)
+    if not m:
+        m = re.search(r"(?i)(?<!\d)\d{1,2}x\d{1,2}", stem)
+    show_part = stem[: m.start()] if m else stem
+    raw = re.findall(r"[a-zA-Z][a-zA-Z0-9']*", show_part)
+    # Length filter drops junk fragments split off resolutions ("1080p"→"p")
+    return {
+        t.lower().strip("-._")
+        for t in raw
+        if len(t) > 1
+        and t.lower().strip("-._") not in _RELEASE_NOISE_TOKENS
+    }
+
+
+def _show_name_mismatch(filename: str, clean_title: str) -> bool:
+    """True when a video filename's show tokens share NO word with the title.
+
+    Conservative: only fires when BOTH sides have usable tokens — a genuine
+    'Game.of.Thrones.S01E01.mkv' inside a 'New Girl' download trips it, while
+    oddly-named-but-plausible files never do.
+    """
+    file_tokens = _release_show_tokens(filename)
+    title_tokens = {
+        t.lower()
+        for t in re.findall(r"[a-zA-Z][a-zA-Z0-9']*", clean_title)
+        if t.lower() not in _RELEASE_NOISE_TOKENS
+    }
+    if not file_tokens or not title_tokens:
+        return False
+    return not (file_tokens & title_tokens)
+
+
+def _clean_release_title(name: str) -> str:
+    """Extracts a clean show/movie title from a torrent release name.
+
+    "New Girl S05E12 D-Day 1080p DSNP WEB-DL DDP5 1 H 264-MiU"  → "New Girl"
+    "Game of Thrones S01E01 Winter Is Coming 1080p BluRay x264-OFT"
+        → "Game of Thrones"
+    "They.Live.1988.REMASTERED.1080p.BluRay.H264.AAC-GoodFilms" → "They Live"
+
+    Cuts at the episode tag, then keeps leading real words until the first
+    noise token (quality/codec/group). Falls back to the input when nothing
+    usable remains — never returns an empty string.
+    """
+    stem = os.path.splitext(os.path.basename(name))[0]
+    stem = re.sub(r"[._]+", " ", stem)
+    m = re.search(r"(?i)(?<!\d)s\d{1,2}e\d{1,3}", stem)
+    if not m:
+        m = re.search(r"(?i)(?<!\d)\d{1,2}x\d{1,2}", stem)
+    if m:
+        stem = stem[: m.start()]
+    words: List[str] = []
+    for tok in stem.split():
+        low = tok.lower().strip("-")
+        if low in _RELEASE_NOISE_TOKENS or re.fullmatch(r"\d{4}", low) or not re.match(r"^[a-zA-Z]", tok):
+            break
+        words.append(tok)
+    cleaned = " ".join(words).strip(" -")
+    return cleaned if cleaned else name.strip()
+
+
 
 def _remove_dir_tree_if_empty(path: str) -> bool:
     """Recursively removes empty directories bottom-up starting at path.
@@ -573,6 +653,7 @@ def organize_media_files(
     year: Optional[int],
     media_type: str = "movie",
     db: Any = None,
+    issues: Optional[List[str]] = None,
 ) -> List[str]:
     """Pure filesystem organizer for the Jellyfin directory layout.
 
@@ -581,6 +662,10 @@ def organize_media_files(
     TV:     <tv_target>/<Show> (<Year>)/Season <XX>/<Show> - S<XX>E<YY>[-E<ZZ>].<ext>
             for EVERY video found (season packs), with subtitles paired via the
             SxxEyy tag parsed from their own filename.
+
+    Filenames whose show tokens share no word with the requested title are
+    organized anyway (never deleted) but reported into `issues` (if provided)
+    with a loud log — a mislabeled/fake torrent must not pass silently.
 
     Unpairable subtitles are logged and skipped, every episode is registered
     in media_sources, and the staging directory is removed once emptied.
@@ -613,6 +698,14 @@ def organize_media_files(
     if media_type != "tv":
         # ---- Movie: largest video becomes <Title> (<Year>).<ext> ----
         main_video = videos[0]
+        if _show_name_mismatch(main_video, clean_title):
+            msg = (
+                f"possible mislabeled torrent: video '{os.path.basename(main_video)}' "
+                f"shares no name token with requested title '{clean_title}'"
+            )
+            print(f"[Organizer] ⚠️ {msg}", flush=True)
+            if issues is not None:
+                issues.append(msg)
         ext = os.path.splitext(main_video)[1].lower()
         target_dir = os.path.join(movie_target, folder_name)
         os.makedirs(target_dir, exist_ok=True)
@@ -670,6 +763,15 @@ def organize_media_files(
                     flush=True,
                 )
                 continue
+            if _show_name_mismatch(video, clean_title):
+                msg = (
+                    f"possible mislabeled torrent: episode '{os.path.basename(video)}' "
+                    f"shares no name token with requested title '{clean_title}' — "
+                    "organized under the requested show, but verify the content!"
+                )
+                print(f"[Organizer] ⚠️ {msg}", flush=True)
+                if issues is not None:
+                    issues.append(msg)
             s, e, e2 = parsed
             ext = os.path.splitext(video)[1].lower()
             season_dir = os.path.join(show_dir, f"Season {s:02d}")
@@ -827,21 +929,19 @@ class TorrentDownloader:
         self.cancelled_tasks.discard(movie_id)
         print(f"[Downloader] Cancelled & cleaned up: ID {movie_id}", flush=True)
 
+    def _torrent_staging_dir(self, movie_id: int) -> str:
+        """Per-torrent staging subdir — one torrent NEVER sees another's files."""
+        path = os.path.join(self.download_dir, f"id_{movie_id}")
+        os.makedirs(path, exist_ok=True)
+        return path
+
     def _purge_partial_files(self, movie_id: int) -> None:
-        """Best-effort removal of partial files left in the staging directory."""
+        """Removes the per-torrent staging directory (partial files + leftovers)."""
+        staging = os.path.join(self.download_dir, f"id_{movie_id}")
         try:
-            torrent_name = (downloads_store.get(movie_id) or {}).get("name") or ""
-            if not torrent_name or not os.path.isdir(self.download_dir):
-                return
-            prefix = torrent_name[:40]
-            for entry in os.listdir(self.download_dir):
-                if not entry.startswith(prefix):
-                    continue
-                entry_path = os.path.join(self.download_dir, entry)
-                if os.path.isdir(entry_path):
-                    shutil.rmtree(entry_path, ignore_errors=True)
-                else:
-                    os.remove(entry_path)
+            if os.path.isdir(staging):
+                shutil.rmtree(staging, ignore_errors=True)
+                print(f"[Downloader] Purged staging dir: {staging}", flush=True)
         except Exception as e:
             print(f"[Downloader] Partial-file purge error: {e}", flush=True)
 
@@ -891,15 +991,21 @@ class TorrentDownloader:
                 if item.get("media_type"):
                     media_type = item["media_type"]
 
+        issues: List[str] = []
         organized = organize_media_files(
-            staging_dir=self.download_dir,
+            staging_dir=self._torrent_staging_dir(movie_id),
             movie_target=self.movie_target,
             tv_target=self.tv_target,
             clean_title=clean_title,
             year=year,
             media_type=media_type,
             db=self.db,
+            issues=issues,
         )
+
+        # Surface mislabeled-torrent warnings to the UI status store.
+        if issues and movie_id in downloads_store:
+            downloads_store[movie_id]["mislabeled_hint"] = " ".join(issues)
 
         if not organized:
             print(f"[Downloader] No video file found to organize for '{title}'.", flush=True)
@@ -984,7 +1090,10 @@ class TorrentDownloader:
                     return
                 magnet_link = converted
             params = lt.parse_magnet_uri(magnet_link)
-            params.save_path = self.download_dir
+            # Per-torrent staging dir: the organizer only ever sweeps THIS
+            # torrent's files — concurrent downloads can never contaminate
+            # each other's show folders (the bug that mixed GoT into New Girl).
+            params.save_path = self._torrent_staging_dir(movie_id)
 
             handle = self.session.add_torrent(params)
             info_hash = str(handle.info_hash()).lower()

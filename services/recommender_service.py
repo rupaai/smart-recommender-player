@@ -7,8 +7,10 @@ Bayesian rating weighting, MMR diversity pruning, and pagination.
 from __future__ import annotations
 
 import os
+import random
 import re
 import math
+import time
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 import requests
@@ -133,10 +135,14 @@ class RecommenderService:
         db_manager: DatabaseManager,
         api_key: Optional[str] = None,
         enable_tier2: bool = True,
+        shortlist_size: int = 250,
+        final_pool: int = 50,
     ):
         self.db = db_manager
         self.api_key = api_key
         self.enable_tier2 = enable_tier2
+        self.shortlist_size = shortlist_size   # Funnel 2: quality-cut pool size
+        self.final_pool = final_pool           # Funnel 4: diverse pool for pagination
         self.http = requests.Session()
 
     def rank_candidates(
@@ -253,6 +259,7 @@ class RecommenderService:
         media_type: str = "movie",
         genres_override: Optional[List[str]] = None,
         min_rating_override: Optional[float] = None,
+        variety: bool = False,
     ) -> Dict[str, Any]:
         """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination."""
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
@@ -274,12 +281,17 @@ class RecommenderService:
         if query and any(kw in query.lower() for kw in GUILTY_PLEASURE_KEYWORDS):
             min_rating = 0.0
 
-        # Stage 1: Fast Database Metadata Retrieval
-        candidates = self.db.get_candidates(
+        # Stage 1: Quality-cut candidate funnel — hard filters + Bayesian
+        # audience-weighted ordering computed in SQL (real vote counts), cut
+        # to the shortlist so Python scoring never touches the full catalogue.
+        candidates = self.db.get_top_candidates(
             media_type=media_type,
             genres=genres if genres else None,
             exclude_watched=exclude_watched,
             min_rating=min_rating,
+            era=era_preference,
+            duration=duration_preference if media_type == "movie" else None,
+            limit=self.shortlist_size,
         )
 
         if not candidates:
@@ -304,9 +316,15 @@ class RecommenderService:
         ranked = self.rank_candidates(candidates, taste, query=query)
 
         # Stage 3: Candidate Diversity Pruning (MMR)
-        # Process top 100 candidates through MMR to build a diverse pool for pagination
-        pool_size = min(len(ranked), 100)
+        # Process the shortlist through MMR to build the diverse final pool.
+        pool_size = min(len(ranked), self.final_pool)
         diverse_candidates = self.apply_mmr_diversity(ranked[:pool_size], top_n=pool_size)
+
+        # Cold-start variety (opt-in): seeded shuffle that rotates every 10
+        # minutes — repeat requests surface different picks, but the order is
+        # stable within a bucket so pagination stays coherent while browsing.
+        if variety and len(diverse_candidates) > page_size:
+            random.Random(int(time.time() // 600)).shuffle(diverse_candidates)
 
         # Stage 4: Pagination Slice
         total_results = len(diverse_candidates)

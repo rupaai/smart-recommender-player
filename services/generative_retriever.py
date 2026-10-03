@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -329,6 +330,7 @@ class GenerativeRetriever:
         media_type: str = "movie",
         genres_override: Optional[List[str]] = None,
         min_rating_override: Optional[float] = None,
+        variety: bool = False,
     ) -> Dict[str, Any]:
         """Generative retrieval pipeline producing the *unified* legacy payload shape.
 
@@ -498,6 +500,11 @@ class GenerativeRetriever:
                 ranked_items = [it for it in ranked_items if 0 < (it.get("runtime") or 0) < 105] or ranked_items
             elif duration_preference == "epic":
                 ranked_items = [it for it in ranked_items if (it.get("runtime") or 0) > 140] or ranked_items
+
+        # Cold-start variety (opt-in): same seeded 10-minute rotation as the
+        # legacy engine, so repeat requests surface different picks.
+        if variety and len(ranked_items) > page_size:
+            random.Random(int(time.time() // 600)).shuffle(ranked_items)
 
         total_results = len(ranked_items)
         start_idx = (page - 1) * page_size

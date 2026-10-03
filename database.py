@@ -53,6 +53,7 @@ class DatabaseManager:
                     genres                  TEXT,                  -- Comma-separated names, e.g. "Action, Thriller"
                     genre_ids               TEXT,                  -- Comma-separated IDs, e.g. "28, 53"
                     rating                  REAL DEFAULT 0.0,      -- TMDB rating (0.0 - 10.0)
+                    vote_count              INTEGER DEFAULT 0,     -- TMDB vote count (audience verification for the quality cut)
                     runtime                 INTEGER,               -- Minutes
                     poster_url              TEXT,
                     tier2_keywords          TEXT,                  -- Cached TMDB keywords/tags
@@ -120,6 +121,7 @@ class DatabaseManager:
             # Legacy databases: tmdb_id was UNIQUE globally, but TMDB movie and
             # TV id spaces overlap — a mixed catalogue needs UNIQUE(media_type, tmdb_id).
             self._migrate_v1_media_items_unique(cursor, conn)
+            self._migrate_v2_vote_count(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -180,6 +182,23 @@ class DatabaseManager:
         conn.execute("PRAGMA foreign_keys = ON;")
         cursor.execute("PRAGMA user_version = 1;")
         print("[Database] Migration v1 applied: media_items unique key is now (media_type, tmdb_id).")
+
+    def _migrate_v2_vote_count(self, cursor) -> None:
+        """v2 migration: additive `vote_count` column for the quality-cut funnel.
+
+        Idempotent (PRAGMA user_version gate + column-exists check). Pure
+        ALTER TABLE ADD COLUMN — no table rebuild, existing rows get DEFAULT 0
+        until utils/backfill_vote_counts.py fills them from TMDB.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 2:
+            return
+
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(media_items);").fetchall()}
+        if "vote_count" not in columns:
+            cursor.execute("ALTER TABLE media_items ADD COLUMN vote_count INTEGER DEFAULT 0;")
+            print("[Database] Migration v2 applied: media_items.vote_count column added.")
+        cursor.execute("PRAGMA user_version = 2;")
 
     def register_source_file(
         self,
@@ -266,6 +285,41 @@ class DatabaseManager:
             )
             source_id = cursor.lastrowid
             return True, source_id
+
+    def remove_source_files(self, file_paths: List[str]) -> int:
+        """Deletes media_sources rows for the given exact file paths. Returns count."""
+        if not file_paths:
+            return 0
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in file_paths)
+            cursor.execute(
+                f"DELETE FROM media_sources WHERE file_path IN ({placeholders});",
+                tuple(file_paths),
+            )
+            removed = cursor.rowcount
+            conn.commit()
+            return removed
+
+    def prune_orphan_stub_items(self) -> List[str]:
+        """Deletes stub media_items that have no sources, no watch history and
+        no tmdb_id (i.e. auto-created by register_source_file and now orphaned).
+        Catalogue items with tmdb_id are NEVER touched. Returns deleted titles."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, title FROM media_items
+                WHERE tmdb_id IS NULL
+                  AND NOT EXISTS (SELECT 1 FROM media_sources WHERE media_item_id = media_items.id)
+                  AND NOT EXISTS (SELECT 1 FROM watch_history WHERE media_item_id = media_items.id);
+                """
+            )
+            doomed = cursor.fetchall()
+            for row in doomed:
+                cursor.execute("DELETE FROM media_items WHERE id = ?;", (row["id"],))
+            conn.commit()
+            return [r["title"] for r in doomed]
 
     def get_unenriched_items(self, media_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """Returns items that do not have tmdb_id populated."""
@@ -448,6 +502,123 @@ class DatabaseManager:
                     filtered.append(item)
 
             return filtered
+
+    def get_top_candidates(
+        self,
+        media_type: str = "movie",
+        genres: Optional[List[str]] = None,
+        exclude_watched: bool = True,
+        min_rating: float = 0.0,
+        era: Optional[str] = None,
+        duration: Optional[str] = None,
+        min_votes: int = 0,
+        limit: int = 250,
+    ) -> List[Dict[str, Any]]:
+        """Quality-cut candidate funnel for the recommender (large catalogues).
+
+        Funnel 1: hard filters — media type, era, runtime, watch status, rating floor.
+        Funnel 2: Bayesian audience-weighted rating ordering computed *in SQL* using
+        real TMDB vote counts (IMDb-style "reduce by reviews"), cut to `limit` items:
+
+            score = (votes / (votes + 1000)) * rating + (1000 / (votes + 1000)) * 6.5
+
+        Items with no vote counts yet (0) score a flat 6.5 and fall back to
+        rating/year ordering — so this degrades gracefully before backfill runs.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            order_expr = (
+                "(MAX(COALESCE(mi.vote_count, 0), 0) * 1.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + 1000.0)) * mi.rating"
+                " + (1000.0 / (MAX(COALESCE(mi.vote_count, 0), 0) + 1000.0)) * 6.5"
+            )
+
+            query = f"""
+                SELECT mi.*,
+                       ms.file_path,
+                       ms.source_type,
+                       (SELECT user_rating FROM watch_history wh WHERE wh.media_item_id = mi.id ORDER BY watched_at DESC LIMIT 1) as user_rating,
+                       (SELECT watched_at FROM watch_history wh WHERE wh.media_item_id = mi.id ORDER BY watched_at DESC LIMIT 1) as last_watched_at
+                FROM media_items mi
+                LEFT JOIN media_sources ms ON ms.media_item_id = mi.id
+                WHERE mi.media_type = ?
+                  AND mi.rating >= ?
+            """
+            params: List[Any] = [media_type, min_rating]
+
+            if exclude_watched:
+                query += " AND mi.id NOT IN (SELECT media_item_id FROM watch_history)"
+            if min_votes > 0:
+                query += " AND COALESCE(mi.vote_count, 0) >= ?"
+                params.append(min_votes)
+            if era == "modern":
+                query += " AND COALESCE(mi.release_year, 0) >= 2015"
+            elif era == "2000s":
+                query += " AND COALESCE(mi.release_year, 0) BETWEEN 2000 AND 2014"
+            elif era == "classic":
+                query += " AND COALESCE(mi.release_year, 9999) < 2000"
+            if duration == "short":
+                query += " AND COALESCE(mi.runtime, 0) BETWEEN 1 AND 104"
+            elif duration == "epic":
+                query += " AND COALESCE(mi.runtime, 0) > 140"
+
+            query += f" GROUP BY mi.id ORDER BY {order_expr} DESC, mi.rating DESC, mi.release_year DESC"
+
+            # Without a genre request the SQL LIMIT is a pure quality cut.
+            if not genres:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor.execute(query, params)
+            rows = [dict(r) for r in cursor.fetchall()]
+
+            if not genres:
+                return rows
+
+            # Genre filter (comma-separated, case-insensitive) applied post-SQL
+            # while preserving the Bayesian order; the shortlist cut follows.
+            genre_set = {g.strip().lower() for g in genres if g.strip()}
+            filtered: List[Dict[str, Any]] = []
+            for item in rows:
+                item_genres = {g.strip().lower() for g in (item.get("genres") or "").split(",") if g.strip()}
+                if genre_set.intersection(item_genres):
+                    filtered.append(item)
+            return filtered[:limit]
+
+    def get_items_missing_vote_counts(self) -> List[Dict[str, Any]]:
+        """Returns catalogue items that still need their TMDB vote counts backfilled."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, media_type, tmdb_id, title
+                FROM media_items
+                WHERE tmdb_id IS NOT NULL
+                  AND COALESCE(vote_count, 0) = 0
+                ORDER BY id ASC;
+                """
+            )
+            return [dict(r) for r in cursor.fetchall()]
+
+    def update_vote_count(
+        self,
+        item_id: int,
+        vote_count: int,
+        rating: Optional[float] = None,
+    ) -> None:
+        """Backfills TMDB vote counts (and refreshes the rating) for an item."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if rating is not None:
+                cursor.execute(
+                    "UPDATE media_items SET vote_count = ?, rating = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;",
+                    (vote_count, rating, item_id),
+                )
+            else:
+                cursor.execute(
+                    "UPDATE media_items SET vote_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;",
+                    (vote_count, item_id),
+                )
 
     def get_reference_titles(self) -> List[Dict[str, Any]]:
         """Returns lightweight title/genre/keyword metadata for every catalogue

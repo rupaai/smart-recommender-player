@@ -15,8 +15,10 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.torrent_service import (  # noqa: E402
+    _clean_release_title,
     _parse_sxxeyy,
     _parse_subtitle_tags,
+    _show_name_mismatch,
     organize_media_files,
 )
 
@@ -173,12 +175,136 @@ def test_no_videos():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_two_shows_no_cross_contamination():
+    print("\n[6] two shows in ONE staging dir -> files land in their own show folders")
+    # Simulates the fixed per-torrent flow: each torrent's staging dir is
+    # separate; organizer must only touch the staging dir it was given.
+    tmp = fresh_tmp("twoshows")
+    try:
+        movie_target = os.path.join(tmp, "Movies")
+        tv_target = os.path.join(tmp, "Shows")
+
+        staging_new_girl = os.path.join(tmp, "downloads", "id_101")
+        staging_got = os.path.join(tmp, "downloads", "id_102")
+        make_file(os.path.join(staging_new_girl, "New.Girl.S01E01.1080p.mkv"), FAKE_VIDEO_BYTES)
+        make_file(os.path.join(staging_new_girl, "New.Girl.S01E02.1080p.mkv"), FAKE_VIDEO_BYTES)
+        make_file(os.path.join(staging_got, "Game.of.Thrones.S01E01.1080p.mkv"), FAKE_VIDEO_BYTES)
+
+        issues: list = []
+        organize_media_files(
+            staging_new_girl, movie_target, tv_target, "New Girl", 2011, "tv", issues=issues
+        )
+        ng_s1 = os.path.join(tv_target, "New Girl (2011)", "Season 01")
+        check("New Girl S01E01", os.path.isfile(os.path.join(ng_s1, "New Girl - S01E01.mkv")))
+        check("New Girl S01E02", os.path.isfile(os.path.join(ng_s1, "New Girl - S01E02.mkv")))
+        # GoT files must NOT have been swept into the New Girl staging call
+        check("GoT untouched by New Girl run", os.path.isfile(os.path.join(staging_got, "Game.of.Thrones.S01E01.1080p.mkv")))
+        check("no GoT folder created", not os.path.exists(os.path.join(tv_target, "Game of Thrones (2011)")))
+
+        issues_got: list = []
+        organize_media_files(
+            staging_got, movie_target, tv_target, "Game of Thrones", 2011, "tv", issues=issues_got
+        )
+        got_s1 = os.path.join(tv_target, "Game of Thrones (2011)", "Season 01")
+        check("GoT S01E01", os.path.isfile(os.path.join(got_s1, "Game of Thrones - S01E01.mkv")))
+        check("GoT title matched (no issue)", issues_got == [], f"got {issues_got}")
+        check("GoT staging removed", not os.path.exists(staging_got))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_mislabeled_warning():
+    print("\n[7] mislabeled torrent detection")
+    check(
+        "GoT file vs 'New Girl' title",
+        _show_name_mismatch("Game.of.Thrones.S01E01.1080p.mkv", "New Girl"),
+    )
+    check(
+        "New Girl file vs 'New Girl' title",
+        not _show_name_mismatch("New.Girl.S01E01.1080p.mkv", "New Girl"),
+    )
+    check(
+        "movie: wrong title",
+        _show_name_mismatch("The.Matrix.1999.1080p.mkv", "Big Buck Bunny"),
+    )
+    check(
+        "movie: right title",
+        not _show_name_mismatch("Big.Buck.Bunny.2010.1080p.BluRay.mkv", "Big Buck Bunny"),
+    )
+    # Conservative: unjudgeable names never fire
+    check("no tokens -> no warning", not _show_name_mismatch("2160p.mkv", "New Girl"))
+    # Seasons 5, 6 etc. with numeric noise tokens stripped
+    check(
+        "numeric noise ignored",
+        not _show_name_mismatch("Show.5.1080p.S01E01.mkv", "Show"),
+    )
+    check("release noise ignored", _show_name_mismatch("YTS.Rip.S01E01.mkv", "Breaking Bad"))
+
+    # End-to-end: issues list is populated via the issues kwarg
+    tmp = fresh_tmp("mislabeled")
+    try:
+        staging = os.path.join(tmp, "staging")
+        make_file(os.path.join(staging, "Game.of.Thrones.S01E01.1080p.mkv"), FAKE_VIDEO_BYTES)
+        issues: list = []
+        organize_media_files(
+            staging, os.path.join(tmp, "Movies"), os.path.join(tmp, "Shows"),
+            "New Girl", 2011, "tv", issues=issues,
+        )
+        check("issue reported", len(issues) == 1 and "mislabeled" in issues[0], f"got {issues}")
+        # Never-delete policy: still organized under the requested title
+        season = os.path.join(os.path.join(tmp, "Shows"), "New Girl (2011)", "Season 01")
+        check(
+            "organized anyway (never deleted)",
+            os.path.isfile(os.path.join(season, "New Girl - S01E01.mkv")),
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+
+def test_clean_release_title():
+    print("\n[8] _clean_release_title: torrent release names → clean titles")
+    check(
+        "TV with episode tag + tags",
+        _clean_release_title("New Girl S05E12 D-Day 1080p DSNP WEB-DL DDP5 1 H 264-MiU") == "New Girl",
+    )
+    check(
+        "TV with episode title",
+        _clean_release_title("Game of Thrones S01E01 Winter Is Coming 1080p BluRay x264-OFT")
+        == "Game of Thrones",
+    )
+    check(
+        "movie dotted",
+        _clean_release_title("They.Live.1988.REMASTERED.1080p.BluRay.H264.AAC-GoodFilms")
+        == "They Live",
+    )
+    check(
+        "plain title unchanged",
+        _clean_release_title("Big Buck Bunny") == "Big Buck Bunny",
+    )
+    check(
+        "dots cleaned",
+        _clean_release_title("Big.Buck.Bunny.2010.1080p.BluRay") == "Big Buck Bunny",
+    )
+    check(
+        "never empty (fallback)",
+        _clean_release_title("1080p.x264") == "1080p.x264",
+    )
+    check(
+        "1x02 style",
+        _clean_release_title("Fargo 2x01 720p") == "Fargo",
+    )
+
+
 if __name__ == "__main__":
     test_parsers()
     test_movie_organizer()
     test_season_pack()
     test_multi_episode()
     test_no_videos()
+    test_two_shows_no_cross_contamination()
+    test_mislabeled_warning()
+    test_clean_release_title()
     print()
     if failures:
         print(f"❌ {len(failures)} check(s) failed: {failures}")

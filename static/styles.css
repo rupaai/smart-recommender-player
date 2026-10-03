@@ -483,6 +483,25 @@ body {
   margin-top: 6px;
 }
 
+.engine-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-legacy {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+}
+
+.badge-generative {
+  background: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+}
+
 .movie-synopsis {
   font-size: 13px;
   color: var(--text-muted);
