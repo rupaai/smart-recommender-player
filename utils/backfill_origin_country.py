@@ -183,16 +183,31 @@ def import_region(tm: TmdbClient, db: DatabaseManager, region: str, pages: int,
                 print(f"[{region}/{media_type}] page {page} "
                       f"(inserted so far: {total})", flush=True)
 
-        # Explicit coverage report. Silence here previously let an 8-region run
-        # finish looking identical whether it stored 600 titles or all 60,000.
-        if remote_total and total < remote_total:
-            pct = 100.0 * total / remote_total
-            note = "TRUNCATED - raise --pages" if pct < 95 else "partial"
-            print(f"[{region}/{media_type}] coverage: {total}/{remote_total} "
+        # Coverage must be measured against what the catalogue HOLDS, not what
+        # this run inserted. `total` counts new rows only, so a re-import of an
+        # already-populated region reported "41/2 (complete)" — comparing 41
+        # fresh inserts against TMDB's 2 available titles. Count the stored
+        # rows for this region and media type instead.
+        held = 0
+        with db.get_connection() as conn:
+            held = conn.execute(
+                "SELECT COUNT(*) FROM media_items "
+                "WHERE origin_country = ? AND media_type = ?",
+                (region, media_type),
+            ).fetchone()[0]
+
+        # Silence here previously let a run finish looking identical whether it
+        # stored 600 titles or all 60,000.
+        if remote_total:
+            pct = 100.0 * min(held, remote_total) / remote_total
+            if held < remote_total * 0.95:
+                note = "TRUNCATED - raise --pages"
+            elif held < remote_total:
+                note = "partial (near-complete)"
+            else:
+                note = "complete"
+            print(f"[{region}/{media_type}] coverage: {held}/{remote_total} "
                   f"({pct:.0f}%) [{note}]", flush=True)
-        elif remote_total:
-            print(f"[{region}/{media_type}] coverage: {total}/{remote_total} "
-                  f"(complete)", flush=True)
     return total
 
 
