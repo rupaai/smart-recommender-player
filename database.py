@@ -128,6 +128,7 @@ class DatabaseManager:
             self._migrate_v3_profiles(cursor)
             self._migrate_v4_origin_country(cursor)
             self._migrate_v5_collections(cursor)
+            self._migrate_v6_vibe(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -345,6 +346,58 @@ class DatabaseManager:
         )
         cursor.execute("PRAGMA user_version = 5;")
         print("[Database] Migration v5 applied: media_items.collection_* added.")
+
+    def _migrate_v6_vibe(self, cursor: sqlite3.Cursor) -> None:
+        """Adds the vibe-search columns (design doc §2.1, §4).
+
+          tagline          TMDB tagline (filled by utils/backfill_tmdb_vibe.py)
+          tier2_checked    0 = keywords/reviews not fetched yet, 1 = fetched,
+                           -1 = TMDB 404 (tier2_* columns already existed)
+          vibe_tags        JSON from utils/mood_tag.py (LLM dials, flags, tags)
+          vibe_tagged_at   when vibe_tags was written
+          facets           JSON of 0-1 dials used for ranking (LLM value or
+                           anchor fallback), filled by the vibe build
+          vibe_cluster_id  k-means cluster from the vibe build
+
+        Plus mood_tag_batches, which lets the tagger resume after Ctrl-C and
+        report the real cost of each Batch API run.
+
+        Idempotent (user_version gate + column-exists check), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 6:
+            return
+        cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(media_items);").fetchall()
+        }
+        for name, ddl in (
+            ("tagline", "TEXT"),
+            ("tier2_checked", "INTEGER DEFAULT 0"),
+            ("vibe_tags", "TEXT"),
+            ("vibe_tagged_at", "TIMESTAMP"),
+            ("facets", "TEXT"),
+            ("vibe_cluster_id", "INTEGER"),
+        ):
+            if name not in cols:
+                cursor.execute(f"ALTER TABLE media_items ADD COLUMN {name} {ddl};")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mood_tag_batches (
+                batch_id     TEXT PRIMARY KEY,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                label        TEXT,               -- 'pilot' or 'run'
+                model        TEXT,
+                item_ids     TEXT NOT NULL,      -- JSON list of media_items.id
+                status       TEXT DEFAULT 'submitted',  -- submitted / collected / canceled
+                succeeded    INTEGER DEFAULT 0,
+                failed       INTEGER DEFAULT 0,
+                usage_json   TEXT,               -- summed token usage
+                cost_usd     REAL
+            );
+            """
+        )
+        cursor.execute("PRAGMA user_version = 6;")
+        print("[Database] Migration v6 applied: vibe columns + mood_tag_batches added.")
 
     def register_source_file(
         self,
@@ -618,6 +671,44 @@ class DatabaseManager:
                 WHERE id = ?;
                 """,
                 (keywords, reviews_summary, item_id),
+            )
+
+    def get_items_missing_tier2(self, media_type: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Items whose TMDB keywords / reviews / tagline haven't been fetched yet,
+        most-voted first (so a partial run covers the films that matter most)."""
+        sql = (
+            "SELECT id, media_type, tmdb_id, title FROM media_items "
+            "WHERE COALESCE(tier2_checked, 0) = 0 AND tmdb_id IS NOT NULL"
+        )
+        params: List[Any] = []
+        if media_type:
+            sql += " AND media_type = ?"
+            params.append(media_type)
+        sql += " ORDER BY COALESCE(vote_count, 0) DESC;"
+        with self.get_connection() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def set_tier2_vibe(
+        self,
+        item_id: int,
+        keywords: Optional[str],
+        reviews_summary: Optional[str],
+        tagline: Optional[str],
+        checked: int = 1,
+    ) -> None:
+        """Stores TMDB keywords, review excerpts and tagline (checked=-1 = TMDB 404)."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE media_items
+                SET tier2_keywords = COALESCE(?, tier2_keywords),
+                    tier2_reviews_summary = COALESCE(?, tier2_reviews_summary),
+                    tagline = COALESCE(?, tagline),
+                    tier2_profiled_at = CURRENT_TIMESTAMP,
+                    tier2_checked = ?
+                WHERE id = ?;
+                """,
+                (keywords, reviews_summary, tagline, checked, item_id),
             )
 
     def get_item_by_id(self, item_id: int) -> Optional[Dict[str, Any]]:

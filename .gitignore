@@ -37,3 +37,6 @@ backups/
 
 # Design review screenshots (local only)
 .impeccable/review/
+
+# Mood-tag / vibe reports (utils/mood_tag.py)
+reports/

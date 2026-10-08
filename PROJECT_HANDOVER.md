@@ -355,3 +355,18 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 - **Accessibility:** real `<button>` mood tiles, `aria-pressed` on every toggle, tab roles, `:focus-visible` rings, labelled inputs, Esc / backdrop close on sheets, focus return, `prefers-reduced-motion`, 16px inputs on phones (no iOS zoom).
 - **Design records:** `PRODUCT.md` (product truth) and `.impeccable/surfaces/templates-index-html.md` (direction contract). `DESIGN.md` is deliberately not written until a look is chosen.
 - **Verified against a mock API only** (FastAPI deps couldn't install in the sandbox): both looks at 390px and 1280px, every tab, loading / downloading / error states, and `node --check static/app.js`. An independent design review passed 7 of 8 fixes; the open item is the font above. **Not yet checked against the real server.**
+
+---
+
+## 10. RECOMMENDER V2 BUILD LOG (from 2026-10-08)
+
+Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The light redesign on `main` is the chosen UI (2026-10-08); ignore the `ui-polish-dark` branch.
+
+### 10.1 Mood tags (LLM) + TMDB vibe backfill
+- **Schema v6** (`_migrate_v6_vibe`): `media_items.tagline`, `tier2_checked` (0 / 1 / -1 = 404), `vibe_tags` (JSON), `vibe_tagged_at`, `facets` (JSON), `vibe_cluster_id`; new table `mood_tag_batches` (batch id, item ids, status, usage, real cost).
+- **`services/vibe_vocab.py`:** the single source for the 14 dials (with 0/5/10 rubric films and anchor sentences for the free fallback), 11 content flags, 37 "feels", 16 "good for", setting / season / time-of-day / palette / story-era lists. Everything vibe-related imports from here.
+- **`utils/backfill_tmdb_vibe.py`** (free, TMDB): one call per title, `/{movie|tv}/{id}?append_to_response=keywords,reviews`, fills `tier2_keywords`, `tier2_reviews_summary` (up to 3 cleaned snippets, rated + short first) and `tagline`. Resumable, most-voted first. `uv run python utils/backfill_tmdb_vibe.py [--limit N]`.
+- **`utils/mood_tag.py`** (costs money): Claude Haiku 5.5 via the Message Batches API, `thinking` disabled, effort low, JSON-schema structured output, cached system prompt (rubric). Commands: `pilot` (200 titles: ~35 % films you rated, 35 % popular across genres, 15 % series, rest long-tail), `run`, `collect` (resume after Ctrl-C), `status`, `show "<title>"`, `preview` (prints one request + estimate, no API call). Every submitting command prints an estimate and needs a typed `yes`. Real cost is computed from each result's `usage` and stored per batch; reports go to `reports/` (gitignored). Needs `uv run --extra llm ...` (new optional dependency `anthropic`).
+- **Prices used** (Batch API, Haiku 5.5, prompts < 100k tokens, checked 2026-10-08): input $0.05/MTok, cache write $0.0625, cache read $0.005, output $0.25.
+- **Estimate:** pilot ≈ $0.02–0.04. Whole catalogue (~50k titles) ≈ $4–5 if the cached rubric hits, ≈ $9 worst case. The pilot replaces this with a measured per-title cost.
+- **Status:** written and tested offline with a fake Batch client (`tests/test_mood_tag.py`, `tests/test_vibe_backfill.py`). **Not run yet** (the sandbox has no API key and can't reach TMDB). Order on the Mac: backfill (free) → pilot → user approves → `run`.
