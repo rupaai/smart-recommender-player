@@ -138,11 +138,13 @@ The weights start hand-set. Once ~100 feedback events exist (§5), they are lear
 
 ### Flow
 1. You type anything, even one word, or nothing, and press **Find**.
-2. If the request is thin, a pop-up asks **one question at a time, at most 3**. Every screen has **Skip** and **Just show me**.
+2. If the request is thin, a pop-up asks **one question at a time, up to ~6** (you said you're happy to answer more, 2026-10-08). It stops earlier once the top results settle. Every screen has **Skip** and **Just show me**.
 3. Answers update results live behind the pop-up, so you can stop the moment it looks right.
 4. Questions already answered by your text are never asked. "Under 2 hours" means no length question.
 
 ### Question bank (each answer maps to facets / filters)
+
+> **Placeholder, to be replaced.** These questions were judged not insightful enough (2026-10-08). A better bank is being written in a separate chat: indirect, "guess the vibe" questions about your state and situation rather than film attributes. Swap it in when it's ready.
 
 | # | Question | Answers → effect |
 |---|---|---|
@@ -160,7 +162,7 @@ Take the top ~300 films matching the text so far. For each unanswered question, 
 
 Stop when:
 - the top results are clearly ahead (big score gap), or
-- 3 questions have been asked, or
+- ~6 questions have been asked, or
 - you skip.
 
 The same idea powers the game *Guess Who?*: "does your person wear glasses?" beats "is your person called Bernard?".
