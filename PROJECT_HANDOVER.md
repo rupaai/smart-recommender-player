@@ -360,7 +360,7 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 
 ## 10. RECOMMENDER V2 BUILD LOG (from 2026-10-08)
 
-Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The light redesign on `main` is the chosen UI (2026-10-08); ignore the `ui-polish-dark` branch.
+Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The light redesign on `main` is the chosen UI (2026-10-08); ignore the `ui-polish-dark` branch. Of its two looks, the user keeps "ticket" (2026-10-08); "clean" is being removed in another thread, so build new UI in the ticket look.
 
 ### 10.1 Mood tags (LLM) + TMDB vibe backfill
 - **Schema v6** (`_migrate_v6_vibe`): `media_items.tagline`, `tier2_checked` (0 / 1 / -1 = 404), `vibe_tags` (JSON), `vibe_tagged_at`, `facets` (JSON), `vibe_cluster_id`; new table `mood_tag_batches` (batch id, item ids, status, usage, real cost).
@@ -384,3 +384,9 @@ Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The ligh
 - **API:** `POST /api/feedback {media_item_id, outcome, session_id?, rating?}`, `GET /api/feedback/stats`. Logging failures never break a recommendation (try/except).
 - **Known bug (pre-existing, not fixed):** `finish_active_watch` inserts `watch_history` without `profile_id`, so ratings from the "finished, rate it" flow land with a NULL profile.
 - **Verified:** `tests/test_feedback.py`, plus the live server with Playwright in both looks: dismiss fades the card and logs it, page 2 continues the ranks, watch/start marks "played".
+
+### 10.4 Vibe documents (Phase 2)
+- **`services/vibe_document.py`:** `build_document(item, notes)` makes one paragraph per title: title (year)[, series], tagline, overview (≤700 chars), genres, up to 20 TMDB keywords, then the mood part from `vibe_tags` (vibe sentence, feels, the dial labels that sit clearly at one end (≤0.25 or ≥0.75), good for, setting), then review snippets and the profiles' `watch_history.notes`. Clipped at 1,900 characters (bge-small reads ~512 tokens). Mood goes before reviews so clipping never drops it. `iter_documents(conn)` yields `(id, document)` for the whole catalogue; Phase 3 embeds these.
+- **CLI:** `uv run python -m services.vibe_document --stats` (coverage of overview / tagline / keywords / reviews / mood tags) and `uv run python -m services.vibe_document "Paddington 2"` (print one document).
+- Documents aren't stored; they're rebuilt when embedding, so re-running the backfill or the tagger just means re-embedding.
+- **Verified:** `tests/test_vibe_document.py`.
