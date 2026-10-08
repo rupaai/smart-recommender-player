@@ -8,6 +8,7 @@ const state = {
   originsLoaded: false,  // "From" chips fetched from /api/origins
   recHasMore: false,     // more results available in the pool
   dismissedIds: new Set(), // items tapped away ("not this one")
+  recSessionId: null,      // feedback log: the Discover session these results belong to
   directMediaType: 'movie', // 'movie' or 'tv'
   activeMoodId: 8,
   activeSubMood: null,
@@ -532,6 +533,7 @@ async function fetchRecommendations() {
 
   try {
     state.recPage = 1;
+    state.recSessionId = null; // a new search is a new session
     const data = await requestRecommendations(1);
     state.recHasMore = !!data.has_more;
     renderRecommendations(data.items || [], data.engine, data.total_results);
@@ -593,7 +595,9 @@ async function requestRecommendations(page) {
     page_size: 20,
     include_watched: state.includeWatched,
     query: query || null,
-    profile: state.recProfile
+    profile: state.recProfile,
+    // "Show more" pages belong to the same logged session as page 1.
+    session_id: page > 1 ? state.recSessionId : null
   };
   const res = await fetch('/api/recommend', {
     method: 'POST',
@@ -601,7 +605,39 @@ async function requestRecommendations(page) {
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  return await res.json();
+  const data = await res.json();
+  if (data.session_id) state.recSessionId = data.session_id;
+  return data;
+}
+
+// Feedback log: what happened to a recommended title. Fire-and-forget; a
+// failed log must never get in the way of the person using the app.
+function sendFeedback(mediaItemId, outcome) {
+  fetch('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_item_id: mediaItemId, outcome, session_id: state.recSessionId })
+  }).catch(() => {});
+}
+
+function openSynopsis(el, mediaItemId) {
+  el.classList.toggle('expanded');
+  if (!el.dataset.logged) {
+    el.dataset.logged = '1';
+    sendFeedback(mediaItemId, 'opened');
+  }
+}
+
+// "Not this one": the negative signal the recommender has been missing.
+function dismissRecommendation(mediaItemId, btn) {
+  state.dismissedIds.add(mediaItemId);
+  sendFeedback(mediaItemId, 'dismissed');
+  const card = btn.closest('.movie-card');
+  if (card) {
+    card.classList.add('dismissed');
+    setTimeout(() => card.remove(), 220);
+  }
+  showToast('Noted. It will learn from that.');
 }
 
 function updateLoadMoreButton() {
@@ -686,7 +722,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
       : watchButtonHtml(m);
 
     const overview = m.overview
-      ? `<p class="movie-synopsis" onclick="this.classList.toggle('expanded')" title="Tap to expand">${escapeHtml(m.overview)}</p>`
+      ? `<p class="movie-synopsis" onclick="openSynopsis(this, ${m.id})" title="Tap to expand">${escapeHtml(m.overview)}</p>`
       : `<p class="movie-synopsis empty">No synopsis available.</p>`;
 
     card.innerHTML = `
@@ -708,6 +744,8 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
         <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
           <span class="label">Jellyfin</span> ${icon('external')}
         </a>
+        <button class="btn-dismiss" onclick="dismissRecommendation(${m.id}, this)"
+                title="Not this one" aria-label="Not this one: ${escapeHtml(m.title)}">${icon('x')}</button>
       </div>
     `;
     return card;

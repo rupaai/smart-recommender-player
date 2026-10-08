@@ -663,6 +663,16 @@ button:disabled { cursor: default; }
 .btn-tv-link:hover { background: var(--surface-2); }
 .btn-tv-link .icon { width: 15px; height: 15px; }
 
+.btn-dismiss {
+  width: 44px; min-width: 44px; height: 44px;
+  background: transparent; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); color: var(--text-2);
+  display: flex; align-items: center; justify-content: center;
+}
+.btn-dismiss:hover { background: var(--surface-2); color: var(--text); }
+.movie-card.dismissed { opacity: 0; transform: scale(0.98); transition: opacity 0.2s, transform 0.2s; }
+@media (prefers-reduced-motion: reduce) { .movie-card.dismissed { transition: none; } }
+
 /* Skeletons */
 .skeleton-card {
   display: flex; gap: 16px; padding: 16px;

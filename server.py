@@ -151,6 +151,14 @@ class RecommendRequest(BaseModel):
     min_rating: Optional[float] = None
     profile: str = "together"  # 'me' | 'partner' | 'together'
     exclude_ids: Optional[List[int]] = None
+    session_id: Optional[int] = None  # feedback log: pass back for "Show more" pages
+
+
+class FeedbackRequest(BaseModel):
+    media_item_id: int
+    outcome: str  # 'opened' | 'dismissed' | 'downloaded' | 'played' | 'rated'
+    session_id: Optional[int] = None
+    rating: Optional[float] = Field(default=None, ge=1, le=10)
 
 
 class StartWatchRequest(BaseModel):
@@ -366,7 +374,53 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     results.setdefault("has_more", False)
     results.setdefault("page", 1)
     results.setdefault("page_size", len(results.get("items") or []))
+
+    # Feedback log (schema v7): one session per Discover request, one
+    # impression per title shown. Logging must never break recommendations.
+    try:
+        session_id = req.session_id if req.session_id and db.session_exists(req.session_id) else None
+        if session_id is None:
+            session_id = db.create_discover_session(
+                profile=req.profile,
+                media_type=req.media_type,
+                query_text=req.query,
+                request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
+                engine=results.get("engine"),
+            )
+        start_rank = (req.page - 1) * effective_page_size + 1
+        db.log_impressions(session_id, results.get("items") or [], start_rank)
+        results["session_id"] = session_id
+    except Exception as e:  # noqa: BLE001
+        print(f"[Feedback] impression logging failed: {e}", flush=True)
     return results
+
+
+def _log_outcome(media_item_id: Optional[int], outcome: str, rating: Optional[float] = None) -> None:
+    """Attributes a play / rating / download to the Discover impression that
+    showed this title recently, if any. Never raises."""
+    if not media_item_id:
+        return
+    try:
+        db.record_outcome(int(media_item_id), outcome, rating=rating)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Feedback] outcome logging failed: {e}", flush=True)
+
+
+@app.post("/api/feedback")
+async def record_feedback(req: FeedbackRequest) -> Dict[str, Any]:
+    """Records what happened to a recommended title: opened (synopsis tapped),
+    dismissed ("not this one"), downloaded, played or rated."""
+    try:
+        updated = db.record_outcome(req.media_item_id, req.outcome, req.session_id, req.rating)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"updated": updated}
+
+
+@app.get("/api/feedback/stats")
+async def feedback_stats() -> Dict[str, Any]:
+    """How much training signal has been logged so far."""
+    return db.get_feedback_stats()
 
 
 @app.get("/api/watch/current")
@@ -396,6 +450,7 @@ async def stream_media(item_id: int) -> Dict[str, Any]:
 async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
     """Begins watching a movie session."""
     session_id = db.start_active_watch(req.media_item_id)
+    _log_outcome(req.media_item_id, "played")
     active = db.get_active_watch()
     return {"success": True, "session_id": session_id, "active": active}
 
@@ -403,6 +458,10 @@ async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
 @app.post("/api/watch/finish")
 async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
     """Completes watch session with star rating & review notes, updating taste profile."""
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (req.session_id,)
+        ).fetchone()
     record_id = db.finish_active_watch(
         session_id=req.session_id,
         user_rating=req.user_rating,
@@ -410,6 +469,8 @@ async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
     )
     if not record_id:
         raise HTTPException(status_code=404, detail="Active session not found.")
+    if req.user_rating and row:
+        _log_outcome(row["media_item_id"], "rated", req.user_rating)
     return {"success": True, "record_id": record_id}
 
 
@@ -639,6 +700,8 @@ async def rate_item(req: RateRequest) -> Dict[str, Any]:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    if req.status == "seen" and req.user_rating:
+        _log_outcome(req.media_item_id, "rated", req.user_rating)
     return summary
 
 
@@ -755,6 +818,8 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
                 media_type=req.media_type,
             )
 
+        if req.movie_id and req.movie_id > 0:
+            _log_outcome(req.movie_id, "downloaded")
         asyncio.create_task(
             torrent_downloader.download(
                 req.magnet_link,

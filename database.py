@@ -129,6 +129,7 @@ class DatabaseManager:
             self._migrate_v4_origin_country(cursor)
             self._migrate_v5_collections(cursor)
             self._migrate_v6_vibe(cursor)
+            self._migrate_v7_feedback(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -398,6 +399,77 @@ class DatabaseManager:
         )
         cursor.execute("PRAGMA user_version = 6;")
         print("[Database] Migration v6 applied: vibe columns + mood_tag_batches added.")
+
+    def _migrate_v7_feedback(self, cursor: sqlite3.Cursor) -> None:
+        """Feedback logging (design doc §4-§5): what was asked, what was shown,
+        and what happened to each title. This is the training signal for the
+        ranking weights, question usefulness and the embedder fine-tune.
+
+          discover_sessions     one Discover request (page 1 and its "Show more"
+                                pages), with weekday/hour for day-of-week
+                                learning and the pop-up's answers once it exists
+          discover_impressions  one row per title shown in a session, with its
+                                rank and score parts; `outcome` climbs
+                                shown < opened < dismissed < downloaded < played < rated
+          vibe_clusters         named k-means clusters from the vibe build
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 7:
+            return
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS discover_sessions (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                profile       TEXT,              -- 'me' | 'partner' | 'together'
+                profile_id    INTEGER,           -- set when one person's taste is used
+                media_type    TEXT,
+                query_text    TEXT,
+                request_json  TEXT,              -- mood, filters, chips
+                engine        TEXT,              -- legacy / generative / vibe
+                weekday       INTEGER,           -- 0 = Monday (local time)
+                hour          INTEGER,
+                answers_json  TEXT,              -- pop-up answers {question_id: option_id}
+                asked_order   TEXT,              -- JSON list of question ids
+                rules_json    TEXT,              -- parsed hard rules
+                belief_json   TEXT               -- final vibe belief
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS discover_impressions (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id     INTEGER NOT NULL REFERENCES discover_sessions(id) ON DELETE CASCADE,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                rank           INTEGER,
+                score_json     TEXT,
+                shown_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                outcome        TEXT DEFAULT 'shown',
+                outcome_at     TIMESTAMP,
+                rating         REAL,
+                UNIQUE(session_id, media_item_id)
+            );
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_impressions_item ON discover_impressions(media_item_id, shown_at);"
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS vibe_clusters (
+                id            INTEGER PRIMARY KEY,
+                label         TEXT,
+                size          INTEGER,
+                top_keywords  TEXT,
+                example_ids   TEXT                -- JSON list of media_items.id nearest the centroid
+            );
+            """
+        )
+        cursor.execute("PRAGMA user_version = 7;")
+        print("[Database] Migration v7 applied: discover_sessions / discover_impressions / vibe_clusters added.")
 
     def register_source_file(
         self,
@@ -710,6 +782,123 @@ class DatabaseManager:
                 """,
                 (keywords, reviews_summary, tagline, checked, item_id),
             )
+
+    # ----- Feedback logging (schema v7) -----
+
+    OUTCOME_ORDER = {"shown": 0, "opened": 1, "dismissed": 2, "downloaded": 3, "played": 4, "rated": 5}
+    # Watching or rating a title counts for the impression that led to it if it
+    # was shown within this many days.
+    ATTRIBUTION_DAYS = 7
+
+    def create_discover_session(
+        self,
+        profile: Optional[str],
+        media_type: Optional[str],
+        query_text: Optional[str],
+        request: Optional[Dict[str, Any]] = None,
+        engine: Optional[str] = None,
+        profile_id: Optional[int] = None,
+        now: Optional[datetime] = None,
+    ) -> int:
+        import json as _json
+        now = now or datetime.now()
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO discover_sessions
+                    (profile, profile_id, media_type, query_text, request_json, engine, weekday, hour)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                """,
+                (profile, profile_id, media_type, query_text,
+                 _json.dumps(request or {}, sort_keys=True, default=str), engine,
+                 now.weekday(), now.hour),
+            )
+            return int(cur.lastrowid)
+
+    def session_exists(self, session_id: int) -> bool:
+        with self.get_connection() as conn:
+            return conn.execute("SELECT 1 FROM discover_sessions WHERE id = ?;", (session_id,)).fetchone() is not None
+
+    def log_impressions(self, session_id: int, items: List[Dict[str, Any]], start_rank: int = 1) -> int:
+        """Records the titles shown, in order. Re-showing a title in the same
+        session keeps its first rank. Returns rows added."""
+        import json as _json
+        score_keys = ("recommendation_score", "score", "taste_bonus", "query_boost", "tier_boost",
+                      "relevance_boost", "generative_rank", "co_view_tier", "combined_score")
+        added = 0
+        with self.get_connection() as conn:
+            for offset, it in enumerate(items):
+                if not it.get("id"):
+                    continue
+                parts = {k: it[k] for k in score_keys if it.get(k) is not None}
+                before = conn.total_changes
+                conn.execute(
+                    """
+                    INSERT INTO discover_impressions (session_id, media_item_id, rank, score_json)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(session_id, media_item_id) DO NOTHING;
+                    """,
+                    (session_id, int(it["id"]), start_rank + offset,
+                     _json.dumps(parts, sort_keys=True, default=str) if parts else None),
+                )
+                added += conn.total_changes - before
+        return added
+
+    def record_outcome(
+        self,
+        media_item_id: int,
+        outcome: str,
+        session_id: Optional[int] = None,
+        rating: Optional[float] = None,
+    ) -> bool:
+        """Moves an impression's outcome forward (never backward: a title that
+        was played stays 'played' even if it's later opened again).
+
+        With `session_id`, that session's impression is updated. Without it
+        (playing from the library, rating in the Rate tab) the most recent
+        impression of the title within ATTRIBUTION_DAYS is used. Returns True
+        when an impression was updated.
+        """
+        if outcome not in self.OUTCOME_ORDER:
+            raise ValueError(f"unknown outcome {outcome!r}")
+        with self.get_connection() as conn:
+            if session_id is not None:
+                row = conn.execute(
+                    "SELECT id, outcome FROM discover_impressions WHERE session_id = ? AND media_item_id = ?;",
+                    (session_id, media_item_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    f"""
+                    SELECT id, outcome FROM discover_impressions
+                    WHERE media_item_id = ?
+                      AND shown_at >= datetime('now', '-{int(self.ATTRIBUTION_DAYS)} days')
+                    ORDER BY shown_at DESC, id DESC LIMIT 1;
+                    """,
+                    (media_item_id,),
+                ).fetchone()
+            if not row:
+                return False
+            if self.OUTCOME_ORDER[outcome] < self.OUTCOME_ORDER.get(row["outcome"] or "shown", 0):
+                return False
+            conn.execute(
+                """
+                UPDATE discover_impressions
+                SET outcome = ?, outcome_at = CURRENT_TIMESTAMP, rating = COALESCE(?, rating)
+                WHERE id = ?;
+                """,
+                (outcome, rating, row["id"]),
+            )
+            return True
+
+    def get_feedback_stats(self) -> Dict[str, Any]:
+        """Counts per outcome, so you can see when there's enough signal to learn from."""
+        with self.get_connection() as conn:
+            sessions = conn.execute("SELECT COUNT(*) FROM discover_sessions;").fetchone()[0]
+            rows = conn.execute(
+                "SELECT outcome, COUNT(*) FROM discover_impressions GROUP BY outcome;"
+            ).fetchall()
+        return {"sessions": sessions, "outcomes": {r[0]: r[1] for r in rows}}
 
     def get_item_by_id(self, item_id: int) -> Optional[Dict[str, Any]]:
         """Retrieves a single media item along with its registered sources."""
