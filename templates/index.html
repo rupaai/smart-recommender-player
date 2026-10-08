@@ -310,6 +310,18 @@
         </div>
       </div>
 
+      <!-- Search to rate: find any title and rate it now (design doc §1). -->
+      <div class="rate-search" id="rateSearch">
+        <div class="search-voice-bar rate-search-bar">
+          <svg class="icon search-leading" aria-hidden="true"><use href="#i-search"/></svg>
+          <label for="rateSearchInput" class="visually-hidden">Find a film or show to rate</label>
+          <input type="search" id="rateSearchInput" class="search-input" autocomplete="off" enterkeyhint="search"
+                 placeholder="Find a film or show you've seen"
+                 role="combobox" aria-expanded="false" aria-controls="rateSearchList" aria-autocomplete="list">
+        </div>
+        <ul id="rateSearchList" class="rate-search-list" role="listbox" aria-label="Matching titles" hidden></ul>
+      </div>
+
       <div class="rate-toolbar">
         <div class="rate-who">
           <span class="filter-label" id="rateWhoLabel">Who's rating?</span>

@@ -1011,6 +1011,40 @@ button:disabled { cursor: default; }
 .rate-header .section-title { margin-bottom: 4px; }
 .rate-sub { font-size: 14px; color: var(--text-2); }
 
+/* Search to rate: a combobox whose list floats over the queue. */
+.rate-search { position: relative; margin-bottom: 16px; }
+.rate-search-bar { margin-bottom: 0; padding: 10px 14px; }
+.rate-search-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30;
+  margin: 0; padding: 6px; list-style: none;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+  max-height: min(60vh, 440px); overflow-y: auto;
+}
+.rate-search-option {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px; border-radius: var(--radius-sm); cursor: pointer;
+}
+.rate-search-option:hover, .rate-search-option.active { background: var(--surface-2); }
+.rate-search-option.active { box-shadow: inset 3px 0 0 var(--select-line); }
+.rate-search-poster {
+  width: 36px; min-width: 36px; height: 54px; object-fit: cover;
+  border-radius: 4px; background: var(--surface-2);
+}
+.rate-search-poster.poster-fallback { font-size: 8px; padding: 2px; }
+.rate-search-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.rate-search-title { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rate-search-meta { font-size: 12px; color: var(--text-2); }
+.rate-search-verdict {
+  flex-shrink: 0; font-size: 12px; font-weight: 600; white-space: nowrap;
+  padding: 3px 8px; border-radius: var(--radius-pill);
+  background: var(--select-bg); color: var(--select-text);
+}
+.rate-search-verdict.add { background: var(--surface-2); color: var(--text-2); }
+.rate-search-more { color: var(--text-2); font-size: 14px; min-height: 44px; }
+.rate-search-more .icon { color: var(--text-3); margin: 0 9px; }
+.rate-search-empty { padding: 10px 8px; font-size: 14px; color: var(--text-2); }
+
 .rate-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .rate-who .filter-label { margin-bottom: 6px; }
 .rate-media-toggle { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

@@ -26,6 +26,7 @@ from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.jellyfin_service import JellyfinService
+from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services.torrent_service import (
@@ -173,6 +174,11 @@ class RateRequest(BaseModel):
     user_rating: Optional[float] = Field(default=None, ge=1, le=10)
     status: str = "seen"  # 'seen' | 'not_seen'
     notes: Optional[str] = None
+
+
+class TmdbImportRequest(BaseModel):
+    media_type: str  # 'movie' | 'tv'
+    tmdb_id: int
 
 
 class RenameProfileRequest(BaseModel):
@@ -634,6 +640,67 @@ async def rate_item(req: RateRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return summary
+
+
+catalogue_search = CatalogueSearch(db)
+
+
+def _with_co_view(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Adds both profiles' verdicts, the shape the Rate card already reads."""
+    summary = db.get_rating_summary(item["id"])
+    item["co_view"] = {
+        "tier": summary["tier"],
+        "tier_reason": summary["tier_reason"],
+        "combined_score": summary["combined_score"],
+        "disagreement": summary["disagreement"],
+        "verdicts": summary["verdicts"],
+    }
+    return item
+
+
+@app.get("/api/catalogue/search")
+async def search_catalogue(
+    q: str = Query(..., min_length=1, description="Title text; 2+ characters"),
+    media_type: str = Query(default="all", description="movie | tv | all"),
+    limit: int = Query(default=10, ge=1, le=25),
+    profile_id: Optional[int] = Query(default=None, description="Adds this profile's own verdict"),
+) -> Dict[str, Any]:
+    """Search-to-rate (design doc §1): accent- and punctuation-insensitive title
+    search over the catalogue, exact matches first, then by vote count."""
+    mtype = media_type if isinstance(media_type, str) else "all"
+    pid = profile_id if isinstance(profile_id, int) else None
+    lim = limit if isinstance(limit, int) else 10
+    items = await asyncio.to_thread(catalogue_search.search, q, mtype, lim, pid)
+    return {"query": q, "items": [_with_co_view(it) for it in items]}
+
+
+@app.get("/api/catalogue/tmdb-search")
+async def search_tmdb(q: str = Query(..., min_length=2), media_type: str = "all") -> Dict[str, Any]:
+    """Fallback when a title isn't in the catalogue. Needs TMDB_API_KEY + internet."""
+    if not api_key:
+        raise HTTPException(status_code=503, detail="TMDB_API_KEY is not set on the server.")
+    try:
+        items = await asyncio.to_thread(tmdb_search, api_key, db, q, media_type)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"query": q, "items": items}
+
+
+@app.post("/api/catalogue/tmdb-import")
+async def import_from_tmdb(req: TmdbImportRequest, profile_id: Optional[int] = None) -> Dict[str, Any]:
+    """Adds one TMDB title to the catalogue and returns it ready to rate."""
+    if not api_key:
+        raise HTTPException(status_code=503, detail="TMDB_API_KEY is not set on the server.")
+    try:
+        item_id = await asyncio.to_thread(tmdb_import, api_key, db, req.media_type, req.tmdb_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    catalogue_search.invalidate()
+    item = db.get_item_by_id(item_id) or {"id": item_id}
+    item["in_library"] = bool(item.pop("sources", None))
+    return _with_co_view(item)
 
 
 @app.get("/api/ratings/summary/{item_id}")
