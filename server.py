@@ -29,6 +29,7 @@ from services.jellyfin_service import JellyfinService
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
+from services.vibe_index import VibeIndex
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -62,6 +63,7 @@ recommender_service = RecommenderService(
     enable_tier2=enable_tier2,
     shortlist_size=recommender_cfg.get("shortlist_size", 250),
     final_pool=recommender_cfg.get("final_pool", 50),
+    vibe_index=VibeIndex(),
 )
 
 # TIGER generative retrieval engine (parallel — legacy recommender untouched).
@@ -421,6 +423,13 @@ async def record_feedback(req: FeedbackRequest) -> Dict[str, Any]:
 async def feedback_stats() -> Dict[str, Any]:
     """How much training signal has been logged so far."""
     return db.get_feedback_stats()
+
+
+@app.get("/api/vibe/status")
+async def vibe_status() -> Dict[str, Any]:
+    """Whether the vibe index (models/vibe/, built on the Mac) is loaded."""
+    index = recommender_service.vibe_index
+    return index.status() if index else {"ready": False}
 
 
 @app.get("/api/watch/current")

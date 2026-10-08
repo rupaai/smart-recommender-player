@@ -641,6 +641,15 @@ def route_recommend(
         result["concept_routed_to"] = "legacy"
         return result
 
+    # A typed request is about how the film should FEEL; the predictor only
+    # knows your watch history. When the vibe index is built, the legacy engine
+    # answers it with text-to-film similarity.
+    vibe_ready = getattr(legacy_recommender, "vibe_ready", None)
+    if vibe_ready and vibe_ready(kwargs.get("query")):
+        result = _legacy()
+        result["vibe_routed_to"] = "legacy"
+        return result
+
     if mode == "fallback" and not generative_retriever.is_ready():
         return _legacy()
 

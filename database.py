@@ -824,7 +824,8 @@ class DatabaseManager:
         session keeps its first rank. Returns rows added."""
         import json as _json
         score_keys = ("recommendation_score", "score", "taste_bonus", "query_boost", "tier_boost",
-                      "relevance_boost", "generative_rank", "co_view_tier", "combined_score")
+                      "relevance_boost", "generative_rank", "co_view_tier", "combined_score",
+                      "vibe_similarity", "vibe_boost", "vibe_cluster_id")
         added = 0
         with self.get_connection() as conn:
             for offset, it in enumerate(items):
@@ -977,6 +978,7 @@ class DatabaseManager:
         min_votes: int = 0,
         concept_terms: Optional[List[str]] = None,
         limit: int = 250,
+        only_ids: Optional[List[int]] = None,
     ) -> List[Dict[str, Any]]:
         """Quality-cut candidate funnel for the recommender (large catalogues).
 
@@ -1103,6 +1105,15 @@ class DatabaseManager:
                         params.append(code)
                 if lang_clauses:
                     query += " AND (" + " OR ".join(lang_clauses) + ")"
+
+            # Vibe search: the same hard filters, applied to the titles whose
+            # vibe vectors are closest to the request.
+            if only_ids is not None:
+                ids = [int(i) for i in only_ids][:5000]
+                if not ids:
+                    return []
+                query += f" AND mi.id IN ({','.join('?' * len(ids))})"
+                params.extend(ids)
 
             # Recompute the Bayesian prior from the rows THIS query returns.
             # The fixed 1000 suited a mainstream catalogue (mean ~820 votes) but
