@@ -320,7 +320,10 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 - `training/retrain_tiger.sh`: one command (Steps D→G, backs up `models/tiger` to `models/tiger.bak`). Needs torch, so run it on the Mac (Claude's sandbox has no torch and no PyPI). **Not yet run**, so the deployed model is still the old synthetic one.
 
 ## 8. NEXT: Recommender v2 design
-`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + optional LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up with an entropy-based question picker, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
+`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
+- **Decisions 2026-10-08:** train on the Mac, serve on the Pi (INT8 ONNX encoder, precomputed vectors, no torch on the Pi). The questions pop-up appears automatically, asks up to ~6 questions, and only asks questions that would change the top 10 (§3 "meaningful" rules). Vibe search = embeddings + clusters. **LLM mood tags: yes**, Claude Haiku 5.5 via the Batch API, 200-film pilot first, then ask the user before the full run. Subtitles and the boyfriend's profile are out of scope for now.
+- **Question bank swapped in (2026-10-08):** `docs/VIBE_QUESTION_BANK.md` (33 indirect "guess the vibe" questions in 9 groups, adaptive picker, short set of 10) replaces the placeholder Q1–Q8 in V2 §3. Its §4 adds dials (tension, ending_valence, humour, strangeness, cringe; gore, fantasy, talkiness, spectacle), content flags, setting/palette tags and closed "feels like" (37) / "good for" (16) vocabularies. V2 §2.5 and §4 now reference them.
+- **Rule for API spend:** never spend Anthropic API money without giving the user the exact Mac command and expected cost first.
 
 ---
 
