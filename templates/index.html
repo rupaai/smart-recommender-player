@@ -9,15 +9,6 @@
   <title>Movie Night</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="/static/styles.css">
-  <script>
-    // Two looks are being trialled side by side; the choice is remembered
-    // per device. Applied before first paint so the page never flashes.
-    (function () {
-      var look = new URLSearchParams(location.search).get('look');
-      try { look = look || localStorage.getItem('look'); } catch (e) {}
-      if (look === 'clean' || look === 'ticket') document.documentElement.dataset.look = look;
-    })();
-  </script>
 </head>
 <body>
   <!-- One icon set for all interface chrome (tabs, buttons, toggles).
@@ -53,10 +44,6 @@
         <h1 class="brand-title">Movie Night</h1>
       </div>
       <div class="header-tools">
-        <div class="segmented tiny look-switch" role="group" aria-label="Look (trial)" title="Trying two looks — pick the one you prefer">
-          <button class="segment" data-look-btn="ticket" aria-pressed="true" onclick="setLook('ticket')">Ticket</button>
-          <button class="segment" data-look-btn="clean" aria-pressed="false" onclick="setLook('clean')">Clean</button>
-        </div>
         <div id="jellyfinStatus" class="status-pill" title="Whether Jellyfin, your TV's media server, is reachable">
           <span id="statusDot" class="status-dot"></span>
           <span id="statusText">Checking TV…</span>

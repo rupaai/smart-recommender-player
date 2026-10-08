@@ -54,7 +54,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initSpeechRecognition();
   loadPartnerName();
   updateFiltersSummary();
-  syncLookSwitch();
 
   // Open the tab named in the URL (#rate etc.) so a refresh or a home-screen
   // shortcut lands where you left off; otherwise Discover. Discover is
@@ -120,21 +119,6 @@ function showToast(message) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
-}
-
-// Two looks on trial. Remembered per device; the inline script in <head>
-// applies it before first paint, this keeps the switch in sync.
-function setLook(look) {
-  document.documentElement.dataset.look = look;
-  try { localStorage.setItem('look', look); } catch (_) { /* private mode */ }
-  syncLookSwitch();
-  const meta = document.querySelector('meta[name="theme-color"]');
-  if (meta) meta.content = look === 'clean' ? '#f5f5f7' : '#e8e6e1';
-}
-
-function syncLookSwitch() {
-  const look = document.documentElement.dataset.look || 'ticket';
-  document.querySelectorAll('[data-look-btn]').forEach(b => setPressed(b, b.dataset.lookBtn === look));
 }
 
 // Partner's real name on the "His picks" control once profiles are renamed.
