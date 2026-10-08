@@ -327,16 +327,14 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 
 ---
 
-## 9. UI REDESIGN — TWO LOOKS ON TRIAL (2026-10-08)
+## 9. UI REDESIGN — TICKET LOOK (2026-10-08)
 
-**Status:** the frontend was redesigned. Two light looks ship side by side behind a header switch, and the user will pick one. **Next step once she picks:** delete the other look's block at the end of `static/styles.css` and its token set, remove the `.look-switch` from `templates/index.html` and `setLook`/`syncLookSwitch` from `app.js`, then write `DESIGN.md` from the result.
+**Status:** the frontend was redesigned as a light UI. The user chose the **ticket** look on 2026-10-08, and the **clean** look, its token set, the header look switch and `setLook`/`syncLookSwitch` are deleted. `<html data-look="ticket">` stays, since the ticket rules are scoped to it. **Next step:** write `DESIGN.md` from the result. The dark-theme alternative on branch `ui-polish-dark` was not chosen and is unmerged.
 
-- **Looks:** `<html data-look="ticket|clean">`, set before first paint by an inline script in `<head>` (from `?look=` or `localStorage.look`).
-  - **ticket:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
-  - **clean:** Apple-style `#f5f5f7` greys, one blue accent `#2453d6`, system type.
+- **Look:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
 - **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
 - **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
-- **Structure (shared by both looks):**
+- **Structure:**
   - Tabs: Discover / Download / Rate / History. A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
   - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
   - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.

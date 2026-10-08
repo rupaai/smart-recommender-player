@@ -1,9 +1,7 @@
 /* ==========================================================================
-   Movie Night (placeholder name) — light UI, two looks on trial.
-   Structure below is shared; each look only sets tokens plus a few
-   signature rules at the end of the file.
-     data-look="ticket"  roll-ticket stocks, condensed numerals, perforated stubs
-     data-look="clean"   quiet light greys, one blue accent, system type
+   Movie Night (placeholder name) — light UI, "ticket" look: roll-ticket
+   stocks, condensed numerals, perforated stubs. <html data-look="ticket">
+   scopes the signature rules at the end of the file.
    ========================================================================== */
 
 /* Optional self-hosted face for the ticket look. Run
@@ -67,55 +65,6 @@
   --shadow-1: 0 1px 2px rgba(29, 27, 41, 0.08);
   --shadow-2: 0 10px 28px rgba(29, 27, 41, 0.14);
   --focus: #1d1b29;
-}
-
-[data-look="clean"] {
-  --bg: #f5f5f7;
-  --surface: #ffffff;
-  --surface-2: #ececf0;
-  --surface-3: #e2e2e7;
-  --line: rgba(0, 0, 0, 0.08);
-  --line-strong: rgba(0, 0, 0, 0.18);
-  --text: #1d1d1f;
-  --text-2: #48484c;
-  --text-3: #6e6e73;
-
-  --action: #2453d6;
-  --action-hover: #1c46bd;
-  --on-action: #ffffff;
-  --select-bg: #e6edfd;
-  --select-text: #1a43b8;
-  --select-line: #2453d6;
-  --together-bg: #fde8ee;
-  --together-text: #a8214b;
-  --taste-bg: #eef0fd;
-  --taste-text: #3640ad;
-  --ready-bg: #e1f4ea;
-  --ready-solid: #13834f;
-  --ready-text: #0d6a40;
-  --danger-bg: #fde7e4;
-  --danger-text: #b42318;
-  --theme-bg: #f1ecfd;
-  --theme-text: #5b34b0;
-  --series-bg: #fdf3dc;
-  --series-text: #7a5300;
-
-  --stub-bg: #ffffff;
-  --stub-ready-bg: #ffffff;
-
-  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --display-stretch: 100%;
-  --display-weight: 700;
-  --display-case: none;
-  --display-track: -0.02em;
-
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.12);
-  --focus: #2453d6;
 }
 
 :root { --nav-h: 0px; --ease-out: cubic-bezier(0.16, 1, 0.3, 1); }
@@ -247,7 +196,6 @@ button:disabled { cursor: default; }
 
 .tab-btn:hover { color: var(--text); background: var(--surface-2); }
 .tab-btn.active { background: var(--text); color: var(--bg); }
-[data-look="clean"] .tab-btn.active { background: var(--surface-2); color: var(--text); }
 
 @media (max-width: 640px) {
   :root { --nav-h: calc(62px + env(safe-area-inset-bottom)); }
@@ -262,7 +210,6 @@ button:disabled { cursor: default; }
   .tab-btn { flex-direction: column; gap: 2px; font-size: 11px; padding: 6px 4px; min-height: 50px; border-radius: 10px; }
   .tab-btn .icon { width: 22px; height: 22px; }
   .tab-btn.active,
-  [data-look="clean"] .tab-btn.active { background: transparent; color: var(--text); }
   .tab-btn.active .icon { color: var(--action); stroke-width: 2.4; }
   [data-look="ticket"] .tab-btn.active .icon { color: var(--text); }
   [data-look="ticket"] .nav-tabs { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
@@ -342,7 +289,6 @@ button:disabled { cursor: default; }
   text-wrap: balance;
 }
 
-[data-look="clean"] .section-title { font-size: 22px; }
 
 .section-heading { margin-bottom: 18px; }
 .section-heading .section-title { margin-bottom: 6px; }
@@ -1097,7 +1043,6 @@ button:disabled { cursor: default; }
   font-size: 24px; margin-bottom: 4px; line-height: 1.08; text-wrap: balance;
 }
 
-[data-look="clean"] .rate-title { font-size: 20px; line-height: 1.2; }
 
 .rate-meta { font-size: 13px; color: var(--text-2); margin-bottom: 2px; font-variant-numeric: tabular-nums; }
 .rate-genres { font-size: 12px; color: var(--text-3); margin-bottom: 10px; }
@@ -1283,22 +1228,6 @@ kbd {
 [data-look="ticket"] .watching-banner { background: var(--together-bg); border: none; }
 [data-look="ticket"] .filters-disclosure,
 [data-look="ticket"] .search-voice-bar { border-radius: var(--radius-sm); }
-
-/* ==========================================================================
-   CLEAN look — poster-led, quiet chrome.
-   ========================================================================== */
-[data-look="clean"] .mood-card { min-height: 72px; }
-[data-look="clean"] .mood-card.active { background: var(--select-bg); }
-[data-look="clean"] .movie-poster { width: 108px; border-radius: 10px; }
-[data-look="clean"] .movie-card { border-color: transparent; }
-[data-look="clean"] .movie-footer { border-top: none; padding-top: 0; }
-[data-look="clean"] .brand-mark { background: var(--text); }
-[data-look="clean"] .brand-mark span { color: var(--bg); }
-[data-look="clean"] .badge { border-radius: var(--radius-pill); }
-
-@media (max-width: 480px) {
-  [data-look="clean"] .movie-poster { width: 90px; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -8,7 +8,7 @@ related_targets: ["static/styles.css","static/app.js"]
 Scope: the whole single-page app (Discover, Download, Rate together, History). Mode: Operate.
 Audience/job: a couple choosing tonight's film, phone on the sofa or laptop. Rate quickly so picks improve.
 Constraints: light UI; not cute, not techy/torrent, not Netflix, not template. Standard controls. No build step, Pi-friendly. Name is a placeholder ("Movie Night").
-Trial: two looks ship side by side behind a header switch (data-look on <html>); the user picks one after, the other is deleted.
+Decision 2026-10-08: the user chose the ticket look; the clean look and its header switch were deleted. data-look="ticket" stays on <html> to scope the ticket rules.
 
 ## Direction contract
 THESIS: The evening's choice is issued, not browsed: picks are admission tickets for two. Refuses the dark poster-wall streaming grid.
