@@ -45,7 +45,8 @@ recommender:
   #   "generative_only" generative primary; legacy only on unexpected failure
   engine_mode: fallback
   generative:
-    history_threshold: 5    # cold-start gate: legacy engine until 5+ rated items, then generative
+    history_threshold: 5    # cold-start gate: legacy engine until 5+ liked items, then generative
+    history_min_rating: 6.0 # only films rated >= this (or seen, unrated) feed the model's history
     top_k: 40               # semantic ID tuples beam-decoded per request
     max_seq_len: 10         # sequence length fed to the ONNX predictor
     candidate_pool: 60      # trie-resolved candidates re-ranked per request

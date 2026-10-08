@@ -1381,3 +1381,10 @@ body {
   border: 1px solid rgba(139, 92, 246, 0.35);
   font-weight: 500;
 }
+
+/* Series order badge (sequel swapped for the film to watch first) */
+.badge-series {
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}

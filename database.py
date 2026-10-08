@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -126,6 +127,7 @@ class DatabaseManager:
             self._migrate_v2_vote_count(cursor)
             self._migrate_v3_profiles(cursor)
             self._migrate_v4_origin_country(cursor)
+            self._migrate_v5_collections(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -307,6 +309,42 @@ class DatabaseManager:
         )
         cursor.execute("PRAGMA user_version = 4;")
         print("[Database] Migration v4 applied: media_items.origin_country/original_language added.")
+
+    def _migrate_v5_collections(self, cursor: sqlite3.Cursor) -> None:
+        """Adds franchise/collection columns so series are watched in order.
+
+        Without these the recommender had no idea that Deathly Hallows Part 1
+        is the 7th Harry Potter film, so it happily recommended sequels to
+        people who hadn't seen the first one. Filled from TMDB's
+        `belongs_to_collection` by utils/backfill_collections.py.
+
+          collection_id      TMDB collection id (NULL = standalone / unknown)
+          collection_name    e.g. "Harry Potter Collection"
+          collection_order   1-based position in the collection by release date
+          collection_checked 0 = not looked up yet, 1 = looked up, -1 = TMDB 404
+
+        Idempotent (user_version gate + column-exists check), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 5:
+            return
+        cols = {
+            row[1] for row in cursor.execute("PRAGMA table_info(media_items);").fetchall()
+        }
+        for name, ddl in (
+            ("collection_id", "INTEGER"),
+            ("collection_name", "TEXT"),
+            ("collection_order", "INTEGER"),
+            ("collection_checked", "INTEGER DEFAULT 0"),
+        ):
+            if name not in cols:
+                cursor.execute(f"ALTER TABLE media_items ADD COLUMN {name} {ddl};")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_media_items_collection "
+            "ON media_items(collection_id);"
+        )
+        cursor.execute("PRAGMA user_version = 5;")
+        print("[Database] Migration v5 applied: media_items.collection_* added.")
 
     def register_source_file(
         self,
@@ -624,7 +662,7 @@ class DatabaseManager:
             params: List[Any] = [media_type, min_rating]
 
             if exclude_watched:
-                query += " AND mi.id NOT IN (SELECT media_item_id FROM watch_history)"
+                query += " AND mi.id NOT IN (SELECT media_item_id FROM watch_history WHERE COALESCE(status, 'seen') = 'seen')"
 
             query += " GROUP BY mi.id ORDER BY mi.rating DESC, mi.release_year DESC;"
 
@@ -698,7 +736,7 @@ class DatabaseManager:
             params: List[Any] = [media_type, min_rating]
 
             if exclude_watched:
-                query += " AND mi.id NOT IN (SELECT media_item_id FROM watch_history)"
+                query += " AND mi.id NOT IN (SELECT media_item_id FROM watch_history WHERE COALESCE(status, 'seen') = 'seen')"
             if min_votes > 0:
                 query += " AND COALESCE(mi.vote_count, 0) >= ?"
                 params.append(min_votes)
@@ -1488,6 +1526,241 @@ class DatabaseManager:
                 (limit,),
             )
             return [dict(r) for r in cursor.fetchall()]
+    # ------------------------------------------------------------------
+    # Series / franchise order
+    # ------------------------------------------------------------------
+    # Fallback for films whose collection hasn't been looked up on TMDB yet:
+    # a trailing sequel number ("Toy Story 3", "Rocky IV", "The Godfather
+    # Part II", "Dune: Part Two"). Only ever used to point at an EARLIER film
+    # with the bare stem title that shares a genre, so "Super 8" can't be
+    # mistaken for a sequel to "Super".
+    _SEQUEL_RE = re.compile(
+        r"^(?P<stem>.+?)[\s:\-–]+(?:part\s+(?P<word>two|three|four|five|six)"
+        r"|(?:part\s+)?(?P<num>[2-9]|ii|iii|iv|v|vi|vii|viii|ix|x))"
+        r"(?:\s*[:\-–].*)?$",
+        re.IGNORECASE,
+    )
+    _NUMERALS = {"2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9,
+                 "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7,
+                 "viii": 8, "ix": 9, "x": 10, "two": 2, "three": 3,
+                 "four": 4, "five": 5, "six": 6}
+
+    @classmethod
+    def parse_sequel_title(cls, title: Optional[str]) -> Optional[Tuple[str, int]]:
+        """'Toy Story 3' -> ('Toy Story', 3). None when no sequel marker."""
+        m = cls._SEQUEL_RE.match((title or "").strip())
+        if not m:
+            return None
+        stem = m.group("stem").strip(" :-–")
+        token = (m.group("word") or m.group("num") or "").lower()
+        n = cls._NUMERALS.get(token)
+        if not stem or not n or n < 2:
+            return None
+        return stem, n
+
+    def get_movies_missing_collection(self) -> List[Dict[str, Any]]:
+        """Movies whose TMDB collection hasn't been looked up yet.
+
+        Most-voted first, so an interrupted backfill has already covered the
+        films that actually get recommended.
+        """
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, tmdb_id, title FROM media_items "
+                "WHERE media_type = 'movie' AND tmdb_id IS NOT NULL "
+                "AND COALESCE(collection_checked, 0) = 0 "
+                "ORDER BY COALESCE(vote_count, 0) DESC;"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def set_item_collection(
+        self, item_id: int, collection_id: Optional[int],
+        collection_name: Optional[str], checked: int = 1,
+    ) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE media_items SET collection_id = ?, collection_name = ?, "
+                "collection_checked = ? WHERE id = ?;",
+                (collection_id, collection_name, checked, item_id),
+            )
+
+    def get_collections_missing_order(self) -> List[int]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT collection_id FROM media_items "
+                "WHERE collection_id IS NOT NULL AND collection_order IS NULL;"
+            ).fetchall()
+            return [int(r[0]) for r in rows]
+
+    def set_collection_order(
+        self, collection_id: int, collection_name: Optional[str],
+        ordered_tmdb_ids: List[int],
+    ) -> int:
+        """Writes 1-based watch order for every part of a collection we hold."""
+        updated = 0
+        with self.get_connection() as conn:
+            for pos, tmdb_id in enumerate(ordered_tmdb_ids, start=1):
+                cur = conn.execute(
+                    "UPDATE media_items SET collection_id = ?, "
+                    "collection_name = COALESCE(?, collection_name), "
+                    "collection_order = ? "
+                    "WHERE media_type = 'movie' AND tmdb_id = ?;",
+                    (collection_id, collection_name, pos, tmdb_id),
+                )
+                updated += cur.rowcount
+        return updated
+
+    def get_series_context(self, item_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """For each movie id that belongs to a series: the series key/name, the
+        item's position, and every entry we hold in watch order with a `seen`
+        flag (seen = any profile marked it 'seen').
+
+        Uses TMDB collection data when present; otherwise the sequel-title
+        fallback. Items TMDB confirmed as standalone (checked=1, no collection)
+        never use the fallback.
+        """
+        ids = [int(i) for i in item_ids if i]
+        if not ids:
+            return {}
+        member_cols = (
+            "mi.*, "
+            "(SELECT file_path FROM media_sources ms WHERE ms.media_item_id = mi.id LIMIT 1) AS file_path, "
+            "(SELECT source_type FROM media_sources ms WHERE ms.media_item_id = mi.id LIMIT 1) AS source_type"
+        )
+        out: Dict[int, Dict[str, Any]] = {}
+        with self.get_connection() as conn:
+            ph = ",".join("?" * len(ids))
+            rows = [dict(r) for r in conn.execute(
+                f"SELECT id, title, release_year, genres, collection_id, collection_name, "
+                f"collection_checked FROM media_items "
+                f"WHERE media_type = 'movie' AND id IN ({ph});", ids,
+            ).fetchall()]
+
+            series: Dict[str, Dict[str, Any]] = {}   # key -> {name, members}
+            item_key: Dict[int, str] = {}
+
+            # 1. TMDB collections
+            coll_ids = sorted({r["collection_id"] for r in rows if r.get("collection_id")})
+            if coll_ids:
+                cph = ",".join("?" * len(coll_ids))
+                members = [dict(r) for r in conn.execute(
+                    f"SELECT {member_cols} FROM media_items mi "
+                    f"WHERE mi.media_type = 'movie' AND mi.collection_id IN ({cph});",
+                    coll_ids,
+                ).fetchall()]
+                for cid in coll_ids:
+                    ms = [m for m in members if m["collection_id"] == cid]
+                    ms.sort(key=lambda m: (
+                        m.get("collection_order") if m.get("collection_order") is not None else 999,
+                        m.get("release_year") or 9999, m["id"],
+                    ))
+                    name = next((m.get("collection_name") for m in ms if m.get("collection_name")), None)
+                    series[f"c:{cid}"] = {"name": name, "members": ms}
+                for r in rows:
+                    if r.get("collection_id"):
+                        item_key[r["id"]] = f"c:{r['collection_id']}"
+
+            # 2. Sequel-title fallback for films not yet looked up on TMDB
+            for r in rows:
+                if r["id"] in item_key or r.get("collection_id"):
+                    continue
+                if int(r.get("collection_checked") or 0) == 1:
+                    continue  # TMDB says standalone
+                parsed = self.parse_sequel_title(r.get("title"))
+                if not parsed:
+                    continue
+                stem, _n = parsed
+                year = r.get("release_year") or 9999
+                stem_row = conn.execute(
+                    f"SELECT {member_cols} FROM media_items mi "
+                    "WHERE mi.media_type = 'movie' AND LOWER(mi.title) = LOWER(?) "
+                    "AND COALESCE(mi.release_year, 0) < ? "
+                    "ORDER BY mi.release_year DESC LIMIT 1;",
+                    (stem, year),
+                ).fetchone()
+                if not stem_row:
+                    continue
+                stem_row = dict(stem_row)
+                g_seq = {g.strip().lower() for g in (r.get("genres") or "").split(",") if g.strip()}
+                g_stem = {g.strip().lower() for g in (stem_row.get("genres") or "").split(",") if g.strip()}
+                if not (g_seq & g_stem):
+                    continue
+                key = f"t:{stem_row['id']}"
+                item_key[r["id"]] = key
+                if key in series:
+                    continue
+                stem_row["_series_n"] = 1
+                ms = [stem_row]
+                for cand in conn.execute(
+                    f"SELECT {member_cols} FROM media_items mi "
+                    "WHERE mi.media_type = 'movie' AND LOWER(mi.title) LIKE LOWER(?) "
+                    "AND COALESCE(mi.release_year, 0) > ?;",
+                    (stem + "%", stem_row.get("release_year") or 0),
+                ).fetchall():
+                    cand = dict(cand)
+                    pc = self.parse_sequel_title(cand.get("title"))
+                    if pc and pc[0].lower() == stem.lower():
+                        cand["_series_n"] = pc[1]
+                        ms.append(cand)
+                ms.sort(key=lambda m: (m["_series_n"], m.get("release_year") or 9999))
+                series[key] = {"name": stem, "members": ms}
+
+            if not item_key:
+                return {}
+
+            # 3. Seen flags across every member
+            all_ids = sorted({m["id"] for s in series.values() for m in s["members"]})
+            aph = ",".join("?" * len(all_ids))
+            seen = {int(r[0]) for r in conn.execute(
+                f"SELECT DISTINCT media_item_id FROM watch_history "
+                f"WHERE COALESCE(status, 'seen') = 'seen' AND media_item_id IN ({aph});",
+                all_ids,
+            ).fetchall()}
+
+        for s in series.values():
+            for pos, m in enumerate(s["members"], start=1):
+                m["series_position"] = pos
+                m["seen"] = m["id"] in seen
+                m.pop("_series_n", None)
+        for iid, key in item_key.items():
+            s = series[key]
+            pos = next((m["series_position"] for m in s["members"] if m["id"] == iid), None)
+            if pos is None:
+                continue
+            out[iid] = {"key": key, "name": s["name"], "position": pos,
+                        "size": len(s["members"]), "members": s["members"]}
+        return out
+
+    def get_recent_liked_history(
+        self, profile_ids: List[int], limit: int = 30, min_rating: float = 6.0,
+    ) -> List[int]:
+        """Item ids the given profiles actually watched and liked, oldest-first,
+        newest `limit` only.
+
+        This is the generative engine's input. The old source
+        (get_watch_history_chronological, oldest 100 rows) froze the model on
+        the first ratings ever entered, fed it "we haven't seen it" answers as
+        if they were watches, and counted a 3/10 the same as a 10/10.
+        """
+        if not profile_ids:
+            return []
+        ph = ",".join("?" * len(profile_ids))
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT media_item_id, MAX(watched_at) AS last_at
+                FROM watch_history
+                WHERE COALESCE(status, 'seen') = 'seen'
+                  AND profile_id IN ({ph})
+                  AND (user_rating IS NULL OR user_rating >= ?)
+                GROUP BY media_item_id
+                ORDER BY last_at DESC, media_item_id DESC
+                LIMIT ?;
+                """,
+                [*profile_ids, min_rating, limit],
+            ).fetchall()
+        return [int(r[0]) for r in reversed(rows)]
+
     def get_watch_history_chronological(self, limit: int = 200) -> List[Dict[str, Any]]:
         """Retrieves watch history ordered oldest-first (chronological).
 

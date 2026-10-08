@@ -282,3 +282,34 @@ The recommender's core problem was **signal, not architecture**: 2 ratings in `w
 - [x] Server boots with `ensure_libraries()` on startup; `GET /api/jellyfin/status` returns diagnostics
 - [ ] Manual: one-time move of existing show folders to `~/Media/Shows` (command in README)
 - [ ] Manual: confirm new downloads appear on the TV client (4K/HEVC may need transcoding enabled)
+
+---
+
+## 7. RECOMMENDER REVIEW (2026-10-08)
+
+**Full architecture + flow diagrams: `docs/RECOMMENDER_ARCHITECTURE.md`. Read that before touching the recommender.**
+
+Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, origin-of-cinema filtering + `origin_country`/`original_language` columns (schema v4), concept/premise matching via `THEMES`, download resume/ETA) were never recorded in this handover. The architecture doc reflects the code as of commit `9beb8e3`.
+
+**Live state observed:** `catalogue_full.db` = 36,447 movies / 14,050 TV. `watch_history` = 71 `seen` + 220 `not_seen`, **all profile 1** (Partner has zero ratings). `tier2_keywords` 0 % populated. The router sends almost every mood/chip request to the **generative** engine (history threshold is counted over all rows, including `not_seen`).
+
+### Fixed 2026-10-08
+- **Series order (both engines):** schema v5 adds `media_items.collection_id / collection_name / collection_order / collection_checked`. `apply_series_order()` in `recommender_service.py` swaps a sequel for the earliest entry neither profile has *seen*, keeps one film per series, and adds `series_note` / `series_position` / `replaced_sequel_title` (UI badge 📚). Before TMDB data exists, it falls back to sequel titles (`DatabaseManager.parse_sequel_title`), guarded by shared genre and an earlier bare-title film. **To do once, from your own terminal:** `uv run python utils/backfill_collections.py` (resumable; `--limit N` for a partial run). TMDB is not reachable from Claude's sandbox.
+- **Generative history:** `GenerativeRetriever.get_history_item_ids(profile=…)` → `DatabaseManager.get_recent_liked_history()`: seen only, rating ≥ `generative.history_min_rating` (6.0, new config key) or unrated, newest 30, per profile (`me` / `partner` / both). Profile ids come from `get_profiles()` (lowest = me) instead of hard-coded 1/2.
+- **`exclude_watched` SQL** (`get_candidates`, `get_top_candidates`) now excludes only `status='seen'`. "We haven't seen it" answers no longer hide films.
+- Tests: new `tests/test_series.py` (18 checks). `test_ratings.py` passes except 3 groups that need uvicorn/libtorrent, which weren't installable in the review sandbox.
+
+**Open bugs (prioritised):**
+1. ~~No franchise/collection awareness~~ (fixed above, pending backfill run). Original note: No franchise/collection awareness → sequels recommended before earlier entries (both engines). Needs TMDB `belongs_to_collection` (id + order) stored on `media_items`, then a "replace with earliest unseen entry" pass.
+2. ~~TIGER history~~ (fixed above). Original note: TIGER history (`get_history_item_ids` → `get_watch_history_chronological(limit=100)` ASC) uses the **oldest** 100 rows, includes `not_seen`, ignores rating value, mixes profiles. Generative profile IDs are hard-coded 1/2.
+3. Generative engine ignores query exclusions, rating floor and diversity. Genre filter only applies with ≥20 matches. Scary→Mystery leaks comedies.
+4. Taste bonus saturates at the 2.0 cap and has no negative signal (ratings < 7 are ignored).
+5. `rank_candidates_profile_aware` overwrites `relevance_boost` (wiping the intent-genre bonus) when content words exist. The line is also duplicated.
+6. Concept SQL boost: unbounded +3.0 per generic term. The second "wider" query repeats the first. "smart" alone triggers concept mode.
+7. `parse_origin_intent` substring matching ("indiana jones"→Indian, "polished"→Polish). Duplicate dict keys `chinese`/`portuguese`. Kollywood/Tollywood swapped. Nigerian = Yoruba only.
+8. Negation window is 1 token ("not complicated" adds Horror/Thriller/Crime/War).
+9. `server.py` `exclude_ids` filters only the current page and forces `has_more=False`.
+10. Tier A/B boosts unreachable in Discover (all seen films are dropped before scoring). Partner mode also drops films only profile 1 has seen.
+11. Genre chips widen (union with mood + query genres) instead of narrowing.
+12. Era/runtime `or candidates` silent fallback. `medium` duration is unhandled in Python.
+13. Variety: generative always shuffles. Legacy shuffles after MMR (same 50, reordered).

@@ -40,6 +40,7 @@ import numpy as np
 from database import DatabaseManager
 from services.recommender_service import (  # noqa: E402  (shared scoring helpers)
     _split_lower,
+    apply_series_order,
     calculate_weighted_rating,
     parse_origin_intent,
     parse_query_intent,
@@ -193,6 +194,8 @@ class GenerativeRetriever:
         self.top_k = int(gen_cfg.get("top_k", 10))
         self.max_seq_len = int(gen_cfg.get("max_seq_len", 10))
         self.candidate_pool = int(gen_cfg.get("candidate_pool", 60))
+        # Ratings below this are not "liked" and never enter the model's history.
+        self.history_min_rating = float(gen_cfg.get("history_min_rating", 6.0))
         self.artifact_dir = (
             os.environ.get("TIGER_MODEL_DIR")
             or gen_cfg.get("model_dir")
@@ -281,9 +284,42 @@ class GenerativeRetriever:
 
 
     # -- history / sequence -------------------------------------------------
-    def get_history_item_ids(self, limit: int = 100) -> List[int]:
-        """Chronological (oldest-first) watched item IDs, consecutive repeats dropped."""
-        history = self.db.get_watch_history_chronological(limit=limit)
+    def _profile_ids(self) -> Tuple[int, int]:
+        """(primary, other) profile ids — same rule as the legacy engine
+        (lowest id is "me"), instead of hard-coding 1 and 2."""
+        ids: List[int] = []
+        if hasattr(self.db, "get_profiles"):
+            try:
+                ids = sorted(int(p["id"]) for p in self.db.get_profiles())
+            except Exception:
+                ids = []
+        if not ids:
+            return 1, 2
+        return ids[0], (ids[1] if len(ids) > 1 else ids[0])
+
+    def get_history_item_ids(self, limit: Optional[int] = None, profile: str = "together") -> List[int]:
+        """The films this request's viewer(s) watched AND liked, newest
+        `limit`, oldest-first (the order the sequence model expects).
+
+        Previously this read the OLDEST 100 rows of watch_history, so nothing
+        rated after the first 100 entries ever reached the model; it also fed
+        "we haven't seen it" answers in as watches and treated a 3/10 like a
+        10/10, mixing both people into one sequence.
+        """
+        n = int(limit or max(self.max_seq_len * 3, 30))
+        if hasattr(self.db, "get_recent_liked_history"):
+            primary, other = self._profile_ids()
+            if profile == "me":
+                pids = [primary]
+            elif profile == "partner":
+                pids = [other]
+            else:
+                pids = sorted({primary, other})
+            return self.db.get_recent_liked_history(
+                pids, limit=n, min_rating=self.history_min_rating
+            )
+        # Legacy/test databases without the method.
+        history = self.db.get_watch_history_chronological(limit=n)
         ids: List[int] = []
         for row in history:
             item_id = int(row.get("media_item_id") or 0)
@@ -343,7 +379,7 @@ class GenerativeRetriever:
         if not self._ensure_loaded():
             raise InsufficientHistoryError("TIGER artifacts not available")
 
-        item_ids = self.get_history_item_ids()
+        item_ids = self.get_history_item_ids(profile=profile)
         seq = self.history_to_semantic_sequence(item_ids)
         if len(seq) < self.history_threshold:
             raise InsufficientHistoryError(
@@ -365,14 +401,15 @@ class GenerativeRetriever:
         # results here even after the legacy engine was fixed. Mirror the mix
         # the legacy path uses.
         from services.recommender_service import PROFILE_MIX
+        me_id, partner_id = self._profile_ids()
         if profile == "partner":
-            primary_id, other_id = 2, 1
+            primary_id, other_id = partner_id, me_id
             own_w, other_w = PROFILE_MIX["partner"]
         elif profile == "me":
-            primary_id, other_id = 1, 2
+            primary_id, other_id = me_id, partner_id
             own_w, other_w = PROFILE_MIX["me"]
         else:
-            primary_id, other_id = 1, 2
+            primary_id, other_id = me_id, partner_id
             own_w, other_w = PROFILE_MIX["together"]
         all_tastes = self.db.get_all_profile_tastes()
         taste = dict(all_tastes.get(primary_id) or {})
@@ -529,6 +566,9 @@ class GenerativeRetriever:
                 ranked_items = [it for it in ranked_items if 0 < (it.get("runtime") or 0) < 105] or ranked_items
             elif duration_preference == "epic":
                 ranked_items = [it for it in ranked_items if (it.get("runtime") or 0) > 140] or ranked_items
+
+        # Series order: swap sequels for the earliest unseen entry, one per series.
+        ranked_items = apply_series_order(ranked_items, self.db)
 
         # Cold-start variety (opt-in): same seeded 10-minute rotation as the
         # legacy engine, so repeat requests surface different picks.

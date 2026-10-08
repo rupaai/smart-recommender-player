@@ -604,6 +604,98 @@ def resolve_effective_genres(
     }
 
 
+
+# ===========================================================================
+# Series order
+# ===========================================================================
+# Fields describing WHY an item ranked where it did. When a sequel is swapped
+# for the earlier film you should watch first, the earlier film inherits the
+# sequel's slot (and these scores) so the list order is unchanged.
+_SERIES_INHERITED_KEYS = (
+    "recommendation_score", "base_weighted_rating", "taste_bonus",
+    "taste_bonus_own", "taste_bonus_other", "relevance_boost", "query_boost",
+    "co_view_tier", "tier_boost", "matched_themes",
+)
+_SERIES_INTERNAL_KEYS = ("seen", "series_position")
+
+
+def apply_series_order(items: List[Dict[str, Any]], db: Any) -> List[Dict[str, Any]]:
+    """Make films in a series come out in watch order.
+
+    For each film that belongs to a series (TMDB collection, or a sequel
+    title like "Toy Story 3" before the collection backfill has run):
+      - if an EARLIER entry hasn't been seen by either of you, it replaces the
+        sequel in the same slot ("start with Philosopher's Stone, not
+        Deathly Hallows Part 1");
+      - only one entry per series is kept (the next one to watch);
+      - otherwise the film is kept and labelled with its position.
+
+    Order-preserving and engine-agnostic: both engines call it on their ranked
+    list before pagination. Any lookup failure returns the list unchanged.
+    """
+    if not items or db is None or not hasattr(db, "get_series_context"):
+        return items
+    movie_ids = [
+        int(it["id"]) for it in items
+        if it.get("id") and (it.get("media_type") or "movie") == "movie"
+    ]
+    try:
+        ctx = db.get_series_context(movie_ids)
+    except Exception as e:  # never let series logic break recommendations
+        print(f"[Recommender] series lookup skipped ({e})", flush=True)
+        return items
+    if not ctx:
+        return items
+
+    out: List[Dict[str, Any]] = []
+    used_series: Set[str] = set()
+    used_ids: Set[int] = set()
+    for it in items:
+        iid = it.get("id")
+        s = ctx.get(int(iid)) if iid else None
+        if not s:
+            if iid not in used_ids:
+                out.append(it)
+                used_ids.add(iid)
+            continue
+        if s["key"] in used_series:
+            continue  # one film per series per list
+        used_series.add(s["key"])
+        name = s.get("name") or "the series"
+        next_up = next((m for m in s["members"] if not m["seen"]), None)
+
+        if next_up is None or next_up["id"] == iid or next_up["series_position"] > s["position"]:
+            if iid in used_ids:
+                continue
+            it["series_name"] = name
+            it["series_position"] = s["position"]
+            it["series_size"] = s["size"]
+            if s["position"] > 1:
+                it["series_note"] = f"#{s['position']} of {s['size']} in {name} — you've seen the earlier ones"
+            out.append(it)
+            used_ids.add(iid)
+            continue
+
+        if next_up["id"] in used_ids:
+            continue
+        rep = {k: v for k, v in next_up.items() if k not in _SERIES_INTERNAL_KEYS}
+        for k in _SERIES_INHERITED_KEYS:
+            if k in it:
+                rep[k] = it[k]
+        rep["series_name"] = name
+        rep["series_position"] = next_up["series_position"]
+        rep["series_size"] = s["size"]
+        rep["series_note"] = (
+            f"Watch first: #{next_up['series_position']} of {s['size']} in {name}"
+            f" (instead of {it.get('title')})"
+        )
+        rep["replaced_sequel_id"] = iid
+        rep["replaced_sequel_title"] = it.get("title")
+        out.append(rep)
+        used_ids.add(next_up["id"])
+    return out
+
+
 class RecommenderService:
     def __init__(
         self,
@@ -1136,6 +1228,10 @@ class RecommenderService:
 
         if not ranked:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
+
+        # Stage 2b: Series order. A sequel is swapped for the earliest entry
+        # neither of you has seen, and each series appears at most once.
+        ranked = apply_series_order(ranked, self.db)
 
         # Stage 3: Candidate Diversity Pruning (MMR)
         # Process the shortlist through MMR to build the diverse final pool.

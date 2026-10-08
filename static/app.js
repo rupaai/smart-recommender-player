@@ -467,6 +467,10 @@ function buildMovieCard(m, engine) {
     // no explanation of which of them actually had one.
     const themeBadge = (m.matched_themes && m.matched_themes.length)
       ? `<span class="badge badge-theme" title="Themes matched from the film's premise">🧠 ${escapeHtml(m.matched_themes.join(' · '))}</span>` : '';
+    // Series order: shown when a sequel was swapped for the film to watch first,
+    // or when this is a later entry and the earlier ones are already seen.
+    const seriesBadge = m.series_note
+      ? `<span class="badge badge-series" title="${escapeHtml(m.series_note)}">📚 ${escapeHtml(m.replaced_sequel_title ? `Start of ${m.series_name || 'the series'}` : `#${m.series_position} of ${m.series_size}`)}</span>` : '';
     const runtimeStr = m.runtime ? `<span class="badge badge-runtime">⏱ ${m.runtime}m</span>` : '';
     const engineBadge = engine === 'generative'
       ? '<span class="engine-badge badge-generative">🧠 Learning Your Taste</span>'
@@ -496,6 +500,7 @@ function buildMovieCard(m, engine) {
             ${tasteBonus}
             ${tierBadge}
             ${themeBadge}
+            ${seriesBadge}
             ${combinedBadge}
             ${queryBoost}
             ${runtimeStr}
