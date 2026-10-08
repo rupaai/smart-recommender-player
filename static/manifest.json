@@ -1,11 +1,11 @@
 {
-  "name": "Movie Streamer & Recommender",
-  "short_name": "Movies",
-  "description": "Smart Home Movie Companion & Recommender",
+  "name": "Movie Night",
+  "short_name": "Movie Night",
+  "description": "Picks for the two of you, learned from your ratings",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f1015",
-  "theme_color": "#1a1c24",
+  "background_color": "#e8e6e1",
+  "theme_color": "#e8e6e1",
   "icons": [
     {
       "src": "/static/icon.png",

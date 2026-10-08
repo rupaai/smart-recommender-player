@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "templates/index.html"
+        ],
+        "createdAt": "2026-10-08T20:06:28.180Z",
+        "reason": "Ticket look's grey paper ground #e8e6e1 comes from the direction contract (.impeccable/surfaces/templates-index-html.md); the finish reviewer judged it neutral paper, not cream"
+      }
+    ]
+  }
+}

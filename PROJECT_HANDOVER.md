@@ -320,6 +320,36 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 - `training/retrain_tiger.sh`: one command (Steps D→G, backs up `models/tiger` to `models/tiger.bak`). Needs torch, so run it on the Mac (Claude's sandbox has no torch and no PyPI). **Not yet run**, so the deployed model is still the old synthetic one.
 
 ## 8. NEXT: Recommender v2 design
-`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + optional LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up with an entropy-based question picker, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
-- **Decisions 2026-10-08:** train on the Mac, serve on the Pi (INT8 ONNX encoder, precomputed vectors, no torch on the Pi). Questions pop-up appears automatically, but only asks questions that would change the top 10 (see §3 "meaningful" rules). LLM mood tags still undecided (pilot on 200 films first).
-- **2026-10-08:** pop-up may ask up to ~6 questions. The current question bank is a placeholder: the user is designing an insightful "guess the vibe" bank in a separate chat. Expect it in the Project and swap it in.
+`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
+- **Decisions 2026-10-08:** train on the Mac, serve on the Pi (INT8 ONNX encoder, precomputed vectors, no torch on the Pi). The questions pop-up appears automatically, asks up to ~6 questions, and only asks questions that would change the top 10 (§3 "meaningful" rules). Vibe search = embeddings + clusters. **LLM mood tags: yes**, Claude Haiku 5.5 via the Batch API, 200-film pilot first, then ask the user before the full run. Subtitles and the boyfriend's profile are out of scope for now.
+- **Question bank swapped in (2026-10-08):** `docs/VIBE_QUESTION_BANK.md` (33 indirect "guess the vibe" questions in 9 groups, adaptive picker, short set of 10) replaces the placeholder Q1–Q8 in V2 §3. Its §4 adds dials (tension, ending_valence, humour, strangeness, cringe; gore, fantasy, talkiness, spectacle), content flags, setting/palette tags and closed "feels like" (37) / "good for" (16) vocabularies. V2 §2.5 and §4 now reference them.
+- **Rule for API spend:** never spend Anthropic API money without giving the user the exact Mac command and expected cost first.
+
+---
+
+## 9. UI REDESIGN — TICKET LOOK (2026-10-08)
+
+**Status:** the frontend was redesigned as a light UI. The user chose the **ticket** look on 2026-10-08, and the **clean** look, its token set, the header look switch and `setLook`/`syncLookSwitch` are deleted. `<html data-look="ticket">` stays, since the ticket rules are scoped to it. **Next step:** write `DESIGN.md` from the result. The dark-theme alternative on branch `ui-polish-dark` was not chosen and is unmerged.
+
+- **Look:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
+- **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
+- **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
+- **Structure:**
+  - Tabs: Discover / Download / Rate / History. A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
+  - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
+  - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.
+  - Reason badges say why each title is there.
+- **Bugs fixed on the way:**
+  - The "From" origin chips never loaded on first visit.
+  - Movies/TV toggle and "Reset" had no CSS.
+  - The progress-bar cancel button was unstyled.
+  - Posters used dead `via.placeholder.com` (now a typographic fallback).
+  - Titles were interpolated unescaped into `innerHTML` and inline `onclick` (now `escapeHtml` + `jsArg()`).
+  - A failed rating still advanced the Rate card, silently losing it (`postRating` now returns success).
+  - The feedback sheet's star selector also selected the Rate tab's stars.
+  - The rate keyboard shortcuts fired with a sheet open.
+  - `alert()` for voice is now a toast, and the mic is hidden when unsupported.
+  - The page now allows pinch-zoom.
+- **Accessibility:** real `<button>` mood tiles, `aria-pressed` on every toggle, tab roles, `:focus-visible` rings, labelled inputs, Esc / backdrop close on sheets, focus return, `prefers-reduced-motion`, 16px inputs on phones (no iOS zoom).
+- **Design records:** `PRODUCT.md` (product truth) and `.impeccable/surfaces/templates-index-html.md` (direction contract). `DESIGN.md` is deliberately not written until a look is chosen.
+- **Verified against a mock API only** (FastAPI deps couldn't install in the sandbox): both looks at 390px and 1280px, every tab, loading / downloading / error states, and `node --check static/app.js`. An independent design review passed 7 of 8 fixes; the open item is the font above. **Not yet checked against the real server.**

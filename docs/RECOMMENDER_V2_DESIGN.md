@@ -113,9 +113,11 @@ Each film gets five 0–1 scores. They power both the pop-up and the ranking:
 | darkness | wholesome | violent, disturbing |
 | pace | slow-burn | fast |
 
+The question bank ([VIBE_QUESTION_BANK.md §4](VIBE_QUESTION_BANK.md#4-what-the-catalogue-needs-to-store)) adds nine more dials: **tension, ending_valence, humour, strangeness, cringe** (must-have), then **gore, fantasy, talkiness, spectacle**. It also adds content flags for the avoid questions, setting / season / time-of-day / palette / story-era tags, and closed "feels like" (37) and "good for" (16) vocabularies. Every dial has an anchor or keyword fallback, so questions work before LLM tags exist.
+
 Two ways to fill them, both supported:
 - **Free:** project the film's vector onto anchor sentences, e.g. `sim(film, "a calm, gentle, relaxing film") − sim(film, "an intense, adrenaline-filled film")`, rescaled to 0–1. No extra data needed, decent accuracy.
-- **Better (optional):** take them straight from the LLM mood tags.
+- **Better:** take them straight from the LLM mood tags (`utils/mood_tag.py`, Claude Haiku 5.5 via the Batch API; 200-film pilot first). When both exist, the LLM value wins and the anchor value is the fallback.
 
 Your text gets the same projection. "After a late night" lands low on energy and attention without any hand-written rule.
 
@@ -142,30 +144,54 @@ The weights start hand-set. Once ~100 feedback events exist (§5), they are lear
 3. Answers update results live behind the pop-up, so you can stop the moment it looks right.
 4. Questions already answered by your text are never asked. "Under 2 hours" means no length question.
 
-### Question bank (each answer maps to facets / filters)
+### Question bank: "guess the vibe" (swapped in 2026-10-08)
 
-> **Placeholder, to be replaced.** These questions were judged not insightful enough (2026-10-08). A better bank is being written in a separate chat: indirect, "guess the vibe" questions about your state and situation rather than film attributes. Swap it in when it's ready.
+The full bank lives in **[VIBE_QUESTION_BANK.md](VIBE_QUESTION_BANK.md)**: 33 questions in 9 groups, each option mapped to dial targets, hard filters and tag/keyword boosts, with "e.g." films, an adaptive picker, three sample sessions and a 10-question short set. It replaces the placeholder Q1–Q8 table that used to sit here.
 
-| # | Question | Answers → effect |
-|---|---|---|
-| Q1 | How much brain have you got tonight? | 🛋️ Barely any → attention low · 🙂 Some → mid · 🧠 Full focus → high |
-| Q2 | What energy? | 🌙 Wind-down → energy low · ⚖️ In between · ⚡ Wake me up → high |
-| Q3 | How do you want to feel after? | 😊 Lighter · 🥲 A good cry is fine · 🤯 Mind blown · 😱 Scared |
-| Q4 | Darkness limit? | ☀️ Keep it wholesome · 🌗 Some edge · 🌑 Anything goes |
-| Q5 | How long have you got? | < 100 min · ~2 h · Epic is fine · It's a TV night |
-| Q6 | New or comfort? | ✨ Something new · 🔁 A favourite rewatch · 🧭 Surprise me |
-| Q7 | Subtitles OK? | Yes · Prefer English |
-| Q8 | More like…? | 3 cluster names closest to your text (§2.3) |
+The pop-up works like Akinator, but what it guesses is a feeling, not a film. Every question asks about **you and your evening** (your state, your surroundings, a sensation, an image), never about film attributes. Every answer still becomes something the ranker can measure.
 
-### Which question to ask: "20 questions"
-Take the top ~300 films matching the text so far. For each unanswered question, check how its answers would split those films (via their facets). **Ask the question whose answers split the pool most evenly** (highest entropy). That is the question you learn most from.
+**The vibe belief.** While you answer, the system keeps one target and one confidence (0–1) per dial, plus hard filters, tag boosts/penalties and query-vector nudges. `facet_fit` in §2.6 is `Σ conf · (1 − |film_dial − target|)`, so a dial nobody asked about has no effect.
 
-Stop when:
-- the top results are clearly ahead (big score gap), or
-- ~6 questions have been asked, or
-- you skip.
+| Group | What it finds out | Main dials | Questions |
+|---|---|---|---|
+| A | How much you've got left (tiredness, bandwidth, time) | attention, energy, runtime | A1 "Your brain right now is a…", A2 "Pick a seat", A3 "How did today end?", A4 "When does tonight end?" |
+| B | What your heart needs | weight, ending_valence, feels | B1 "Pick a drink", B2 "Pick the last line of tonight's story", B3 "Put on a soundtrack", B4 "Who do you want to be for two hours?", B5 "Pick a swimming spot" |
+| C | Comfort vs novelty | seen/unseen, cluster affinity, era, language, country | C1 "Pick a restaurant", C2 "Set the time machine", C3 "Reading tonight feels like…", C4 "Book a trip" |
+| D | Who's there, what's happening around the screen | profile, attention, good_for | D1 "Who's on the sofa?", D2 "What's happening around the screen?", D3 "How should you two feel walking out?" |
+| E | Tolerance for tension | darkness, tension, gore, cringe | E1 "Pick tomorrow's headline", E2 "A door is open a crack…", E3 "Awkward silences are…", E4 "Tonight's red is…" |
+| F | Aesthetic and sensory mood | feels, setting, palette, talkiness, spectacle | F1 "Pick a window", F2 "Pick a colour palette", F3 "Stuck for a weekend", F4 "Pick a texture", F5 "Pick your dinner guest" |
+| G | Pace and patience | pace | G1 "Pick a way to cross the river", G2 "If nothing happens for 20 minutes…" |
+| H | What would ruin tonight (avoid) | content flags, caps on any dial | H1 "What would ruin tonight?", H2 "Which twist would make you throw the remote?", H3 "Last time it went wrong…", H4 "Had enough of anything lately?" |
+| I | Closers built from the pool itself | query vector | I1 "Which of these feels closest?" (3 real clusters), I2 "This one or that one?" (2 real films) |
 
-The same idea powers the game *Guess Who?*: "does your person wear glasses?" beats "is your person called Bernard?".
+Example (A3, the default opener):
+
+| Option | Changes |
+|---|---|
+| 🫠 Wrung out, too many people | `energy → 0.25` · `attention → 0.35 (weak)` · `feels+ quiet, solitary, dreamy` |
+| 🥱 Bored, nothing happened | `energy → 0.75` · novelty +0.2 · `feels+ thrilling, chaotic` |
+| 🌀 Stressed, head still buzzing | `darkness ≤ 0.4` · `tension ≤ 0.4` · `weight → 0.3` · `feels+ soothing, gentle` · `good_for+ winding down` |
+| ✨ Great day, keep it going | `weight → 0.2` · `energy → 0.65` · `feels+ giddy, joyful` |
+
+**The short set** (if only 10 questions ship first): A3, D1, A1, E1, B1, F1, C1, H1, A4, I1. All ten work on today's data. Next additions: E2, E3, G2.
+
+### Choosing the next question (replaces the plain entropy rule)
+Run after every answer ([bank §2](VIBE_QUESTION_BANK.md#2-choosing-the-next-question)):
+
+1. **Eligible:** not asked, no **alt** sibling asked, its "Ask when" holds, and not already answered by your text ("with friends" answers D1).
+2. **Hide dead options:** an option needs ≥ 10 films in the top 300 that fit it (avoid options must remove ≥ 5 % of the top 50). Fewer than 3 live options drops the question.
+3. **Score** by simulating each option against the pool:
+   ```
+   value(q) = Σ_options p(option) · (1 − overlap(top10_now, top10_if_option))
+            × fun(q)          # 1.2 for A3, D1, F1, F4, B1, E2
+            × usefulness(q)   # learned, starts at 1.0
+            × group_penalty   # 0.5 if the group was already asked
+   ```
+   `p(option)` starts uniform and later uses your past answers by weekday and hour. Below 0.3 (top 10 overlaps > 70 % whatever you pick) the question is dropped.
+4. **Fixed slots:** question 1 is an "about you" question (A3, D1, A1, F1 or F4). One avoid question (H1/H2/H3) by question 4. Closers (I1, I2) only after question 4.
+5. Ask the highest-scoring question.
+
+**Stop** when the top 5 has been stable for two answers, there's a clear score gap between #5 and #6, 6 questions have been asked, or you press Skip / Just show me.
 
 ### What makes a question "meaningful" (decided 2026-10-08)
 - **It must change the answer.** Before asking, simulate each option. If the top-10 results would overlap more than 70 % whichever option you pick, the question is dropped.
@@ -192,9 +218,10 @@ Session state (text, parsed rules, answers) is kept server-side and logged (§5)
 
 | Table / file | New fields | Purpose |
 |---|---|---|
-| `media_items` | `tagline`, `vibe_tags` (JSON), `facets` (JSON: energy, attention, weight, darkness, pace), `vibe_cluster_id` | Vibe document parts + dials |
+| `media_items` | `tagline`, `vibe_tags` (JSON from the LLM tagger: 14 dials, content flags, feels / good_for / setting / season / time_of_day / palette / story_era), `facets` (JSON: the dials actually used for ranking, LLM value or anchor fallback), `vibe_cluster_id` | Vibe document parts + dials |
+| `mood_tag_batches` (new) | `batch_id`, `created_at`, `item_ids`, `status`, `usage_json`, `cost_usd` | Lets the tagger resume and report real cost |
 | `vibe_clusters` (new) | `id`, `label`, `size`, `top_keywords` | Named clusters |
-| `discover_sessions` (new) | `id`, `created_at`, `profile_id`, `query_text`, `answers_json`, `rules_json` | What you asked |
+| `discover_sessions` (new) | `id`, `created_at`, `profile_id`, `query_text`, `weekday`, `hour`, `answers_json` (keyed by question id + option id), `asked_order`, `rules_json`, `belief_json` | What you asked, and when |
 | `discover_impressions` (new) | `session_id`, `media_item_id`, `rank`, `score_json`, `outcome` (shown/opened/dismissed/played/rated), `outcome_at`, `rating` | What happened, the training signal |
 | `models/vibe/` | `encoder_int8.onnx`, `tokenizer.json`, `item_vectors.npy`, `item_ids.json`, `centroids.npy` | Runtime vibe engine |
 
@@ -240,7 +267,7 @@ Fine-tuning on your own triplets is what teaches the model what *you* mean by "c
    This lets us *measure* whether vibe search works (how many of your good films land in the top 10) instead of guessing. Later it becomes fine-tuning data. Mix short prompts ("cozy") with long ones, and include moods, occasions ("sunday hangover"), references ("like Arrival but lighter") and hard rules ("no subtitles").
 
 **Decisions (2026-10-08):**
-5. **LLM mood tags:** *open.* Pilot on 200 films and estimate the cost first if yes.
+5. **LLM mood tags: yes** (2026-10-08). Claude Haiku 5.5 via the Batch API, using the dials, flags and vocabularies from the question bank §4. A 200-film pilot runs first; the full catalogue only runs after you've seen the real pilot cost and sample tags.
 6. **Where it runs: decided.** Train on the Mac; serve on the Pi. The query encoder ships as INT8 ONNX. Film vectors are precomputed on the Mac and copied to the Pi. No torch on the Pi.
 7. **Pop-up: decided.** It appears automatically. Questions must be *meaningful*: each one is chosen because its answers split the current candidates into clearly different films (§3). If no remaining question would change the top 10, the pop-up doesn't appear. Answer options are written from the candidates themselves where possible, e.g. Q8 offers the 3 clusters actually present in the pool, so every choice leads somewhere real.
 

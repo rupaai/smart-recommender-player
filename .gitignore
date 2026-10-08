@@ -34,3 +34,6 @@ training/data/
 
 # Local database backups (created by rating resets / migrations)
 backups/
+
+# Design review screenshots (local only)
+.impeccable/review/
