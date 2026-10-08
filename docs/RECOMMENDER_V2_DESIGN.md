@@ -165,6 +165,12 @@ Stop when:
 
 The same idea powers the game *Guess Who?*: "does your person wear glasses?" beats "is your person called Bernard?".
 
+### What makes a question "meaningful" (decided 2026-10-08)
+- **It must change the answer.** Before asking, simulate each option. If the top-10 results would overlap more than 70 % whichever option you pick, the question is dropped.
+- **No dead options.** An option is only shown if at least 10 films in the current pool fit it.
+- **Concrete over abstract.** Options show 2 example film posters from the pool ("🌙 Wind-down: *Paddington 2*, *Chef*"), so you choose by feel, not by label.
+- **It learns which questions help.** Each question's usefulness is logged: did your answer move a film you then played into the top 5? Questions that rarely help sink in the ranking.
+
 ### When the pop-up appears
 - **Auto:** when the text is short (< 6 meaningful words) or the top-20 results are spread across many clusters (ambiguous).
 - **Never:** when you pressed "Just show me", or the text already fixes the facets.
@@ -231,10 +237,10 @@ Fine-tuning on your own triplets is what teaches the model what *you* mean by "c
    Put them in `training/vibe_eval.csv` (`prompt,good_titles,bad_titles`).
    This lets us *measure* whether vibe search works (how many of your good films land in the top 10) instead of guessing. Later it becomes fine-tuning data. Mix short prompts ("cozy") with long ones, and include moods, occasions ("sunday hangover"), references ("like Arrival but lighter") and hard rules ("no subtitles").
 
-**Decisions for you:**
-5. **LLM mood tags: yes or no?** Yes means better vibe matching for obscure films and cleaner facets. It needs an Anthropic API key in `.env` and a one-off batch job. I'll estimate the cost from current pricing before running anything. No means the free anchor method only.
-6. **Where it runs:** training on the Mac, serving on the Pi? (Affects whether the encoder ships INT8.)
-7. **Pop-up default:** auto (recommended) or only when you click "Help me choose"?
+**Decisions (2026-10-08):**
+5. **LLM mood tags:** *open.* Pilot on 200 films and estimate the cost first if yes.
+6. **Where it runs: decided.** Train on the Mac; serve on the Pi. The query encoder ships as INT8 ONNX. Film vectors are precomputed on the Mac and copied to the Pi. No torch on the Pi.
+7. **Pop-up: decided.** It appears automatically. Questions must be *meaningful*: each one is chosen because its answers split the current candidates into clearly different films (§3). If no remaining question would change the top 10, the pop-up doesn't appear. Answer options are written from the candidates themselves where possible, e.g. Q8 offers the 3 clusters actually present in the pool, so every choice leads somewhere real.
 
 **Keep doing:**
 8. Rate films, especially ones you *disliked*, since negative signal is currently missing. Use "not this one" in results: once logging exists, every tap is training data.
