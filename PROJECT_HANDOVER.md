@@ -321,3 +321,34 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 
 ## 8. NEXT: Recommender v2 design
 `docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + optional LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up with an entropy-based question picker, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
+
+---
+
+## 9. UI REDESIGN — TWO LOOKS ON TRIAL (2026-10-08)
+
+**Status:** the frontend was redesigned. Two light looks ship side by side behind a header switch, and the user will pick one. **Next step once she picks:** delete the other look's block at the end of `static/styles.css` and its token set, remove the `.look-switch` from `templates/index.html` and `setLook`/`syncLookSwitch` from `app.js`, then write `DESIGN.md` from the result.
+
+- **Looks:** `<html data-look="ticket|clean">`, set before first paint by an inline script in `<head>` (from `?look=` or `localStorage.look`).
+  - **ticket:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
+  - **clean:** Apple-style `#f5f5f7` greys, one blue accent `#2453d6`, system type.
+- **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
+- **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
+- **Structure (shared by both looks):**
+  - Tabs: Discover / Download / Rate / History. A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
+  - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
+  - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.
+  - Reason badges say why each title is there.
+- **Bugs fixed on the way:**
+  - The "From" origin chips never loaded on first visit.
+  - Movies/TV toggle and "Reset" had no CSS.
+  - The progress-bar cancel button was unstyled.
+  - Posters used dead `via.placeholder.com` (now a typographic fallback).
+  - Titles were interpolated unescaped into `innerHTML` and inline `onclick` (now `escapeHtml` + `jsArg()`).
+  - A failed rating still advanced the Rate card, silently losing it (`postRating` now returns success).
+  - The feedback sheet's star selector also selected the Rate tab's stars.
+  - The rate keyboard shortcuts fired with a sheet open.
+  - `alert()` for voice is now a toast, and the mic is hidden when unsupported.
+  - The page now allows pinch-zoom.
+- **Accessibility:** real `<button>` mood tiles, `aria-pressed` on every toggle, tab roles, `:focus-visible` rings, labelled inputs, Esc / backdrop close on sheets, focus return, `prefers-reduced-motion`, 16px inputs on phones (no iOS zoom).
+- **Design records:** `PRODUCT.md` (product truth) and `.impeccable/surfaces/templates-index-html.md` (direction contract). `DESIGN.md` is deliberately not written until a look is chosen.
+- **Verified against a mock API only** (FastAPI deps couldn't install in the sandbox): both looks at 390px and 1280px, every tab, loading / downloading / error states, and `node --check static/app.js`. An independent design review passed 7 of 8 fixes; the open item is the font above. **Not yet checked against the real server.**

@@ -40,6 +40,10 @@ const state = {
   rateSkipped: new Set()   // item ids skipped this session
 };
 
+const TABS = ['discover', 'direct', 'rate', 'history'];
+const TAB_IDS = { discover: 'tabDiscover', direct: 'tabDirect', rate: 'tabRate', history: 'tabHistory' };
+const VIEW_IDS = { discover: 'discoverView', direct: 'directView', rate: 'rateView', history: 'historyView' };
+
 // Initialize app on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
   initPWA();
@@ -48,7 +52,105 @@ document.addEventListener('DOMContentLoaded', () => {
   checkActiveWatch();
   initStarSelector();
   initSpeechRecognition();
+  loadPartnerName();
+  updateFiltersSummary();
+  syncLookSwitch();
+
+  // Open the tab named in the URL (#rate etc.) so a refresh or a home-screen
+  // shortcut lands where you left off; otherwise Discover. Discover is
+  // initialised here too — it used to load its "From" chips only after
+  // switching away and back.
+  const fromHash = location.hash.replace('#', '');
+  switchTab(TABS.includes(fromHash) ? fromHash : 'discover', { initial: true });
 });
+
+window.addEventListener('hashchange', () => {
+  const tab = location.hash.replace('#', '');
+  if (TABS.includes(tab) && tab !== state.activeTab) switchTab(tab);
+});
+
+// Escape closes whichever sheet is open.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('feedbackModal').classList.contains('active')) closeFeedbackModal();
+  if (document.getElementById('playerModal').classList.contains('active')) closePlayerModal();
+});
+
+// ---------------------------------------------------------------------------
+// 0. Small UI helpers
+// ---------------------------------------------------------------------------
+// A value safe to drop into an inline onclick="fn(…)" attribute: JSON makes
+// it a valid JS literal (quotes, apostrophes, unicode), escapeHtml makes the
+// attribute survive. The old `.replace(/'/g, "\\'")` broke on titles with ".
+function jsArg(value) {
+  return escapeHtml(JSON.stringify(value == null ? '' : value));
+}
+
+function icon(name, cls = 'icon') {
+  return `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+}
+
+function setPressed(el, on) {
+  if (!el) return;
+  el.classList.toggle('active', !!on);
+  el.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+
+// Poster with a typographic fallback. via.placeholder.com (used before) is
+// gone, so missing posters rendered as broken-image alt text.
+function posterHtml(url, title, cls) {
+  if (!url) return posterFallbackHtml(title, cls);
+  return `<img class="${cls}" src="${escapeHtml(url)}" alt="" loading="lazy"
+    data-title="${escapeHtml(title || '')}" onerror="posterFailed(this)">`;
+}
+
+function posterFallbackHtml(title, cls) {
+  return `<div class="${cls} poster-fallback" aria-hidden="true">${escapeHtml(title || '')}</div>`;
+}
+
+function posterFailed(img) {
+  img.outerHTML = posterFallbackHtml(img.dataset.title, img.className);
+}
+
+let toastTimer = null;
+function showToast(message) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+// Two looks on trial. Remembered per device; the inline script in <head>
+// applies it before first paint, this keeps the switch in sync.
+function setLook(look) {
+  document.documentElement.dataset.look = look;
+  try { localStorage.setItem('look', look); } catch (_) { /* private mode */ }
+  syncLookSwitch();
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = look === 'clean' ? '#f5f5f7' : '#e8e6e1';
+}
+
+function syncLookSwitch() {
+  const look = document.documentElement.dataset.look || 'ticket';
+  document.querySelectorAll('[data-look-btn]').forEach(b => setPressed(b, b.dataset.lookBtn === look));
+}
+
+// Partner's real name on the "His picks" control once profiles are renamed.
+async function loadPartnerName() {
+  try {
+    const res = await fetch('/api/profiles');
+    const profiles = await res.json();
+    if (!Array.isArray(profiles) || profiles.length < 2) return;
+    state.rateProfiles = state.rateProfiles.length ? state.rateProfiles : profiles;
+    const partner = [...profiles].sort((a, b) => a.id - b.id)[1];
+    const btn = document.querySelector('[data-rec-profile="partner"]');
+    if (btn && partner && partner.name && partner.name !== 'Partner') {
+      btn.textContent = `${partner.name}'s picks`;
+    }
+  } catch (_) { /* label stays "His picks" */ }
+}
 
 // PWA Service Worker Registration
 function initPWA() {
@@ -70,31 +172,35 @@ async function checkStatus() {
 
     if (data.jellyfin_online) {
       dot.className = 'status-dot online';
-      text.innerText = 'TV Stream Ready';
+      text.innerText = 'TV ready';
     } else {
-      dot.className = 'status-dot';
-      text.innerText = 'TV Offline';
+      dot.className = 'status-dot offline';
+      text.innerText = 'TV offline';
     }
   } catch (err) {
     console.error('Status check error:', err);
+    document.getElementById('statusText').innerText = 'TV status unknown';
   }
 }
 
 // ---------------------------------------------------------------------------
 // 2. Navigation Tabs
 // ---------------------------------------------------------------------------
-function switchTab(tab) {
+function switchTab(tab, opts = {}) {
+  const changed = state.activeTab !== tab;
   state.activeTab = tab;
 
-  document.getElementById('tabDiscover').classList.toggle('active', tab === 'discover');
-  document.getElementById('tabDirect').classList.toggle('active', tab === 'direct');
-  document.getElementById('tabRate').classList.toggle('active', tab === 'rate');
-  document.getElementById('tabHistory').classList.toggle('active', tab === 'history');
+  TABS.forEach(t => {
+    const btn = document.getElementById(TAB_IDS[t]);
+    btn.classList.toggle('active', t === tab);
+    btn.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+    document.getElementById(VIEW_IDS[t]).style.display = t === tab ? 'block' : 'none';
+  });
 
-  document.getElementById('discoverView').style.display = tab === 'discover' ? 'block' : 'none';
-  document.getElementById('directView').style.display = tab === 'direct' ? 'block' : 'none';
-  document.getElementById('rateView').style.display = tab === 'rate' ? 'block' : 'none';
-  document.getElementById('historyView').style.display = tab === 'history' ? 'block' : 'none';
+  if (!opts.initial) {
+    if (location.hash !== `#${tab}`) history.replaceState(null, '', `#${tab}`);
+    if (changed) window.scrollTo({ top: 0 });
+  }
 
   if (tab === 'history') {
     loadHistory();
@@ -139,16 +245,21 @@ async function loadOrigins() {
     const res = await fetch('/api/origins');
     const data = await res.json();
     const origins = data.origins || [];
-    if (!origins.length) { container.innerHTML = ''; return; }
+    const group = document.getElementById('originGroup');
+    if (!origins.length) { container.innerHTML = ''; if (group) group.hidden = true; return; }
+    if (group) group.hidden = false;
     container.innerHTML = origins.map(o => `
-      <button class="chip" data-origin-code="${o.code}"
-              onclick="setOrigin('${String(o.code).replace(/'/g, "&#39;")}')"
-              title="${o.count} films from this region in your catalogue">
-        ${o.name}<span class="chip-count">${o.count}</span>
+      <button class="chip" data-origin-code="${escapeHtml(o.code)}" aria-pressed="false"
+              onclick="setOrigin(${jsArg(String(o.code))})"
+              title="${escapeHtml(o.count)} titles from here in your catalogue">
+        ${escapeHtml(o.name)}<span class="chip-count">${escapeHtml(o.count)}</span>
       </button>`).join('');
+    syncOriginChipFromQuery(document.getElementById('queryInput').value);
   } catch (err) {
     console.warn('Could not load origin chips:', err);
     container.innerHTML = '';
+    const group = document.getElementById('originGroup');
+    if (group) group.hidden = true;
   }
 }
 
@@ -161,9 +272,10 @@ function syncOriginChipFromQuery(query) {
     const code = btn.dataset.originCode;
     const phrase = ORIGIN_PHRASES[code];
     const on = phrase && text.includes(phrase);
-    btn.classList.toggle('active', !!on);
+    setPressed(btn, on);
     if (on && !matched) matched = code;
   });
+  updateFiltersSummary();
   return matched;
 }
 
@@ -180,38 +292,46 @@ function setOrigin(code) {
   } else {
     input.value = current ? `${phrase} ${current}` : `${phrase} movies`;
   }
-  document.querySelectorAll('[data-origin-code]').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('[data-origin-code]').forEach(b => setPressed(b, false));
   if (!already) {
     // Group names contain spaces; CSS.escape keeps the selector valid.
     const btn = document.querySelector(`[data-origin-code="${CSS.escape(code)}"]`);
-    if (btn) btn.classList.add('active');
+    setPressed(btn, true);
   }
+  updateFiltersSummary();
+}
+
+function hasResults() {
+  return !!document.querySelector('#resultsContainer .movie-card');
 }
 
 function setRecProfile(profile) {
   if (state.recProfile === profile) return;
   state.recProfile = profile;
   document.querySelectorAll('[data-rec-profile]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.recProfile === profile);
+    setPressed(btn, btn.dataset.recProfile === profile);
   });
-  fetchRecommendations();
+  // Re-rank what's already on screen; before the first search there is
+  // nothing to refresh, so don't fire a request the user didn't ask for.
+  if (hasResults()) fetchRecommendations();
+}
+
+function recommendLabel() {
+  return `Find a ${state.recMediaType === 'tv' ? 'show' : 'movie'} for tonight`;
 }
 
 function setRecMediaType(type) {
   state.recMediaType = type;
-  document.getElementById('recTypeMovieBtn').classList.toggle('active', type === 'movie');
-  document.getElementById('recTypeTvBtn').classList.toggle('active', type === 'tv');
+  setPressed(document.getElementById('recTypeMovieBtn'), type === 'movie');
+  setPressed(document.getElementById('recTypeTvBtn'), type === 'tv');
 
   // Hide duration filter for TV Shows
   const durationGroup = document.getElementById('durationFilterGroup');
-  if (durationGroup) {
-    durationGroup.style.display = type === 'movie' ? 'block' : 'none';
-  }
+  if (durationGroup) durationGroup.hidden = type !== 'movie';
 
-  const btn = document.getElementById('recommendBtn');
-  if (btn) {
-    btn.innerHTML = `<span>✨ Find ${type === 'tv' ? 'TV Show' : 'Movie'} for Tonight</span>`;
-  }
+  const label = document.getElementById('recommendLabel');
+  if (label) label.textContent = recommendLabel();
+  updateFiltersSummary();
 }
 
 async function loadMoods() {
@@ -222,18 +342,25 @@ async function loadMoods() {
     grid.innerHTML = '';
 
     state.moodsData.forEach(mood => {
-      const card = document.createElement('div');
-      card.className = `mood-card ${mood.id === state.activeMoodId ? 'active' : ''}`;
+      // Real buttons, so moods are reachable by keyboard and announced.
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'mood-card';
       card.id = `mood-${mood.id}`;
+      setPressed(card, mood.id === state.activeMoodId);
       card.onclick = () => selectMood(mood.id);
+      if (mood.vibe) card.title = mood.vibe;
 
-      const emojiMatch = mood.name.match(/^(\p{Extended_Pictographic}|\p{Emoji_Presentation})/u);
-      const emoji = emojiMatch ? emojiMatch[0] : '🎬';
-      const cleanName = mood.name.replace(emoji, '').trim();
+      // Mood names arrive as "😊 Happy / Feel-Good". The emoji is dropped:
+      // the lettering and the mood's own vibe line carry the tile.
+      const cleanName = mood.name.replace(/^[\p{Extended_Pictographic}\p{Emoji_Presentation}️‍\s]+/u, '').trim();
+      // Non-breaking hyphens so "Feel-Good" never splits across lines, and a
+      // no-break space before the slash so a line never starts with "/".
+      const display = escapeHtml(cleanName).replace(/-/g, '‑').replace(/ \/ /g, ' / ');
 
       card.innerHTML = `
-        <div class="mood-icon">${emoji}</div>
-        <div class="mood-name">${cleanName}</div>
+        <span class="mood-name">${display}</span>
+        ${mood.vibe ? `<span class="mood-vibe">${escapeHtml(mood.vibe)}</span>` : ''}
       `;
       grid.appendChild(card);
     });
@@ -241,16 +368,15 @@ async function loadMoods() {
     renderSubMoods(state.activeMoodId);
   } catch (err) {
     console.error('Error loading moods:', err);
+    document.getElementById('moodGrid').innerHTML =
+      '<p class="rate-sub">Moods couldn\'t load — you can still describe what you want above.</p>';
   }
 }
 
 function selectMood(moodId) {
   state.activeMoodId = moodId;
   state.activeSubMood = null;
-  document.querySelectorAll('.mood-card').forEach(c => c.classList.remove('active'));
-  const activeCard = document.getElementById(`mood-${moodId}`);
-  if (activeCard) activeCard.classList.add('active');
-
+  document.querySelectorAll('.mood-card').forEach(c => setPressed(c, c.id === `mood-${moodId}`));
   renderSubMoods(moodId);
 }
 
@@ -268,26 +394,24 @@ function renderSubMoods(moodId) {
   section.style.display = 'block';
   chips.innerHTML = '';
 
-  // All / Default chip
-  const allChip = document.createElement('button');
-  allChip.className = `chip ${!state.activeSubMood ? 'active' : ''}`;
-  allChip.innerText = 'All Vibes';
-  allChip.onclick = () => {
-    state.activeSubMood = null;
-    chips.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-    allChip.classList.add('active');
+  const pick = (name, chip) => {
+    state.activeSubMood = name;
+    chips.querySelectorAll('.chip').forEach(c => setPressed(c, c === chip));
   };
+
+  const allChip = document.createElement('button');
+  allChip.className = 'chip';
+  allChip.innerText = 'Any';
+  setPressed(allChip, !state.activeSubMood);
+  allChip.onclick = () => pick(null, allChip);
   chips.appendChild(allChip);
 
   moodInfo.submoods.forEach(sm => {
     const chip = document.createElement('button');
-    chip.className = `chip ${state.activeSubMood === sm.name ? 'active' : ''}`;
+    chip.className = 'chip';
     chip.innerText = sm.name;
-    chip.onclick = () => {
-      state.activeSubMood = sm.name;
-      chips.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-    };
+    setPressed(chip, state.activeSubMood === sm.name);
+    chip.onclick = () => pick(sm.name, chip);
     chips.appendChild(chip);
   });
 }
@@ -297,67 +421,135 @@ function renderSubMoods(moodId) {
 // ---------------------------------------------------------------------------
 function toggleGenreFilter(btn) {
   const genre = btn.getAttribute('data-genre');
-  if (state.selectedGenres.has(genre)) {
-    state.selectedGenres.delete(genre);
-    btn.classList.remove('active');
-  } else {
-    state.selectedGenres.add(genre);
-    btn.classList.add('active');
-  }
+  const on = !state.selectedGenres.has(genre);
+  if (on) state.selectedGenres.add(genre); else state.selectedGenres.delete(genre);
+  setPressed(btn, on);
+  updateFiltersSummary();
 }
 
 function clearSelectedGenres() {
   state.selectedGenres.clear();
-  document.querySelectorAll('#genreChips .chip').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('#genreChips .chip').forEach(c => setPressed(c, false));
+  updateFiltersSummary();
 }
 
 function setFilter(btn) {
   const filterType = btn.getAttribute('data-filter');
   const val = btn.getAttribute('data-val');
 
-  btn.parentElement.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-  btn.classList.add('active');
+  btn.parentElement.querySelectorAll('.chip').forEach(c => setPressed(c, c === btn));
 
   if (filterType === 'era') state.era = val;
   if (filterType === 'duration') state.duration = val;
+  updateFiltersSummary();
 }
 
 function setMinRatingFilter(btn) {
   const val = btn.getAttribute('data-val');
-  btn.parentElement.querySelectorAll('.chip').forEach(c => {
-    if (c.getAttribute('data-filter') === 'minRating') c.classList.remove('active');
-  });
-  btn.classList.add('active');
+  btn.parentElement.querySelectorAll('[data-filter="minRating"]').forEach(c => setPressed(c, c === btn));
   state.minRating = val === 'default' ? null : parseFloat(val);
+  updateFiltersSummary();
 }
 
 function toggleIncludeWatched() {
-  state.includeWatched = !state.includeWatched;
-  const btn = document.getElementById('includeWatchedBtn');
-  if (btn) btn.classList.toggle('active', state.includeWatched);
+  const box = document.getElementById('includeWatchedBtn');
+  state.includeWatched = box ? box.checked : !state.includeWatched;
+  updateFiltersSummary();
+}
+
+// One line on the collapsed "More filters" row saying what is switched on,
+// so a filter set last week can't silently shrink tonight's results.
+function updateFiltersSummary() {
+  const el = document.getElementById('filtersSummary');
+  if (!el) return;
+  const parts = [];
+  const origin = document.querySelector('.chip[data-origin-code].active');
+  if (origin) parts.push(origin.firstChild.textContent.trim());
+  if (state.selectedGenres.size) parts.push(Array.from(state.selectedGenres).join(', '));
+  const label = (sel) => { const b = document.querySelector(sel); return b ? b.textContent.trim() : ''; };
+  if (state.era) parts.push(label(`[data-filter="era"][data-val="${state.era}"]`));
+  if (state.duration && state.recMediaType === 'movie') parts.push(label(`[data-filter="duration"][data-val="${state.duration}"]`));
+  if (state.minRating !== null) parts.push(state.minRating === 0 ? 'any rating' : `rated ${state.minRating}+`);
+  if (state.includeWatched) parts.push('incl. seen');
+  el.textContent = parts.join(' · ');
+}
+
+function resetAllFilters() {
+  clearSelectedGenres();
+  document.querySelectorAll('[data-filter="era"], [data-filter="duration"], [data-filter="minRating"]').forEach(c => {
+    const isDefault = c.dataset.val === '' || c.dataset.val === 'default';
+    setPressed(c, isDefault);
+  });
+  state.era = '';
+  state.duration = '';
+  state.minRating = null;
+  const box = document.getElementById('includeWatchedBtn');
+  if (box) box.checked = false;
+  state.includeWatched = false;
+  const active = document.querySelector('.chip[data-origin-code].active');
+  if (active) setOrigin(active.dataset.originCode);
+  updateFiltersSummary();
+}
+
+function renderSkeletons(n = 3) {
+  return Array.from({ length: n }, () => `
+    <div class="skeleton-card" aria-hidden="true">
+      <div class="sk sk-poster"></div>
+      <div class="sk-lines">
+        <div class="sk sk-line" style="width: 70%; height: 16px;"></div>
+        <div class="sk sk-line" style="width: 40%;"></div>
+        <div class="sk sk-line" style="width: 90%; margin-top: 8px;"></div>
+        <div class="sk sk-line" style="width: 80%;"></div>
+      </div>
+    </div>`).join('');
+}
+
+function scrollToResults() {
+  const header = document.getElementById('resultsHeader');
+  const target = header && !header.hidden && header.innerHTML ? header : document.getElementById('resultsContainer');
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+}
+
+function setRecommendBusy(busy) {
+  const btn = document.getElementById('recommendBtn');
+  btn.disabled = busy;
+  btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+  btn.innerHTML = busy
+    ? `<span class="spinner" aria-hidden="true"></span><span id="recommendLabel">Finding picks…</span>`
+    : `${icon('sparkle')}<span id="recommendLabel">${recommendLabel()}</span>`;
 }
 
 async function fetchRecommendations() {
   const container = document.getElementById('resultsContainer');
-  const btn = document.getElementById('recommendBtn');
-  const query = document.getElementById('queryInput').value.trim();
+  const header = document.getElementById('resultsHeader');
 
-  btn.innerHTML = '<span>Analyzing Catalogue & Reviews... ⏳</span>';
-  btn.disabled = true;
+  setRecommendBusy(true);
+  header.innerHTML = '';
+  container.innerHTML = renderSkeletons();
+  document.getElementById('loadMoreBtn').style.display = 'none';
+  scrollToResults();
 
   try {
     state.recPage = 1;
     const data = await requestRecommendations(1);
     state.recHasMore = !!data.has_more;
-    renderRecommendations(data.items || [], data.engine);
+    renderRecommendations(data.items || [], data.engine, data.total_results);
     updateLoadMoreButton();
   } catch (err) {
     console.error('Error fetching recommendations:', err);
-    container.innerHTML = '<p style="text-align:center; color:var(--danger)">Failed to load recommendations.</p>';
+    header.innerHTML = '';
+    container.innerHTML = `
+      <div class="empty-state error" role="alert">
+        ${icon('x', 'empty-icon')}
+        <p class="empty-title">Couldn't get recommendations</p>
+        <p class="empty-sub">The server didn't answer. Check that CouchCinema is still running, then try again.</p>
+        <button class="btn-secondary" onclick="fetchRecommendations()">${icon('refresh')}Try again</button>
+      </div>`;
+    state.recHasMore = false;
     updateLoadMoreButton();
   } finally {
-    btn.innerHTML = `<span>✨ Find ${state.recMediaType === 'tv' ? 'TV Show' : 'Movie'} for Tonight</span>`;
-    btn.disabled = false;
+    setRecommendBusy(false);
   }
 }
 
@@ -423,104 +615,109 @@ function updateLoadMoreButton() {
 function appendRecommendations(movies, engine) {
   const container = document.getElementById('resultsContainer');
   if (!movies || movies.length === 0) { updateLoadMoreButton(); return; }
-  movies.forEach((m) => container.appendChild(buildMovieCard(m, engine)));
+  const offset = container.querySelectorAll('.movie-card').length;
+  movies.forEach((m, i) => container.appendChild(buildMovieCard(m, engine, i, offset + i + 1)));
   updateLoadMoreButton();
 }
 
-function renderRecommendations(movies, engine) {
+function renderRecommendations(movies, engine, total) {
   const container = document.getElementById('resultsContainer');
+  const header = document.getElementById('resultsHeader');
   container.innerHTML = '';
+  const noun = state.recMediaType === 'tv' ? 'shows' : 'movies';
 
   if (!movies || movies.length === 0) {
+    header.innerHTML = '';
     container.innerHTML = `
       <div class="empty-state">
-        <p style="font-size: 28px; margin-bottom: 8px;">🎞️</p>
-        <p>No matching ${state.recMediaType === 'tv' ? 'TV shows' : 'movies'} found with those criteria.</p>
-        <p style="font-size: 13px; margin-top: 6px; color: var(--text-muted);">Try relaxing the era, quality threshold, or choosing "Surprise Me".</p>
-      </div>
-    `;
+        ${icon('film', 'empty-icon')}
+        <p class="empty-title">No ${noun} match all of that</p>
+        <p class="empty-sub">Try loosening a filter under “More filters”, or pick “Surprise Me”.</p>
+      </div>`;
     return;
   }
 
-  movies.forEach((m) => container.appendChild(buildMovieCard(m, engine)));
+  // Which engine ranked the list is said once here, not on every card.
+  const engineNote = engine === 'generative'
+    ? '<span class="engine-note generative" title="Ranked by the model trained on your ratings">Learning your taste</span>'
+    : '<span class="engine-note" title="Ranked by rating and your favourite genres — rate a few more to unlock the learning model">Picked by rating &amp; genre</span>';
+  header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}`;
+
+  movies.forEach((m, i) => container.appendChild(buildMovieCard(m, engine, i, i + 1)));
+}
+
+function watchButtonHtml(m) {
+  const type = m.media_type || state.recMediaType;
+  return `<button id="watch-btn-${m.id}" class="btn-watch"
+            onclick="startDownload(${m.id}, ${jsArg(m.title)}, ${jsArg(type)})">
+            ${icon('download')}<span>Get it for tonight</span>
+          </button>`;
 }
 
 // Extracted so "Show more" and the initial render build identical cards.
-function buildMovieCard(m, engine) {
-    const card = document.createElement('div');
+function buildMovieCard(m, engine, index = 0, rank = 1) {
+    const card = document.createElement('article');
     card.className = 'movie-card';
+    card.style.animationDelay = `${Math.min(index, 6) * 40}ms`;
 
-    const posterSrc = m.poster_url || 'https://via.placeholder.com/150x225/161722/ffffff?text=No+Poster';
-    const tasteBonus = m.taste_bonus > 0 ? `<span class="badge badge-bonus">+${m.taste_bonus} Taste Boost</span>` : '';
-    // Co-view badge: why this film is ranked where it is.
+    // Reasons this film is here, in order of how much they mean to you two.
+    const reasons = [];
     const tier = m.co_view_tier;
-    const tierBadge = tier === 'A'
-      ? `<span class="badge badge-coview-a" title="You both liked this">💞 You both liked it</span>`
-      : tier === 'B'
-        ? `<span class="badge badge-coview-b" title="${escapeHtml(m.tier_reason || 'One of you loved it; the other hasn\'t seen it')}">🧑 ${escapeHtml(m.tier_reason || "He'd recommend this")}</span>`
-        : '';
-    const combinedBadge = (m.combined_score && tier === 'A')
-      ? `<span class="badge badge-coview-score" title="Your combined score for this film">Together ★ ${m.combined_score}</span>` : '';
-    const queryBoost = m.query_boost > 0 ? `<span class="badge badge-query">+${m.query_boost} Match</span>` : '';
-    // Why this film matched an idea-led request. Without it the concept layer
-    // is invisible: the user asked for "a great concept" and got a list with
-    // no explanation of which of them actually had one.
-    const themeBadge = (m.matched_themes && m.matched_themes.length)
-      ? `<span class="badge badge-theme" title="Themes matched from the film's premise">🧠 ${escapeHtml(m.matched_themes.join(' · '))}</span>` : '';
-    // Series order: shown when a sequel was swapped for the film to watch first,
-    // or when this is a later entry and the earlier ones are already seen.
-    const seriesBadge = m.series_note
-      ? `<span class="badge badge-series" title="${escapeHtml(m.series_note)}">📚 ${escapeHtml(m.replaced_sequel_title ? `Start of ${m.series_name || 'the series'}` : `#${m.series_position} of ${m.series_size}`)}</span>` : '';
-    const runtimeStr = m.runtime ? `<span class="badge badge-runtime">⏱ ${m.runtime}m</span>` : '';
-    const engineBadge = engine === 'generative'
-      ? '<span class="engine-badge badge-generative">🧠 Learning Your Taste</span>'
-      : '<span class="engine-badge badge-legacy">🎲 Picks for You</span>';
-    const reviewsBuzz = m.tier2_reviews_summary ? `<div class="movie-buzz">💬 ${m.tier2_reviews_summary}</div>` : '';
+    if (tier === 'A') reasons.push(`<span class="badge badge-coview-a" title="You both rated this highly">${icon('heart', 'icon badge-icon')}You both liked it</span>`);
+    if (tier === 'B') reasons.push(`<span class="badge badge-coview-b" title="${escapeHtml(m.tier_reason || "One of you loved it; the other hasn't seen it")}">${escapeHtml(m.tier_reason || "He'd recommend this")}</span>`);
+    if (m.combined_score && tier === 'A') reasons.push(`<span class="badge badge-coview-score" title="Your combined score">Together ${icon('star', 'icon badge-icon filled')}${escapeHtml(m.combined_score)}</span>`);
+    // Series order: a sequel swapped for the film to watch first, or a later
+    // entry whose earlier ones are already seen.
+    if (m.series_note) reasons.push(`<span class="badge badge-series" title="${escapeHtml(m.series_note)}">${escapeHtml(m.replaced_sequel_title ? `Start of ${m.series_name || 'the series'}` : `#${m.series_position} of ${m.series_size}`)}</span>`);
+    // Why this film matched an idea-led request — without it the concept
+    // layer is invisible.
+    if (m.matched_themes && m.matched_themes.length) reasons.push(`<span class="badge badge-theme" title="Themes matched from the premise">${escapeHtml(m.matched_themes.join(' · '))}</span>`);
+    if (m.taste_bonus > 0) reasons.push(`<span class="badge badge-bonus" title="+${escapeHtml(m.taste_bonus)} taste boost">Fits your taste</span>`);
+    if (m.query_boost > 0) reasons.push(`<span class="badge badge-query" title="+${escapeHtml(m.query_boost)} match boost">Matches your description</span>`);
+
+    const meta = [];
+    if (m.release_year) meta.push(escapeHtml(m.release_year));
+    if (m.runtime) meta.push(formatRuntime(m.runtime));
+    if (m.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(m.rating).toFixed(1))}</span>`);
 
     const hasLocalFile = m.file_path && m.file_path.length > 0;
     const actionButtonHtml = hasLocalFile
-      ? `<button class="btn-watch" style="width: 100%; background: #10b981;" onclick="playLocalItem(${m.id}, '${m.title.replace(/'/g, "\\'")}')">
-           <span>▶️ Play Now</span>
-         </button>`
-      : `<button id="watch-btn-${m.id}" class="btn-watch" style="width: 100%;" onclick="startDownload(${m.id}, '${m.title.replace(/'/g, "\\'")}', '${m.media_type || state.recMediaType}')">
-           <span>🍿 Watch Tonight</span>
-         </button>`;
+      ? `<button class="btn-watch play" onclick="playLocalItem(${m.id}, ${jsArg(m.title)})">${icon('play')}<span>Play now</span></button>`
+      : watchButtonHtml(m);
+
+    const overview = m.overview
+      ? `<p class="movie-synopsis" onclick="this.classList.toggle('expanded')" title="Tap to expand">${escapeHtml(m.overview)}</p>`
+      : `<p class="movie-synopsis empty">No synopsis available.</p>`;
 
     card.innerHTML = `
       <div class="movie-card-main">
-        <img class="movie-poster" src="${posterSrc}" alt="${m.title}" loading="lazy">
+        ${posterHtml(m.poster_url, m.title, 'movie-poster')}
         <div class="movie-details">
-          <div class="movie-title-row">
-            <h3 class="movie-title">${m.title}</h3>
-            <span class="movie-year">${m.release_year || ''}</span>
-          </div>
-          <div class="movie-badges">
-            <span class="badge badge-tmdb">★ ${m.rating || 'N/A'}</span>
-            ${engineBadge}
-            ${tasteBonus}
-            ${tierBadge}
-            ${themeBadge}
-            ${seriesBadge}
-            ${combinedBadge}
-            ${queryBoost}
-            ${runtimeStr}
-          </div>
-          <div class="movie-genres">${m.genres || (m.media_type === 'tv' ? 'TV Series' : 'Movie')}</div>
-          ${m.tier2_keywords ? `<div class="movie-vibes">🏷 ${m.tier2_keywords}</div>` : ''}
-          ${reviewsBuzz}
+          <h3 class="movie-title">${escapeHtml(m.title)}</h3>
+          <div class="movie-meta">${meta.join(' · ')}</div>
+          <div class="movie-genres">${escapeHtml(m.genres || (m.media_type === 'tv' ? 'TV series' : 'Movie'))}</div>
+          <div class="movie-badges">${reasons.join('')}</div>
+          ${m.tier2_keywords ? `<div class="movie-vibes">${escapeHtml(m.tier2_keywords)}</div>` : ''}
+          ${m.tier2_reviews_summary ? `<div class="movie-buzz">${escapeHtml(m.tier2_reviews_summary)}</div>` : ''}
         </div>
       </div>
-      <div class="movie-synopsis">${m.overview || 'No synopsis provided.'}</div>
+      ${overview}
       <div class="movie-footer">
-        <div id="watch-container-${m.id}" style="flex: 1; margin-right: 8px;">
-          ${actionButtonHtml}
-        </div>
-        <a class="btn-tv-link" href="${state.jellyfinUrl}" target="_blank">
-          <span>📺 Jellyfin</span>
+        <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
+        <div id="watch-container-${m.id}" class="watch-slot">${actionButtonHtml}</div>
+        <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
+          <span class="label">Jellyfin</span> ${icon('external')}
         </a>
       </div>
     `;
     return card;
+}
+
+function formatRuntime(min) {
+  const m = Number(min);
+  if (!m) return '';
+  const h = Math.floor(m / 60);
+  return h ? `${h}h ${String(m % 60).padStart(2, '0')}m` : `${m}m`;
 }
 
 // ---------------------------------------------------------------------------
@@ -528,21 +725,21 @@ function buildMovieCard(m, engine) {
 // ---------------------------------------------------------------------------
 function setDirectMediaType(type) {
   state.directMediaType = type;
-  document.getElementById('directTypeMovieBtn').classList.toggle('active', type === 'movie');
-  document.getElementById('directTypeTvBtn').classList.toggle('active', type === 'tv');
+  setPressed(document.getElementById('directTypeMovieBtn'), type === 'movie');
+  setPressed(document.getElementById('directTypeTvBtn'), type === 'tv');
 
   const input = document.getElementById('directQueryInput');
   if (input) {
     input.placeholder = type === 'tv'
-      ? 'Search TV series or episode (e.g. Stranger Things S01E01, Breaking Bad, The Bear)...'
-      : 'Search any movie title (e.g. Inception, Dune 2024, Interstellar)...';
+      ? 'Show or episode, e.g. The Bear S02'
+      : 'Movie title, e.g. Dune 2021';
   }
 }
 
 function setDirectSort(sortBySize) {
   state.directSortBySize = sortBySize;
-  document.getElementById('sortSmallestBtn').classList.toggle('active', sortBySize);
-  document.getElementById('sortQualityBtn').classList.toggle('active', !sortBySize);
+  setPressed(document.getElementById('sortSmallestBtn'), sortBySize);
+  setPressed(document.getElementById('sortQualityBtn'), !sortBySize);
 
   if (state.lastDirectResults && state.lastDirectResults.length > 0) {
     const sorted = [...state.lastDirectResults];
@@ -572,13 +769,13 @@ async function executeDirectSearch() {
     return;
   }
 
-  btn.innerHTML = '<span>Searching... ⏳</span>';
+  btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Searching';
   btn.disabled = true;
   container.innerHTML = `
-    <div class="empty-state">
-      <p style="font-size: 28px; margin-bottom: 8px;">🛰️</p>
-      <p>Searching ${state.directMediaType === 'tv' ? 'TV torrent trackers (Apibay)' : 'YTS & Apibay'} for "${query}"...</p>
-      <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Checking seeds and quality indicators...</p>
+    <div class="empty-state" aria-live="polite">
+      <span class="spinner" aria-hidden="true" style="display:inline-block; margin-bottom: 10px;"></span>
+      <p class="empty-title">Searching for “${escapeHtml(query)}”…</p>
+      <p class="empty-sub">Checking who's sharing it and in what quality.</p>
     </div>
   `;
 
@@ -600,14 +797,15 @@ async function executeDirectSearch() {
   } catch (err) {
     console.error('Direct search error:', err);
     container.innerHTML = `
-      <div class="empty-state" style="color: var(--danger)">
-        <p style="font-size: 28px; margin-bottom: 8px;">❌</p>
-        <p>Search failed: ${err.message}</p>
-        <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Check backend network access and retry.</p>
+      <div class="empty-state error" role="alert">
+        ${icon('x', 'empty-icon')}
+        <p class="empty-title">Search didn't go through</p>
+        <p class="empty-sub">The server couldn't reach the search sites. Check the internet connection on the CouchCinema box, then try again.</p>
+        <button class="btn-secondary" onclick="executeDirectSearch()">${icon('refresh')}Try again</button>
       </div>
     `;
   } finally {
-    btn.innerHTML = '<span>Search 🚀</span>';
+    btn.textContent = 'Search';
     btn.disabled = false;
   }
 }
@@ -619,17 +817,17 @@ function renderDirectResults(results, query) {
   if (!results || results.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
-        <p style="font-size: 28px; margin-bottom: 8px;">📭</p>
-        <p>No active torrents found for "${query}".</p>
-        <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Torrents with 0 seeds are automatically filtered out.</p>
+        ${icon('search', 'empty-icon')}
+        <p class="empty-title">Nothing available for “${escapeHtml(query)}”</p>
+        <p class="empty-sub">Only files someone is actively sharing are shown. Try a shorter title, or add the year.</p>
       </div>
     `;
     return;
   }
 
-  const header = document.createElement('div');
+  const header = document.createElement('p');
   header.className = 'results-count-banner';
-  header.innerHTML = `Found <strong>${results.length}</strong> verified torrents for "<em>${query}</em>"`;
+  header.innerHTML = `${results.length} result${results.length === 1 ? '' : 's'} for “${escapeHtml(query)}”`;
   container.appendChild(header);
 
   results.forEach((item, idx) => {
@@ -646,26 +844,23 @@ function renderDirectResults(results, query) {
       badgeClass = 'badge-res-720';
     }
 
-    const safeTitle = (item.name || query).replace(/'/g, "\\'").replace(/"/g, '&quot;');
     const containerId = `direct-dl-slot-${idx}`;
     const mediaType = item.media_type || state.directMediaType;
 
     card.innerHTML = `
       <div class="torrent-card-main">
         <div class="torrent-header">
-          <div class="torrent-name" title="${item.name}">${item.name}</div>
+          <div class="torrent-name">${escapeHtml(item.name)}</div>
         </div>
         <div class="torrent-meta-row">
-          <span class="badge ${badgeClass}">${item.quality || 'HD'}</span>
-          <span class="badge badge-media-type">${mediaType === 'tv' ? '📺 TV' : '🎬 Movie'}</span>
-          <span class="badge badge-size">💾 ${item.size_display || formatSize(item.size_bytes)}</span>
-          <span class="badge badge-seeds">🟢 ${item.seeds} seeds</span>
-          <span class="badge badge-peers">🔵 ${item.peers || 0} leech</span>
+          <span class="badge ${badgeClass}">${escapeHtml(item.quality || 'HD')}</span>
+          <span class="badge badge-size">${escapeHtml(item.size_display || formatSize(item.size_bytes))}</span>
+          <span class="badge badge-seeds" title="People sharing the full file — more means faster">${escapeHtml(item.seeds)} sharing</span>
+          ${item.peers ? `<span class="badge badge-peers" title="People still downloading it">${escapeHtml(item.peers)} downloading</span>` : ''}
+          <span class="badge badge-media-type">${mediaType === 'tv' ? 'TV' : 'Movie'}</span>
         </div>
         <div class="torrent-action-row" id="${containerId}">
-          <button class="btn-download-direct" onclick="startDirectDownload('${encodeURIComponent(item.magnet)}', '${safeTitle}', '${containerId}', '${mediaType}')">
-            <span>⬇️ Direct Download</span>
-          </button>
+          ${directDownloadButton(encodeURIComponent(item.magnet), item.name || query, containerId, mediaType)}
         </div>
       </div>
     `;
@@ -683,8 +878,8 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
 
   const magnet = decodeURIComponent(encodedMagnet);
   container.innerHTML = `
-    <button class="btn-download-direct" style="opacity: 0.7;" disabled>
-      <span>⏳ Queuing Download...</span>
+    <button class="btn-download-direct" disabled>
+      <span class="spinner" aria-hidden="true"></span><span>Starting download…</span>
     </button>
   `;
 
@@ -721,18 +916,19 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
   } catch (err) {
     console.error('Direct download start error:', err);
     container.innerHTML = `
-      <button class="btn-download-direct" style="background: var(--danger);">
-        <span>❌ ${err.message}</span>
-      </button>
+      <div class="progress-box error-box" role="alert">
+        <span>Couldn't start: ${escapeHtml(err.message)}</span>
+        <button class="btn-retry-mini" onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(movieTitle)}, ${jsArg(containerId)}, ${jsArg(mediaType)})">${icon('refresh')}Retry</button>
+      </div>
     `;
-    setTimeout(() => {
-      container.innerHTML = `
-        <button class="btn-download-direct" onclick="startDirectDownload('${encodedMagnet}', '${movieTitle.replace(/'/g, "\\'")}', '${containerId}', '${mediaType}')">
-          <span>⬇️ Direct Download</span>
-        </button>
-      `;
-    }, 3500);
   }
+}
+
+function directDownloadButton(encodedMagnet, title, containerId, mediaType, label = 'Download') {
+  return `<button class="btn-download-direct"
+            onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(title)}, ${jsArg(containerId)}, ${jsArg(mediaType)})">
+            ${icon('download')}<span>${label}</span>
+          </button>`;
 }
 
 // Cancel Download
@@ -755,14 +951,15 @@ async function cancelDownload(movieId, containerId) {
 
     const container = document.getElementById(containerId);
     if (container && downloadInfo) {
-      container.innerHTML = `
-        <button class="btn-download-direct" onclick="startDirectDownload('${downloadInfo.encodedMagnet || ''}', '${downloadInfo.title.replace(/'/g, "\\'")}', '${containerId}', '${downloadInfo.mediaType || 'movie'}')">
-          <span>⬇️ Re-Download</span>
-        </button>
-      `;
+      // Recommender cards re-run their own search; direct results reuse the magnet.
+      container.innerHTML = downloadInfo.encodedMagnet
+        ? directDownloadButton(downloadInfo.encodedMagnet, downloadInfo.title, containerId, downloadInfo.mediaType || 'movie', 'Download again')
+        : watchButtonHtml({ id: movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
     }
+    showToast('Download cancelled');
   } catch (err) {
     console.error('Cancel download error:', err);
+    showToast("Couldn't cancel — try again");
   }
 }
 
@@ -791,10 +988,11 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
         renderActiveDownloadsMonitor();
 
         if (container) {
+          const cancelled = data.status === 'cancelled';
           container.innerHTML = `
-            <div class="progress-box ${data.status === 'cancelled' ? 'cancelled-box' : 'error-box'}">
-              <span>${data.status === 'cancelled' ? '🛑 Download Cancelled' : `❌ Error: ${data.error}`}</span>
-              <button class="btn-retry-mini" onclick="pollDownloadProgress(${movieId}, '${containerId}', '${movieTitle.replace(/'/g, "\\'")}', '${mediaType}')">Refresh</button>
+            <div class="progress-box ${cancelled ? 'cancelled-box' : 'error-box'}" ${cancelled ? '' : 'role="alert"'}>
+              <span>${cancelled ? 'Download cancelled' : `Download failed: ${escapeHtml(data.error)}`}</span>
+              <button class="btn-retry-mini" onclick="pollDownloadProgress(${movieId}, ${jsArg(containerId)}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Check again</button>
             </div>
           `;
         }
@@ -828,42 +1026,46 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
 
         if (container) {
           container.innerHTML = `
-            <button class="btn-ready-watch" onclick="playLocalItem(${movieId}, '${(data.name || movieTitle).replace(/'/g, "\\'")}')">
-              <span>🎬 Ready to Watch</span>
+            <button class="btn-ready-watch" onclick="playLocalItem(${movieId}, ${jsArg(data.name || movieTitle)})">
+              ${icon('play')}<span>Ready — play it</span>
             </button>
           `;
         }
+        showToast(`${data.name || movieTitle} is ready to watch`);
         return;
       }
 
-      // In-place Progress Bar with Cancel Action
+      // In-place progress bar with cancel
       if (container) {
-        let statusLabel = `⬇️ ${pct.toFixed(1)}% | ${speedStr}`;
-        if (totalStr !== '0 B') {
-          statusLabel += ` (${downloadedStr} / ${totalStr})`;
-        }
-        // ETA needs an actual transfer rate and something left to fetch; with
-        // 0 peers libtorrent reports 0 B/s and any ETA would be fiction.
+        // Percent and time left come first so they survive truncation on a
+        // phone; speed shows only when there's no honest ETA (with 0 peers
+        // libtorrent reports 0 B/s and any ETA would be fiction).
         const etaStr = formatEta(data.eta_seconds);
-        if (etaStr && (data.download_speed || 0) > 0 && pct < 100) {
-          statusLabel += ` · ${etaStr}`;
-        }
-        if (data.resumed) {
-          statusLabel += ' · ↻ resumed';
-        }
+        const hasEta = etaStr && (data.download_speed || 0) > 0 && pct < 100;
+        let statusLabel = stateStr === 'connecting'
+          ? 'Connecting…'
+          : `${pct.toFixed(0)}% · ${hasEta ? etaStr : speedStr}`;
+        if (data.resumed) statusLabel += ' · resumed';
         if (stateStr === 'organizing') {
-          statusLabel = `📂 Organizing ${mediaType === 'tv' ? 'TV episode' : 'movie'} for Jellyfin...`;
+          statusLabel = `Adding the ${mediaType === 'tv' ? 'episodes' : 'film'} to Jellyfin…`;
         }
 
-        container.innerHTML = `
-          <div class="download-progress-bar-wrapper">
-            <div class="download-progress-bar-fill" style="width: ${pct}%;"></div>
-            <div class="download-progress-bar-text">
-              ${statusLabel}
+        // Update the existing bar in place so the fill animates smoothly
+        // instead of being rebuilt every second.
+        const bar = container.querySelector('.download-progress-bar-wrapper');
+        if (bar) {
+          bar.querySelector('.download-progress-bar-fill').style.transform = `scaleX(${pct / 100})`;
+          bar.querySelector('.download-progress-bar-text').textContent = statusLabel;
+          bar.setAttribute('aria-valuenow', pct.toFixed(0));
+        } else {
+          container.innerHTML = `
+            <div class="download-progress-bar-wrapper" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="Download progress">
+              <div class="download-progress-bar-fill" style="transform: scaleX(${pct / 100});"></div>
+              <div class="download-progress-bar-text">${escapeHtml(statusLabel)}</div>
+              <button class="btn-cancel-mini-bar" onclick="cancelDownload(${movieId}, ${jsArg(containerId)})" title="Cancel download" aria-label="Cancel download">${icon('x')}</button>
             </div>
-            <button class="btn-cancel-mini-bar" onclick="cancelDownload(${movieId}, '${containerId}')" title="Cancel download">✕</button>
-          </div>
-        `;
+          `;
+        }
       }
 
     } catch (e) {
@@ -894,19 +1096,19 @@ function renderActiveDownloadsMonitor() {
     row.className = 'active-download-row';
     const isReady = item.progress >= 100 || item.status === 'completed';
 
+    const statusWord = { connecting: 'connecting', downloading: 'downloading', organizing: 'adding to Jellyfin' }[item.status] || item.status;
     row.innerHTML = `
-      <div style="flex: 1; min-width: 0;">
-        <div class="active-download-title">${item.title}</div>
+      <div class="active-download-main">
+        <div class="active-download-title">${escapeHtml(item.title)}</div>
         <div class="active-download-sub">
-          ${isReady ? '🎬 Ready to Watch' : `${item.progress.toFixed(1)}% · ${item.speedStr || '0 KB/s'} · ${item.status}`}
+          ${isReady ? 'Ready to watch' : `${item.progress.toFixed(0)}% · ${escapeHtml(item.speedStr || '0 B/s')} · ${escapeHtml(statusWord)}`}
         </div>
+        ${isReady ? '' : `<div class="mini-progress"><span style="transform: scaleX(${item.progress / 100})"></span></div>`}
       </div>
-      <div style="display: flex; gap: 6px; align-items: center;">
-        ${isReady
-          ? `<button class="btn-ready-mini" onclick="playLocalItem(${item.movieId}, '${item.title.replace(/'/g, "\\'")}')">Play 🎬</button>`
-          : `<button class="btn-cancel-mini" onclick="cancelDownload(${item.movieId}, '${item.containerId}')">Cancel ✕</button>`
-        }
-      </div>
+      ${isReady
+        ? `<button class="btn-ready-mini" onclick="playLocalItem(${item.movieId}, ${jsArg(item.title)})">${icon('play')}Play</button>`
+        : `<button class="btn-cancel-mini" onclick="cancelDownload(${item.movieId}, ${jsArg(item.containerId)})">Cancel</button>`
+      }
     `;
     list.appendChild(row);
   });
@@ -936,8 +1138,8 @@ async function startDownload(movieId, movieTitle, mediaType = 'movie') {
   if (!container) return;
 
   container.innerHTML = `
-    <button class="btn-watch" style="width: 100%; opacity: 0.8;" disabled>
-      <span>🔍 Searching Torrents...</span>
+    <button class="btn-watch" disabled>
+      <span class="spinner" aria-hidden="true"></span><span>Finding a copy…</span>
     </button>
   `;
 
@@ -950,7 +1152,7 @@ async function startDownload(movieId, movieTitle, mediaType = 'movie') {
 
     if (!searchRes.ok) throw new Error('Search failed');
     const { results } = await searchRes.json();
-    if (!results || results.length === 0) throw new Error('No torrents with seeds found');
+    if (!results || results.length === 0) throw new Error('No copy available right now');
 
     const magnetLink = results[0].magnet;
 
@@ -982,18 +1184,14 @@ async function startDownload(movieId, movieTitle, mediaType = 'movie') {
 
   } catch (err) {
     console.error('Recommender download error:', err);
+    // Stays put until the user acts — the old version vanished after 3s,
+    // often before anyone had read it.
     container.innerHTML = `
-      <button class="btn-watch" style="width: 100%; background: var(--danger);">
-        <span>❌ ${err.message}</span>
-      </button>
+      <div class="progress-box error-box" role="alert">
+        <span>${escapeHtml(err.message)}</span>
+        <button class="btn-retry-mini" onclick="startDownload(${movieId}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Retry</button>
+      </div>
     `;
-    setTimeout(() => {
-      container.innerHTML = `
-        <button id="watch-btn-${movieId}" class="btn-watch" style="width: 100%;" onclick="startDownload(${movieId}, '${movieTitle.replace(/'/g, "\\'")}', '${mediaType}')">
-          <span>🍿 Watch Tonight</span>
-        </button>
-      `;
-    }, 3000);
   }
 }
 
@@ -1048,8 +1246,10 @@ function showWatchingBanner(item) {
   const poster = document.getElementById('watchingPoster');
   const title = document.getElementById('watchingTitle');
 
-  poster.src = item.poster_url || 'https://via.placeholder.com/55x80/161722/ffffff?text=Poster';
-  title.innerText = `${item.title} (${item.release_year || 'Media'})`;
+  poster.outerHTML = item.poster_url
+    ? `<img id="watchingPoster" class="watching-poster" src="${escapeHtml(item.poster_url)}" alt="" data-title="" onerror="posterFailed(this)">`
+    : `<div id="watchingPoster" class="watching-poster poster-fallback" aria-hidden="true"></div>`;
+  title.innerText = item.release_year ? `${item.title} (${item.release_year})` : item.title;
   banner.style.display = 'flex';
 }
 
@@ -1077,7 +1277,10 @@ function initStarSelector() {
   for (let i = 1; i <= 10; i++) {
     const star = document.createElement('button');
     star.className = `star-btn ${i <= state.selectedRating ? 'active' : ''}`;
-    star.innerHTML = '★';
+    star.innerHTML = icon('star', 'icon star-icon');
+    star.setAttribute('role', 'radio');
+    star.setAttribute('aria-label', `${i} out of 10`);
+    star.setAttribute('aria-checked', i === state.selectedRating ? 'true' : 'false');
     star.onclick = () => selectStarRating(i);
     container.appendChild(star);
   }
@@ -1086,26 +1289,37 @@ function initStarSelector() {
 
 function selectStarRating(val) {
   state.selectedRating = val;
-  const stars = document.querySelectorAll('.star-btn');
-  stars.forEach((s, idx) => {
+  // Scoped to the sheet: the old selector also hit the Rate tab's stars.
+  document.querySelectorAll('#starSelector .star-btn').forEach((s, idx) => {
     s.classList.toggle('active', idx < val);
+    s.setAttribute('aria-checked', idx + 1 === val ? 'true' : 'false');
   });
   updateStarLabel(val);
 }
 
+const RATING_WORDS = ['', 'Awful', 'Bad', 'Poor', 'Weak', 'Okay', 'Decent', 'Good', 'Great', 'Brilliant', 'All-time favourite'];
+
 function updateStarLabel(val) {
   const label = document.getElementById('starLabel');
-  if (label) label.innerText = `Rating: ${val}/10 ★`;
+  if (label) label.innerText = `${val}/10 · ${RATING_WORDS[val] || ''}`;
 }
+
+let lastFocusBeforeSheet = null;
 
 function openFeedbackModal() {
   if (!state.activeSession) return;
+  lastFocusBeforeSheet = document.activeElement;
   document.getElementById('modalMovieTitle').innerText = state.activeSession.title;
   document.getElementById('feedbackModal').classList.add('active');
+  setTimeout(() => {
+    const current = document.querySelector('#starSelector .star-btn[aria-checked="true"]');
+    if (current) current.focus();
+  }, 50);
 }
 
 function closeFeedbackModal() {
   document.getElementById('feedbackModal').classList.remove('active');
+  if (lastFocusBeforeSheet) lastFocusBeforeSheet.focus();
 }
 
 async function submitFeedback() {
@@ -1127,10 +1341,12 @@ async function submitFeedback() {
     document.getElementById('watchingBanner').style.display = 'none';
     state.activeSession = null;
     document.getElementById('reviewNotesInput').value = '';
+    showToast('Saved — thanks, that sharpens your picks');
 
     switchTab('history');
   } catch (err) {
     console.error('Submit feedback error:', err);
+    showToast("Couldn't save the rating — try again");
   }
 }
 
@@ -1142,7 +1358,7 @@ async function loadHistory() {
   const genreContainer = document.getElementById('tasteGenresContainer');
   const kwContainer = document.getElementById('tasteKeywordsContainer');
 
-  list.innerHTML = '<p style="text-align: center; color: var(--text-muted);">Loading watch history...</p>';
+  list.innerHTML = '<p class="rate-sub" style="text-align:center; padding: 20px;">Loading…</p>';
 
   try {
     const res = await fetch('/api/history');
@@ -1158,51 +1374,57 @@ async function loadHistory() {
     const topKws = Object.entries(prefKws).sort((a, b) => b[1] - a[1]).slice(0, 8);
 
     if (topGenres.length === 0 && topKws.length === 0) {
-      genreContainer.innerHTML = '<span style="font-size: 13px; color: var(--text-muted);">Rate films or series (≥ 7.0) to build your personal taste profile!</span>';
+      genreContainer.innerHTML = `<span class="taste-empty">Nothing yet. Rate a few things 7 or higher on the
+        <a href="#rate" onclick="switchTab('rate'); return false;">Rate</a> tab and your favourite genres show up here.</span>`;
     } else {
-      topGenres.forEach(([genre, score]) => {
-        const tag = document.createElement('span');
-        tag.className = 'taste-tag';
-        tag.innerText = `🎭 ${genre} (+${score.toFixed(1)})`;
-        genreContainer.appendChild(tag);
-      });
-
-      topKws.forEach(([kw, score]) => {
-        const tag = document.createElement('span');
-        tag.className = 'taste-tag';
-        tag.innerText = `🏷 ${kw}`;
-        kwContainer.appendChild(tag);
-      });
+      genreContainer.innerHTML = topGenres.map(([genre, score]) =>
+        `<span class="taste-tag">${escapeHtml(genre)}<span class="weight">+${score.toFixed(1)}</span></span>`).join('');
+      kwContainer.innerHTML = topKws.map(([kw]) =>
+        `<span class="taste-tag">${escapeHtml(kw)}</span>`).join('');
     }
 
     list.innerHTML = '';
     const items = data.history || [];
     if (items.length === 0) {
-      list.innerHTML = '<p style="text-align: center; color: var(--text-muted); padding: 20px;">No movies logged yet. Watch and rate your first film!</p>';
+      list.innerHTML = `
+        <div class="empty-state">
+          ${icon('clock', 'empty-icon')}
+          <p class="empty-title">Nothing watched yet</p>
+          <p class="empty-sub">When you finish something, rate it from the “Now watching” bar and it lands here.</p>
+        </div>`;
       return;
     }
 
+    const dateFmt = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
     items.forEach(h => {
       const itemEl = document.createElement('div');
       itemEl.className = 'history-item';
-      const ratingStr = h.user_rating ? `★ ${h.user_rating}/10` : 'Unrated';
-      const notesHtml = h.notes ? `<div style="font-size: 13px; color: #d1d5db; margin-top: 4px;">"${h.notes}"</div>` : '';
-      const dateStr = (h.watched_at || '').substring(0, 10);
+      const ratingHtml = h.user_rating
+        ? `<div class="history-rating">${escapeHtml(h.user_rating)}<small>/10</small></div>`
+        : '<div class="history-rating unrated">Not rated</div>';
+      const notesHtml = h.notes ? `<div class="history-notes">“${escapeHtml(h.notes)}”</div>` : '';
+      const when = h.watched_at ? new Date(h.watched_at.replace(' ', 'T')) : null;
+      const dateStr = when && !isNaN(when) ? dateFmt.format(when) : '';
 
       itemEl.innerHTML = `
         <div class="history-info">
-          <div class="history-title">${h.title} <span class="movie-year">(${h.release_year || ''})</span></div>
-          <div class="history-meta">${dateStr} · ${h.genres || 'Film'}</div>
+          <div class="history-title">${escapeHtml(h.title)} ${h.release_year ? `<span class="movie-year">${escapeHtml(h.release_year)}</span>` : ''}</div>
+          <div class="history-meta">${[dateStr, escapeHtml(h.genres || '')].filter(Boolean).join(' · ')}</div>
           ${notesHtml}
         </div>
-        <div class="history-rating">${ratingStr}</div>
+        ${ratingHtml}
       `;
       list.appendChild(itemEl);
     });
 
   } catch (err) {
     console.error('Load history error:', err);
-    list.innerHTML = '<p style="text-align: center; color: var(--danger);">Failed to load history.</p>';
+    list.innerHTML = `
+      <div class="empty-state error" role="alert">
+        ${icon('x', 'empty-icon')}
+        <p class="empty-title">Couldn't load your history</p>
+        <button class="btn-secondary" onclick="loadHistory()">${icon('refresh')}Try again</button>
+      </div>`;
   }
 }
 
@@ -1211,7 +1433,12 @@ async function loadHistory() {
 // ---------------------------------------------------------------------------
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) return;
+  if (!SpeechRecognition) {
+    // No dictation here (e.g. Firefox): hide the mics rather than offer a
+    // button that only says no.
+    ['micBtn', 'modalMicBtn'].forEach(id => { const b = document.getElementById(id); if (b) b.hidden = true; });
+    return;
+  }
 
   state.recognition = new SpeechRecognition();
   state.recognition.continuous = false;
@@ -1235,31 +1462,33 @@ function initSpeechRecognition() {
 
 function toggleVoiceSearch() {
   if (!state.recognition) {
-    alert('Voice input is not supported in this browser.');
+    showToast("Voice input isn't available in this browser");
     return;
   }
   const btn = document.getElementById('micBtn');
+  if (btn.classList.contains('listening')) { state.recognition.stop(); return; }
   btn.classList.add('listening');
+  showToast('Listening…');
   state.recognition.start();
 }
 
 function toggleModalVoice() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    alert('Voice input is not supported in this browser.');
+    showToast("Voice input isn't available in this browser");
     return;
   }
   const recog = new SpeechRecognition();
   const btn = document.getElementById('modalMicBtn');
-  btn.innerText = '🔴';
+  btn.classList.add('listening');
+  const done = () => btn.classList.remove('listening');
   recog.onresult = (e) => {
     const text = e.results[0][0].transcript;
     const input = document.getElementById('reviewNotesInput');
     input.value = input.value ? `${input.value} ${text}` : text;
-    btn.innerText = '🎙️';
   };
-  recog.onerror = () => { btn.innerText = '🎙️'; };
-  recog.onend = () => { btn.innerText = '🎙️'; };
+  recog.onerror = done;
+  recog.onend = done;
   recog.start();
 }
 
@@ -1336,7 +1565,9 @@ function initDiscoverTab() {
 function initRateTab() {
   renderRateGenres();
   if (!state.rateGenreList.length) loadRateGenres();
-  if (state.rateProfiles.length === 0) {
+  // Profiles may already be cached (loadPartnerName), but the queue still
+  // needs its first fetch.
+  if (state.rateProfiles.length === 0 || state.rateCursor === 0) {
     loadProfiles();
   } else {
     renderRateProfiles();
@@ -1365,11 +1596,12 @@ function renderRateProfiles() {
   const container = document.getElementById('rateProfileSwitch');
   if (!container) return;
   container.innerHTML = state.rateProfiles.map(p => `
-    <button class="chip ${p.id === state.rateProfileId ? 'active' : ''}"
+    <button class="segment ${p.id === state.rateProfileId ? 'active' : ''}"
+            aria-pressed="${p.id === state.rateProfileId}"
             onclick="setRateProfile(${p.id})"
-            title="${p.rating_count} rated · ${p.not_seen_count || 0} unseen">
+            title="${escapeHtml(p.rating_count)} rated · ${escapeHtml(p.not_seen_count || 0)} not seen">
       ${escapeHtml(p.name)}
-      <span class="rate-profile-count">${p.rating_count}</span>
+      <span class="segment-count">${escapeHtml(p.rating_count)}</span>
     </button>
   `).join('');
 }
@@ -1385,8 +1617,8 @@ function setRateProfile(profileId) {
 function setRateMediaType(type) {
   if (state.rateMediaType === type) return;
   state.rateMediaType = type;
-  document.getElementById('rateTypeMovie').classList.toggle('active', type === 'movie');
-  document.getElementById('rateTypeTv').classList.toggle('active', type === 'tv');
+  setPressed(document.getElementById('rateTypeMovie'), type === 'movie');
+  setPressed(document.getElementById('rateTypeTv'), type === 'tv');
   state.rateQueue = [];
   state.rateIndex = 0;
   loadRatingQueue(true);
@@ -1426,8 +1658,14 @@ async function loadRatingQueue(reset) {
     loadCoViewSummary();
   } catch (err) {
     console.error('Failed to load rating queue:', err);
-    document.getElementById('rateProgress').innerText = 'Could not load the queue.';
+    setRateProgress("Couldn't load titles to rate. Check the server and try Shuffle.", 'error');
   }
+}
+
+function setRateProgress(text, tone = '') {
+  const el = document.getElementById('rateProgress');
+  el.textContent = text;
+  el.className = `rate-progress ${tone}`;
 }
 
 function activeRateProfile() {
@@ -1465,23 +1703,24 @@ function renderRateGenres() {
   if (!container) return;
   const list = state.rateGenreList.length ? state.rateGenreList : DEFAULT_RATE_GENRES;
   const balancedChip = `
-    <button class="chip ${state.rateBalanced ? 'active' : ''}"
+    <button class="chip ${state.rateBalanced ? 'active' : ''}" aria-pressed="${state.rateBalanced}"
             onclick="setRateBalanced()"
-            title="Rate one film per genre before repeating — builds your profile faster">
-      🌈 Balanced
+            title="One title per genre before repeating — builds your profile faster">
+      Mix of genres
     </button>`;
   // Multiple chips are OR'd (any of the chosen genres), so a multi-select shows
   // a mix. The hint keeps that legible instead of looking like a broken filter.
   const hint = state.rateGenres.length > 1
-    ? `<span class="rate-genre-hint">Showing ${state.rateGenres.length} genres — clear one to narrow it</span>`
+    ? `<span class="rate-genre-hint">Showing any of ${state.rateGenres.length} genres</span>`
     : '';
-  container.innerHTML = balancedChip + hint + list.map(entry => {
+  container.innerHTML = balancedChip + list.map(entry => {
     const name = typeof entry === 'string' ? entry : entry.name;
     const count = typeof entry === 'string' ? null : entry.count;
-    return `<button class="chip ${state.rateGenres.includes(name) ? 'active' : ''}"
-            onclick="setRateGenre('${name}')">${name}${
-      count ? `<span class="chip-count">${count}</span>` : ''}</button>`;
-  }).join('');
+    const on = state.rateGenres.includes(name);
+    return `<button class="chip ${on ? 'active' : ''}" aria-pressed="${on}"
+            onclick="setRateGenre(${jsArg(name)})">${escapeHtml(name)}${
+      count ? `<span class="chip-count">${escapeHtml(count)}</span>` : ''}</button>`;
+  }).join('') + hint;
 }
 
 // Fetched from the catalogue so the chips reflect genres that actually have
@@ -1517,9 +1756,7 @@ function renderRateCard() {
   if (!item) {
     card.style.display = 'none';
     empty.style.display = 'block';
-    const total = state.rateCursor;
-    document.getElementById('rateProgress').innerText =
-      total > 0 ? `Nothing left to rate here (${total} shown).` : 'Nothing left to rate here.';
+    setRateProgress('');
     return;
   }
   card.style.display = 'block';
@@ -1527,80 +1764,86 @@ function renderRateCard() {
 
   const done = state.rateIndex;
   const total = state.rateQueue.length;
-  document.getElementById('rateProgress').innerText =
-    `Rating as ${me.name} · ${done + 1} of ${total}` +
-    (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : '');
+  setRateProgress(`${done + 1} of ${total}` + (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : ''));
 
-  const poster = item.poster_url
-    ? `<img src="${item.poster_url}" class="rate-poster" alt="${escapeHtml(item.title)} poster"
-          onerror="this.style.display='none'">`
-    : '<div class="rate-poster rate-poster-placeholder">🎬</div>';
-
+  // Both people's verdicts, shown on the card's stub: yours is the one
+  // being filled in now; theirs, if they've answered, sits beside it.
   const other = (item.co_view?.verdicts || []).find(v => v.profile_id !== state.rateProfileId);
-  let otherLine = '';
-  if (other) {
-    if (other.status === 'not_seen') {
-      otherLine = `<span class="rate-other-pill">${escapeHtml(other.name)} hasn't seen this</span>`;
-    } else if (other.user_rating) {
-      otherLine = `<span class="rate-other-pill">${escapeHtml(other.name)} rated ${other.user_rating}/10</span>`;
-    }
-  }
-  const inLibrary = item.in_library
-    ? '<span class="badge badge-bonus">📀 In your library</span>' : '';
-  const coview = item.co_view?.tier === 'A'
-    ? '<span class="badge badge-tmdb">💞 You both liked it</span>' : '';
+  const otherProfile = state.rateProfiles.find(p => p.id !== state.rateProfileId);
+  const otherName = other?.name || otherProfile?.name || 'Partner';
+  let otherVerdict = '<b>not yet</b>';
+  let otherPending = true;
+  if (other?.status === 'not_seen') { otherVerdict = "<b>hasn't seen it</b>"; otherPending = false; }
+  else if (other?.user_rating) { otherVerdict = `<b>${escapeHtml(other.user_rating)}/10</b>`; otherPending = false; }
+
+  const pills = [];
+  if (item.in_library) pills.push('<span class="badge badge-coview-score">In your library</span>');
+  if (item.co_view?.tier === 'A') pills.push(`<span class="badge badge-coview-a">${icon('heart', 'icon badge-icon')}You both liked it</span>`);
 
   const meta = [];
-  if (item.release_year) meta.push(item.release_year);
-  if (item.runtime) meta.push(`${item.runtime} min`);
-  if (item.rating) meta.push(`★ ${item.rating.toFixed(1)} TMDB`);
+  if (item.release_year) meta.push(escapeHtml(item.release_year));
+  if (item.runtime) meta.push(formatRuntime(item.runtime));
+  if (item.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(item.rating).toFixed(1))}</span>`);
+
+  card.classList.remove('enter');
+  void card.offsetWidth; // restart the entrance for each new title
+  card.classList.add('enter');
 
   card.innerHTML = `
     <div class="rate-card-body">
-      ${poster}
+      ${posterHtml(item.poster_url, item.title, 'rate-poster')}
       <div class="rate-info">
-        <h4 class="rate-title">${escapeHtml(item.title)}</h4>
+        <h3 class="rate-title">${escapeHtml(item.title)}</h3>
         <p class="rate-meta">${meta.join(' · ')}</p>
         <p class="rate-genres">${escapeHtml(item.genres || '')}</p>
-        <div class="rate-pills">${inLibrary}${coview}${otherLine}</div>
-        ${item.overview ? `<p class="rate-overview">${escapeHtml(item.overview.slice(0, 260))}${item.overview.length > 260 ? '…' : ''}</p>` : ''}
+        <div class="rate-pills">${pills.join('')}</div>
+        ${item.overview ? `<p class="rate-overview">${escapeHtml(item.overview.slice(0, 240))}${item.overview.length > 240 ? '…' : ''}</p>` : ''}
       </div>
     </div>
 
-    <div class="rate-stars" id="rateStars">
-      ${Array.from({ length: 10 }, (_, i) => `
-        <button class="star-btn" onclick="submitRating(${i + 1})" title="${i + 1}/10">★</button>
-      `).join('')}
+    <div class="rate-controls">
+      <p class="rate-question" id="rateQuestion">${me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? How was it?` : 'Seen it? How was it?'}</p>
+      <div class="rate-stars" role="group" aria-labelledby="rateQuestion">
+        ${Array.from({ length: 10 }, (_, i) => `<button class="star-btn" onclick="submitRating(${i + 1})" aria-label="${i + 1} out of 10 — ${RATING_WORDS[i + 1]}" title="${i + 1} · ${RATING_WORDS[i + 1]}">${icon('star', 'icon star-icon')}</button>`).join('')}
+      </div>
+      <div class="rate-scale" aria-hidden="true"><span>1 · awful</span><span>10 · all-time favourite</span></div>
+
+      <div class="rate-actions">
+        <button class="btn-not-seen" onclick="submitNotSeen()">${icon('eye-off')}Haven't seen it</button>
+        <button class="btn-skip" onclick="skipRateItem()">Skip ${icon('skip')}</button>
+      </div>
+      <p class="rate-hint"><kbd>1</kbd>–<kbd>0</kbd> rate · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip</p>
     </div>
 
-    <div class="rate-actions">
-      <button class="btn-not-seen" onclick="submitNotSeen()">
-        👁️ I haven't seen it
-      </button>
-      <button class="chip" onclick="skipRateItem()">Skip</button>
-      <button class="chip" onclick="shuffleRatingQueue()" title="Show different films">🎲 Shuffle</button>
+    <div class="rate-stub">
+      <span class="stub-label">Verdicts</span>
+      <span class="stub-verdict pending">${escapeHtml(me.name)}: <b>not yet</b></span>
+      <span class="stub-sep">/</span>
+      <span class="stub-verdict ${otherPending ? 'pending' : ''}">${escapeHtml(otherName)}: ${otherVerdict}</span>
     </div>
-    <p class="rate-hint">Keys 1–0 rate · N = I haven't seen it · S = skip</p>
   `;
 }
 
+let ratingInFlight = false;
+
 async function submitRating(value) {
   const item = currentRateItem();
-  if (!item) return;
-  await postRating(item.id, { user_rating: value, status: 'seen' });
-  advanceQueue();
+  if (!item || ratingInFlight) return;
+  if (await postRating(item.id, { user_rating: value, status: 'seen' })) advanceQueue();
 }
 
 async function submitNotSeen() {
   const item = currentRateItem();
-  if (!item) return;
+  if (!item || ratingInFlight) return;
   // "Haven't seen it" is a real answer — stored with status='not_seen' and no
   // rating attached, never as a zero or a 1.
-  await postRating(item.id, { status: 'not_seen' });
-  advanceQueue();
+  if (await postRating(item.id, { status: 'not_seen' })) advanceQueue();
 }
 
+// Returns true only when the server stored it. The card used to advance
+// even after a failed save, silently dropping the rating.
 async function postRating(itemId, payload) {
+  ratingInFlight = true;
   try {
     const res = await fetch('/api/ratings', {
       method: 'POST',
@@ -1613,19 +1856,22 @@ async function postRating(itemId, payload) {
     }
     const summary = await res.json();
     flashRateFeedback(summary);
+    return true;
   } catch (err) {
     console.error('Rating failed:', err);
-    document.getElementById('rateProgress').innerText = `Could not save: ${err.message}`;
+    setRateProgress(`Not saved (${err.message}). Try again.`, 'error');
+    return false;
+  } finally {
+    ratingInFlight = false;
   }
 }
 
 function flashRateFeedback(summary) {
-  const msg = document.getElementById('rateProgress');
   if (!summary || summary.tier === 'C') return;
   if (summary.tier === 'A') {
-    msg.innerText = '💞 Added — you both like this one.';
+    showToast('Saved — you both like this one');
   } else if (summary.disagreement >= 3) {
-    msg.innerText = `Noted — you two differ by ${summary.disagreement} points.`;
+    showToast(`Saved — you two differ by ${summary.disagreement} points`);
   }
 }
 
@@ -1662,10 +1908,10 @@ async function loadCoViewSummary() {
       return;
     }
     container.innerHTML = `
-      <div class="section-title"><span>Both of you liked</span></div>
-      <p class="rate-sub" style="margin-bottom: 8px;">
-        ${data.count} film${data.count === 1 ? '' : 's'} rated ${data.min_liked}+ by both —
-        this is what "watch together" recommendations are built from.
+      <h2 class="section-title">Both of you liked</h2>
+      <p class="rate-sub">
+        ${escapeHtml(data.count)} title${data.count === 1 ? '' : 's'} you both rated ${escapeHtml(data.min_liked)}+.
+        “Us two” picks are built from these.
       </p>
       <div class="rate-coview-chips">
         ${data.items.slice(0, 12).map(i => `<span class="taste-tag">${escapeHtml(i.title)}</span>`).join('')}
@@ -1680,7 +1926,10 @@ async function loadCoViewSummary() {
 document.addEventListener('keydown', (e) => {
   if (state.activeTab !== 'rate') return;
   if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (document.querySelector('.modal-overlay.active')) return;
   const k = e.key.toLowerCase();
+  if (k.length !== 1) return;
   if (k >= '0' && k <= '9') {
     submitRating(k === '0' ? 10 : parseInt(k, 10));
     e.preventDefault();

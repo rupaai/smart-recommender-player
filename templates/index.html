@@ -1,335 +1,390 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-look="ticket">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0c10">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#e8e6e1">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Smart Movie & TV Companion</title>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>Movie Night</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="/static/styles.css">
+  <script>
+    // Two looks are being trialled side by side; the choice is remembered
+    // per device. Applied before first paint so the page never flashes.
+    (function () {
+      var look = new URLSearchParams(location.search).get('look');
+      try { look = look || localStorage.getItem('look'); } catch (e) {}
+      if (look === 'clean' || look === 'ticket') document.documentElement.dataset.look = look;
+    })();
+  </script>
 </head>
 <body>
+  <!-- One icon set for all interface chrome (tabs, buttons, toggles).
+       Emoji stay only where they are content (mood names come from the API). -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+      <symbol id="i-heart" viewBox="0 0 24 24"><path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 8h4M3 16h4M17 8h4M17 16h4"/></symbol>
+      <symbol id="i-tv" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="m17 2-5 5-5-5"/></symbol>
+      <symbol id="i-shuffle" viewBox="0 0 24 24"><path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="m15 15 6 6"/><path d="m4 4 5 5"/></symbol>
+      <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="m3 3 18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.1 4.1"/><path d="M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+      <symbol id="i-skip" viewBox="0 0 24 24"><path d="m6 5 9 7-9 7z"/><path d="M18 5v14"/></symbol>
+      <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.3L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.7 4.3L20 16"/><path d="M20 21v-5h-5"/></symbol>
+    </defs>
+  </svg>
+
   <div class="app-container">
-    <!-- Header -->
     <header class="app-header">
       <div class="brand">
-        <span class="brand-icon">🍿</span>
-        <h1 class="brand-title">CouchCinema</h1>
+        <span class="brand-mark" aria-hidden="true"><span>2</span></span>
+        <!-- Placeholder name: the real one is still undecided. -->
+        <h1 class="brand-title">Movie Night</h1>
       </div>
-      <div class="header-status">
-        <div id="jellyfinStatus" class="status-pill">
+      <div class="header-tools">
+        <div class="segmented tiny look-switch" role="group" aria-label="Look (trial)" title="Trying two looks — pick the one you prefer">
+          <button class="segment" data-look-btn="ticket" aria-pressed="true" onclick="setLook('ticket')">Ticket</button>
+          <button class="segment" data-look-btn="clean" aria-pressed="false" onclick="setLook('clean')">Clean</button>
+        </div>
+        <div id="jellyfinStatus" class="status-pill" title="Whether Jellyfin, your TV's media server, is reachable">
           <span id="statusDot" class="status-dot"></span>
-          <span id="statusText">Checking TV...</span>
+          <span id="statusText">Checking TV…</span>
         </div>
       </div>
     </header>
 
-    <!-- Navigation Tabs -->
-    <nav class="nav-tabs">
-      <button id="tabDiscover" class="tab-btn active" onclick="switchTab('discover')">
-        🍿 Recommender
+    <!-- Primary navigation. Top segmented bar on wide screens, fixed bottom bar
+         on phones where the thumb lives. -->
+    <nav class="nav-tabs" role="tablist" aria-label="Sections">
+      <button id="tabDiscover" class="tab-btn active" role="tab" aria-selected="true" aria-controls="discoverView" onclick="switchTab('discover')">
+        <svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg><span>Discover</span>
       </button>
-      <button id="tabDirect" class="tab-btn" onclick="switchTab('direct')">
-        ⚡ Direct Download
+      <button id="tabDirect" class="tab-btn" role="tab" aria-selected="false" aria-controls="directView" onclick="switchTab('direct')">
+        <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span>Download</span>
       </button>
-      <button id="tabRate" class="tab-btn" onclick="switchTab('rate')">
-        💞 Rate Together
+      <button id="tabRate" class="tab-btn" role="tab" aria-selected="false" aria-controls="rateView" onclick="switchTab('rate')">
+        <svg class="icon" aria-hidden="true"><use href="#i-heart"/></svg><span>Rate</span>
       </button>
-      <button id="tabHistory" class="tab-btn" onclick="switchTab('history')">
-        ⭐ Taste & History
+      <button id="tabHistory" class="tab-btn" role="tab" aria-selected="false" aria-controls="historyView" onclick="switchTab('history')">
+        <svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span>History</span>
       </button>
     </nav>
 
     <!-- Active "Currently Watching" Banner -->
-    <div id="watchingBanner" class="watching-banner" style="display: none;">
-      <img id="watchingPoster" class="watching-poster" src="" alt="Poster">
+    <div id="watchingBanner" class="watching-banner" style="display: none;" role="status">
+      <div id="watchingPoster" class="watching-poster poster-fallback" aria-hidden="true"></div>
       <div class="watching-info">
-        <div class="watching-label">
-          <span>● NOW WATCHING</span>
-        </div>
+        <div class="watching-label"><span class="live-dot" aria-hidden="true"></span>Now watching</div>
         <div id="watchingTitle" class="watching-title">Movie Title</div>
         <div class="watching-actions">
-          <button class="btn-finish" onclick="openFeedbackModal()">Finished Watching ✨</button>
-          <button class="btn-cancel-watch" onclick="cancelWatch()">Cancel</button>
+          <button class="btn-finish" onclick="openFeedbackModal()">Finished — rate it</button>
+          <button class="btn-cancel-watch" onclick="cancelWatch()">Didn't watch</button>
         </div>
       </div>
     </div>
 
-    <!-- Discover / Recommender View -->
-    <main id="discoverView">
-      <!-- Media Type Toggle (Movies vs TV Shows) -->
-      <div class="media-type-toggle-row">
-        <button id="recTypeMovieBtn" class="media-toggle-btn active" onclick="setRecMediaType('movie')">🎬 Movies</button>
-        <button id="recTypeTvBtn" class="media-toggle-btn" onclick="setRecMediaType('tv')">📺 TV Shows</button>
-      </div>
+    <!-- ======================= DISCOVER ======================= -->
+    <main id="discoverView" role="tabpanel" aria-labelledby="tabDiscover">
+      <div class="discover-controls">
+        <div class="context-bar">
+          <div class="segmented" role="group" aria-label="Movies or TV shows">
+            <button id="recTypeMovieBtn" class="segment active" aria-pressed="true" onclick="setRecMediaType('movie')">
+              <svg class="icon" aria-hidden="true"><use href="#i-film"/></svg>Movies
+            </button>
+            <button id="recTypeTvBtn" class="segment" aria-pressed="false" onclick="setRecMediaType('tv')">
+              <svg class="icon" aria-hidden="true"><use href="#i-tv"/></svg>TV shows
+            </button>
+          </div>
 
-      <!-- Whose taste to optimise for. Ratings come from two profiles, so the
-           recommender needs to know whose evening it's planning. -->
-      <div class="rec-profile-row">
-        <span class="rate-genre-label">For</span>
-        <div class="rec-profile-group">
-          <button class="chip active" data-rec-profile="together"
-                  onclick="setRecProfile('together')"
-                  title="Blend both your tastes — films either of you hasn't seen, weighted toward what the other liked">💞 Us, together</button>
-          <button class="chip" data-rec-profile="me"
-                  onclick="setRecProfile('me')"
-                  title="Mostly your taste, with a little of theirs">🙂 Just me</button>
-          <button class="chip" data-rec-profile="partner"
-                  onclick="setRecProfile('partner')"
-                  title="Mostly their taste — what they'd recommend to you">🧑 His picks</button>
+          <!-- Whose taste to optimise for. Ratings come from two profiles, so the
+               recommender needs to know whose evening it's planning. -->
+          <div class="segmented" role="group" aria-label="Whose taste">
+            <button class="segment active" data-rec-profile="together" aria-pressed="true"
+                    onclick="setRecProfile('together')"
+                    title="Blend both your tastes — weighted toward what the other liked">Us two</button>
+            <button class="segment" data-rec-profile="me" aria-pressed="false"
+                    onclick="setRecProfile('me')"
+                    title="Mostly your taste, with a little of theirs">Just me</button>
+            <button class="segment" data-rec-profile="partner" aria-pressed="false"
+                    onclick="setRecProfile('partner')"
+                    title="Mostly their taste — what they'd recommend to you">His picks</button>
+          </div>
+        </div>
+
+        <h2 class="section-title">What are you in the mood for?</h2>
+
+        <!-- Free-text description: movies you loved, a story idea, a vibe -->
+        <div class="search-voice-bar describe-bar">
+          <label for="queryInput" class="visually-hidden">Describe what you want to watch</label>
+          <textarea id="queryInput" class="describe-input" rows="2" placeholder="Describe it — “like Interstellar but funnier”, a story idea, a vibe…"></textarea>
+          <button id="micBtn" class="btn-mic" onclick="toggleVoiceSearch()" title="Dictate with voice" aria-label="Dictate with voice">
+            <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
+          </button>
+        </div>
+
+        <!-- Mood Grid (rendered by JS) -->
+        <div id="moodGrid" class="mood-grid" role="group" aria-label="Mood"></div>
+
+        <!-- Sub-moods for the selected mood -->
+        <div id="submoodSection" class="submood-section" style="display: none;">
+          <span class="filter-label">Narrow the vibe</span>
+          <div id="submoodChips" class="filter-row submood-row"></div>
+        </div>
+
+        <!-- Everything else is optional, so it folds away. The summary line
+             shows how many filters are on so nothing is hidden silently. -->
+        <details id="filtersDisclosure" class="filters-disclosure">
+          <summary>
+            <svg class="icon" aria-hidden="true"><use href="#i-sliders"/></svg>
+            <span>More filters</span>
+            <span id="filtersSummary" class="filters-summary"></span>
+            <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"/></svg>
+          </summary>
+
+          <div class="filters-body">
+            <!-- Origin of cinema. "South Asian" is a place, not a genre, so it
+                 cannot be expressed with the genre chips. Counts come from the
+                 catalogue so a region never appears with nothing to show. -->
+            <div class="filter-group" id="originGroup">
+              <span class="filter-label">From</span>
+              <div class="filter-row wrap" id="originChips"></div>
+            </div>
+
+            <div class="filter-group">
+              <span class="filter-label">Genres <span class="filter-hint">pick any</span></span>
+              <div id="genreChips" class="filter-row wrap genre-row">
+                <button class="chip" data-genre="Action" aria-pressed="false" onclick="toggleGenreFilter(this)">Action</button>
+                <button class="chip" data-genre="Sci-Fi" aria-pressed="false" onclick="toggleGenreFilter(this)">Sci-Fi</button>
+                <button class="chip" data-genre="Comedy" aria-pressed="false" onclick="toggleGenreFilter(this)">Comedy</button>
+                <button class="chip" data-genre="Drama" aria-pressed="false" onclick="toggleGenreFilter(this)">Drama</button>
+                <button class="chip" data-genre="Thriller" aria-pressed="false" onclick="toggleGenreFilter(this)">Thriller</button>
+                <button class="chip" data-genre="Horror" aria-pressed="false" onclick="toggleGenreFilter(this)">Horror</button>
+                <button class="chip" data-genre="Romance" aria-pressed="false" onclick="toggleGenreFilter(this)">Romance</button>
+                <button class="chip" data-genre="Animation" aria-pressed="false" onclick="toggleGenreFilter(this)">Animation</button>
+                <button class="chip" data-genre="Mystery" aria-pressed="false" onclick="toggleGenreFilter(this)">Mystery</button>
+                <button class="chip" data-genre="Documentary" aria-pressed="false" onclick="toggleGenreFilter(this)">Documentary</button>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span class="filter-label">Released</span>
+              <div class="filter-row wrap">
+                <button class="chip active" data-filter="era" data-val="" aria-pressed="true" onclick="setFilter(this)">Any time</button>
+                <button class="chip" data-filter="era" data-val="modern" aria-pressed="false" onclick="setFilter(this)">2015 onwards</button>
+                <button class="chip" data-filter="era" data-val="2000s" aria-pressed="false" onclick="setFilter(this)">2000s</button>
+                <button class="chip" data-filter="era" data-val="classic" aria-pressed="false" onclick="setFilter(this)">Classics</button>
+              </div>
+            </div>
+
+            <div class="filter-group" id="durationFilterGroup">
+              <span class="filter-label">Length</span>
+              <div class="filter-row wrap">
+                <button class="chip active" data-filter="duration" data-val="" aria-pressed="true" onclick="setFilter(this)">Any length</button>
+                <button class="chip" data-filter="duration" data-val="short" aria-pressed="false" onclick="setFilter(this)">Under 1h 45</button>
+                <button class="chip" data-filter="duration" data-val="standard" aria-pressed="false" onclick="setFilter(this)">1h 45 – 2h 20</button>
+                <button class="chip" data-filter="duration" data-val="epic" aria-pressed="false" onclick="setFilter(this)">Over 2h 20</button>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <span class="filter-label">Minimum rating</span>
+              <div class="filter-row wrap">
+                <button class="chip active" data-filter="minRating" data-val="default" aria-pressed="true" onclick="setMinRatingFilter(this)">6+ (default)</button>
+                <button class="chip" data-filter="minRating" data-val="7.0" aria-pressed="false" onclick="setMinRatingFilter(this)">7+</button>
+                <button class="chip" data-filter="minRating" data-val="8.0" aria-pressed="false" onclick="setMinRatingFilter(this)">8+ only</button>
+                <button class="chip" data-filter="minRating" data-val="0.0" aria-pressed="false" onclick="setMinRatingFilter(this)">Any rating</button>
+              </div>
+            </div>
+
+            <label class="switch-row">
+              <input type="checkbox" id="includeWatchedBtn" onchange="toggleIncludeWatched()">
+              <span class="switch" aria-hidden="true"></span>
+              <span>Include things we've already seen</span>
+            </label>
+
+            <button class="btn-text-link" onclick="resetAllFilters()">Reset all filters</button>
+          </div>
+        </details>
+
+        <!-- Stays pinned to the bottom of the screen while the controls are in
+             view, then settles in place above the results. -->
+        <div class="cta-dock">
+          <button id="recommendBtn" class="btn-recommend" onclick="fetchRecommendations()">
+            <svg class="icon" aria-hidden="true"><use href="#i-sparkle"/></svg>
+            <span id="recommendLabel">Find a movie for tonight</span>
+          </button>
         </div>
       </div>
 
-      <div class="section-title">
-        <span>How are you feeling tonight?</span>
-      </div>
-
-      <!-- Mood Grid -->
-      <div id="moodGrid" class="mood-grid">
-        <!-- Rendered by JS -->
-      </div>
-
-      <!-- Sub-Moods / Specific Vibes (Dynamically shown based on selected mood) -->
-      <div id="submoodSection" class="submood-section" style="display: none;">
-        <span class="filter-label">Narrow Vibe:</span>
-        <div id="submoodChips" class="filter-row submood-row">
-          <!-- Rendered by JS -->
-        </div>
-      </div>
-
-      <!-- Free-text description: movies you loved, a story idea, a vibe -->
-      <div class="search-voice-bar describe-bar">
-        <textarea id="queryInput" class="describe-input" rows="2" placeholder="Describe what you want — movies you loved, a story idea, a vibe... anything (e.g. 'Something like Interstellar but funnier')"></textarea>
-        <button id="micBtn" class="btn-mic" onclick="toggleVoiceSearch()" title="Dictate with voice">🎙️</button>
-      </div>
-
-      <!-- Origin of cinema. "South Asian" is a place, not a genre, so it cannot
-           be expressed with the genre chips below. Counts come from the
-           catalogue so a region never appears with nothing to show. -->
-      <div class="rec-profile-row">
-        <span class="rate-genre-label">From</span>
-        <div class="rec-profile-group" id="originChips"></div>
-      </div>
-
-      <!-- Genre Overrides / Specific Taste Filter -->
-      <div class="filter-group">
-        <div class="filter-group-header">
-          <span class="filter-label">Include Specific Genres:</span>
-          <button class="btn-text-link" onclick="clearSelectedGenres()">Reset</button>
-        </div>
-        <div id="genreChips" class="filter-row genre-row">
-          <button class="chip" data-genre="Action" onclick="toggleGenreFilter(this)">💥 Action</button>
-          <button class="chip" data-genre="Sci-Fi" onclick="toggleGenreFilter(this)">🚀 Sci-Fi</button>
-          <button class="chip" data-genre="Comedy" onclick="toggleGenreFilter(this)">😂 Comedy</button>
-          <button class="chip" data-genre="Drama" onclick="toggleGenreFilter(this)">🎭 Drama</button>
-          <button class="chip" data-genre="Thriller" onclick="toggleGenreFilter(this)">🔪 Thriller</button>
-          <button class="chip" data-genre="Horror" onclick="toggleGenreFilter(this)">👻 Horror</button>
-          <button class="chip" data-genre="Romance" onclick="toggleGenreFilter(this)">❤️ Romance</button>
-          <button class="chip" data-genre="Animation" onclick="toggleGenreFilter(this)">🎨 Animation</button>
-          <button class="chip" data-genre="Mystery" onclick="toggleGenreFilter(this)">🕵️ Mystery</button>
-          <button class="chip" data-genre="Documentary" onclick="toggleGenreFilter(this)">🌍 Documentary</button>
-        </div>
-      </div>
-
-      <!-- Era Narrowing -->
-      <div class="filter-group">
-        <span class="filter-label">Release Era:</span>
-        <div class="filter-row">
-          <button class="chip active" data-filter="era" data-val="" onclick="setFilter(this)">Any Era</button>
-          <button class="chip" data-filter="era" data-val="modern" onclick="setFilter(this)">Modern (2015+)</button>
-          <button class="chip" data-filter="era" data-val="2000s" onclick="setFilter(this)">2000s</button>
-          <button class="chip" data-filter="era" data-val="classic" onclick="setFilter(this)">Classic</button>
-        </div>
-      </div>
-
-      <!-- Runtime Narrowing (Movies) -->
-      <div class="filter-group" id="durationFilterGroup">
-        <span class="filter-label">Duration:</span>
-        <div class="filter-row">
-          <button class="chip active" data-filter="duration" data-val="" onclick="setFilter(this)">Any Length</button>
-          <button class="chip" data-filter="duration" data-val="short" onclick="setFilter(this)">&lt; 105 min</button>
-          <button class="chip" data-filter="duration" data-val="standard" onclick="setFilter(this)">105-140 min</button>
-          <button class="chip" data-filter="duration" data-val="epic" onclick="setFilter(this)">&gt; 140 min</button>
-        </div>
-      </div>
-
-      <!-- Rating Threshold & Watch Status Filters -->
-      <div class="filter-group">
-        <span class="filter-label">Quality Threshold & Status:</span>
-        <div class="filter-row">
-          <button class="chip active" data-filter="minRating" data-val="default" onclick="setMinRatingFilter(this)">Standard (6.0+)</button>
-          <button class="chip" data-filter="minRating" data-val="7.0" onclick="setMinRatingFilter(this)">High Rating (7.0+)</button>
-          <button class="chip" data-filter="minRating" data-val="8.0" onclick="setMinRatingFilter(this)">Masterpieces (8.0+)</button>
-          <button class="chip" data-filter="minRating" data-val="0.0" onclick="setMinRatingFilter(this)">Any Rating</button>
-          <button id="includeWatchedBtn" class="chip" onclick="toggleIncludeWatched()">Include Watched</button>
-        </div>
-      </div>
-
-      <!-- Recommend CTA -->
-      <button id="recommendBtn" class="btn-recommend" onclick="fetchRecommendations()">
-        <span>✨ Find Recommendation for Tonight</span>
-      </button>
-
-      <!-- Results Container -->
-      <div id="resultsContainer" class="results-container">
-        <!-- Rendered dynamically -->
-      </div>
+      <div id="resultsHeader" class="results-header" aria-live="polite"></div>
+      <div id="resultsContainer" class="results-container"></div>
 
       <!-- Pagination. The pool holds 50 items and the first page returns 20,
            so more is the normal case; hidden until the API reports has_more. -->
       <div class="load-more-row">
-        <button id="loadMoreBtn" class="btn-load-more" onclick="loadMoreRecommendations()" style="display: none;">
-          Show more
-        </button>
+        <button id="loadMoreBtn" class="btn-load-more" onclick="loadMoreRecommendations()" style="display: none;">Show more</button>
       </div>
     </main>
 
-    <!-- Direct Download View -->
-    <section id="directView" style="display: none;">
-      <!-- Media Type Toggle (Movies vs TV Shows) -->
-      <div class="media-type-toggle-row">
-        <button id="directTypeMovieBtn" class="media-toggle-btn active" onclick="setDirectMediaType('movie')">🎬 Movies</button>
-        <button id="directTypeTvBtn" class="media-toggle-btn" onclick="setDirectMediaType('tv')">📺 TV Shows</button>
+    <!-- ======================= DOWNLOAD ======================= -->
+    <section id="directView" role="tabpanel" aria-labelledby="tabDirect" style="display: none;">
+      <div class="section-heading">
+        <h2 class="section-title">Find a download</h2>
+        <p class="section-subtitle">Search by title, compare file size and quality, then grab one. You can cancel anytime.</p>
       </div>
 
-      <div class="section-title">
-        <span>Direct Search & Download</span>
-        <span class="section-subtitle">Inspect seeds, size & quality · 1-click grab · Cancel anytime</span>
+      <div class="context-bar">
+        <div class="segmented" role="group" aria-label="Movies or TV shows">
+          <button id="directTypeMovieBtn" class="segment active" aria-pressed="true" onclick="setDirectMediaType('movie')">
+            <svg class="icon" aria-hidden="true"><use href="#i-film"/></svg>Movies
+          </button>
+          <button id="directTypeTvBtn" class="segment" aria-pressed="false" onclick="setDirectMediaType('tv')">
+            <svg class="icon" aria-hidden="true"><use href="#i-tv"/></svg>TV shows
+          </button>
+        </div>
       </div>
 
-      <!-- Direct Search Input -->
-      <div class="search-voice-bar direct-search-bar">
-        <input type="text" id="directQueryInput" class="search-input" placeholder="Search any movie title (e.g. Inception, Dune 2024)..." onkeydown="if(event.key==='Enter') executeDirectSearch()">
-        <button id="directSearchBtn" class="btn-search-action" onclick="executeDirectSearch()">
-          <span>Search 🚀</span>
-        </button>
-      </div>
+      <form class="search-voice-bar direct-search-bar" onsubmit="event.preventDefault(); executeDirectSearch();">
+        <svg class="icon search-leading" aria-hidden="true"><use href="#i-search"/></svg>
+        <label for="directQueryInput" class="visually-hidden">Title to search for</label>
+        <input type="search" id="directQueryInput" class="search-input" enterkeyhint="search" autocomplete="off" placeholder="Movie title, e.g. Dune 2021">
+        <button id="directSearchBtn" type="submit" class="btn-search-action">Search</button>
+      </form>
 
-      <!-- Sort Options -->
       <div class="direct-controls-row">
-        <span class="control-label">Order by:</span>
-        <div class="sort-chip-group">
-          <button id="sortSmallestBtn" class="chip active" onclick="setDirectSort(true)">⚡ Smallest File (Fast Download)</button>
-          <button id="sortQualityBtn" class="chip" onclick="setDirectSort(false)">💎 Highest Quality / Seeds</button>
+        <span class="control-label" id="sortLabel">Sort by</span>
+        <div class="segmented small" role="group" aria-labelledby="sortLabel">
+          <button id="sortSmallestBtn" class="segment active" aria-pressed="true" onclick="setDirectSort(true)" title="Smallest files download fastest">Smallest file</button>
+          <button id="sortQualityBtn" class="segment" aria-pressed="false" onclick="setDirectSort(false)" title="4K and 1080p first, then most seeds">Best quality</button>
         </div>
       </div>
 
-      <!-- Active Downloads Monitor (with Cancel buttons) -->
+      <!-- Active Downloads Monitor -->
       <div id="activeDownloadsContainer" class="active-downloads-card" style="display: none;">
-        <div class="active-downloads-header">
-          <span>⚡ Active Downloads</span>
-        </div>
+        <h3 class="active-downloads-header">Downloading now</h3>
         <div id="activeDownloadsList" class="active-downloads-list"></div>
       </div>
 
-      <!-- Search Results Area -->
       <div id="directResultsContainer" class="results-container direct-results">
         <div class="empty-state">
-          <p style="font-size: 32px; margin-bottom: 8px;">🔍</p>
-          <p style="font-weight: 600;">Search for any title to inspect torrents</p>
-          <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Results check YTS and Apibay with verified seeds and size indicators.</p>
+          <svg class="empty-icon" aria-hidden="true"><use href="#i-search"/></svg>
+          <p class="empty-title">Search for any title</p>
+          <p class="empty-sub">Results only include files people are actively sharing, so they'll actually download.</p>
         </div>
       </div>
     </section>
 
-    <!-- History View -->
-    <section id="historyView" style="display: none;">
-      <!-- Taste Profile Card -->
+    <!-- ======================= HISTORY ======================= -->
+    <section id="historyView" role="tabpanel" aria-labelledby="tabHistory" style="display: none;">
       <div class="taste-card">
-        <h3 style="font-size: 16px; margin-bottom: 4px;">🧠 What Your System Learned</h3>
-        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">Based on movies & shows you gave a high rating to (≥ 7.0):</p>
+        <h2 class="taste-title">What it has learned about you</h2>
+        <p class="taste-sub">From everything you rated 7 or higher.</p>
         <div id="tasteGenresContainer" class="taste-tag-container"></div>
-        <div id="tasteKeywordsContainer" class="taste-tag-container" style="margin-top: 8px;"></div>
+        <div id="tasteKeywordsContainer" class="taste-tag-container"></div>
       </div>
 
-      <div class="section-title">
-        <span>Watch History</span>
-      </div>
-      <div id="historyList">
-        <!-- History items rendered dynamically -->
-      </div>
+      <h2 class="section-title">Watch history</h2>
+      <div id="historyList"></div>
     </section>
 
-    <!-- ==========================================================================
-         RATE TOGETHER — one card at a time, each person rates or skips.
-         Deliberately not a grid: this is a decision queue, and a grid tempts
-         you to batch-rate without looking, which poisons the taste signal.
-         ========================================================================== -->
-    <section id="rateView" style="display: none;">
+    <!-- ======================= RATE TOGETHER =======================
+         One card at a time, each person rates or skips. Deliberately not a
+         grid: this is a decision queue, and a grid tempts you to batch-rate
+         without looking, which poisons the taste signal. -->
+    <section id="rateView" role="tabpanel" aria-labelledby="tabRate" style="display: none;">
       <div class="rate-header">
         <div>
-          <h3 style="font-size: 16px; margin-bottom: 2px;">💞 Rate Together</h3>
-          <p class="rate-sub" id="rateProgress">Loading…</p>
+          <h2 class="section-title">Rate together</h2>
+          <p class="rate-sub">Every rating teaches the recommender. Takes a second each.</p>
         </div>
-        <div class="rate-profile-switch" id="rateProfileSwitch"></div>
       </div>
 
-      <div class="rate-media-toggle">
-        <button id="rateTypeMovie" class="chip active" onclick="setRateMediaType('movie')">Movies</button>
-        <button id="rateTypeTv" class="chip" onclick="setRateMediaType('tv')">TV Shows</button>
-        <button class="chip" onclick="shuffleRatingQueue()" title="Show a different set of films">🎲 Shuffle</button>
+      <div class="rate-toolbar">
+        <div class="rate-who">
+          <span class="filter-label" id="rateWhoLabel">Who's rating?</span>
+          <div class="segmented" id="rateProfileSwitch" role="group" aria-labelledby="rateWhoLabel"></div>
+        </div>
+        <div class="rate-media-toggle">
+          <div class="segmented small" role="group" aria-label="Movies or TV shows">
+            <button id="rateTypeMovie" class="segment active" aria-pressed="true" onclick="setRateMediaType('movie')">Movies</button>
+            <button id="rateTypeTv" class="segment" aria-pressed="false" onclick="setRateMediaType('tv')">TV shows</button>
+          </div>
+          <button class="btn-ghost" onclick="shuffleRatingQueue()" title="Show a different set">
+            <svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle
+          </button>
+        </div>
       </div>
 
       <div class="rate-genre-row">
-        <span class="rate-genre-label">Genre</span>
+        <span class="filter-label">Genre</span>
         <div id="rateGenreChips" class="rate-genre-chips"></div>
       </div>
 
-      <div id="rateCard" class="rate-card">
-        <!-- Current item rendered here -->
-      </div>
+      <p class="rate-progress" id="rateProgress" aria-live="polite">Loading…</p>
+
+      <div id="rateCard" class="rate-card"></div>
 
       <div id="rateEmpty" class="rate-empty" style="display: none;">
-        <p style="font-size: 32px; margin-bottom: 8px;">🎉</p>
-        <p style="font-size: 15px; margin-bottom: 4px;">Queue clear!</p>
-        <p class="rate-sub">You've both rated everything in this queue.</p>
-        <button class="secondary-btn" style="margin-top: 16px;" onclick="resetRatingQueue()">
-          Load more
-        </button>
+        <p class="empty-title">All caught up</p>
+        <p class="rate-sub">Nothing left to rate with these filters.</p>
+        <button class="btn-secondary" onclick="resetRatingQueue()">Load a fresh batch</button>
       </div>
 
       <div class="rate-coview-summary" id="rateCoviewSummary"></div>
     </section>
   </div>
 
-  <!-- Post-Watch Rating & Feedback Modal -->
-  <div id="feedbackModal" class="modal-overlay">
-    <div class="modal-content">
+  <!-- Post-watch rating sheet -->
+  <div id="feedbackModal" class="modal-overlay" onclick="if (event.target === this) closeFeedbackModal()">
+    <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modalMovieTitle">
+      <button class="modal-close" onclick="closeFeedbackModal()" aria-label="Close">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
       <div class="modal-header">
         <h3 id="modalMovieTitle" class="modal-title">Rate Movie</h3>
-        <p class="modal-subtitle">How was your watch experience?</p>
+        <p class="modal-subtitle">How was it?</p>
       </div>
 
-      <!-- 10 Interactive Stars -->
-      <div id="starSelector" class="star-selector">
-        <!-- 10 stars populated by JS -->
-      </div>
+      <div id="starSelector" class="star-selector" role="radiogroup" aria-label="Your rating out of 10"></div>
       <div id="starLabel" class="star-value-label">Select your rating</div>
 
-      <!-- Voice / Text Feedback Input -->
       <div class="review-input-wrapper">
-        <textarea id="reviewNotesInput" class="review-textarea" placeholder="Speak or write your quick thoughts / vibe..."></textarea>
-        <button id="modalMicBtn" class="review-mic-btn" onclick="toggleModalVoice()" title="Dictate review">🎙️</button>
+        <label for="reviewNotesInput" class="visually-hidden">Notes</label>
+        <textarea id="reviewNotesInput" class="review-textarea" placeholder="Any thoughts? (optional)"></textarea>
+        <button id="modalMicBtn" class="review-mic-btn" onclick="toggleModalVoice()" title="Dictate notes" aria-label="Dictate notes">
+          <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
+        </button>
       </div>
 
-      <button class="btn-submit-review" onclick="submitFeedback()">
-        Save to History & Train Recommender 🚀
-      </button>
+      <button class="btn-submit-review" onclick="submitFeedback()">Save rating</button>
     </div>
   </div>
 
   <!-- Video Playback Modal -->
   <div id="playerModal" class="modal-overlay" onclick="closePlayerModal(event)">
-    <div class="modal-content" style="padding: 16px; background: #000;" onclick="event.stopPropagation()">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-        <h3 id="playerMovieTitle" style="font-size: 16px;">Now Playing</h3>
-        <button onclick="closePlayerModal()" style="background: none; border: none; color: #fff; font-size: 22px; cursor: pointer;">✕</button>
+    <div class="modal-content player-content" role="dialog" aria-modal="true" aria-labelledby="playerMovieTitle" onclick="event.stopPropagation()">
+      <div class="player-head">
+        <h3 id="playerMovieTitle" class="modal-title">Now Playing</h3>
+        <button class="modal-close static" onclick="closePlayerModal()" aria-label="Close player">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+        </button>
       </div>
-      <video id="videoPlayer" controls playsinline style="width: 100%; border-radius: 8px; background: #111; max-height: 55vh;"></video>
+      <video id="videoPlayer" controls playsinline></video>
     </div>
   </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="/static/app.js"></script>
 </body>
