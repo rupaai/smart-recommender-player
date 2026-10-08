@@ -8,6 +8,7 @@ const state = {
   originsLoaded: false,  // "From" chips fetched from /api/origins
   recHasMore: false,     // more results available in the pool
   dismissedIds: new Set(), // items tapped away ("not this one")
+  recSessionId: null,      // feedback log: the Discover session these results belong to
   directMediaType: 'movie', // 'movie' or 'tv'
   activeMoodId: 8,
   activeSubMood: null,
@@ -516,6 +517,7 @@ async function fetchRecommendations() {
 
   try {
     state.recPage = 1;
+    state.recSessionId = null; // a new search is a new session
     const data = await requestRecommendations(1);
     state.recHasMore = !!data.has_more;
     renderRecommendations(data.items || [], data.engine, data.total_results);
@@ -577,7 +579,9 @@ async function requestRecommendations(page) {
     page_size: 20,
     include_watched: state.includeWatched,
     query: query || null,
-    profile: state.recProfile
+    profile: state.recProfile,
+    // "Show more" pages belong to the same logged session as page 1.
+    session_id: page > 1 ? state.recSessionId : null
   };
   const res = await fetch('/api/recommend', {
     method: 'POST',
@@ -585,7 +589,39 @@ async function requestRecommendations(page) {
     body: JSON.stringify(payload)
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
-  return await res.json();
+  const data = await res.json();
+  if (data.session_id) state.recSessionId = data.session_id;
+  return data;
+}
+
+// Feedback log: what happened to a recommended title. Fire-and-forget; a
+// failed log must never get in the way of the person using the app.
+function sendFeedback(mediaItemId, outcome) {
+  fetch('/api/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ media_item_id: mediaItemId, outcome, session_id: state.recSessionId })
+  }).catch(() => {});
+}
+
+function openSynopsis(el, mediaItemId) {
+  el.classList.toggle('expanded');
+  if (!el.dataset.logged) {
+    el.dataset.logged = '1';
+    sendFeedback(mediaItemId, 'opened');
+  }
+}
+
+// "Not this one": the negative signal the recommender has been missing.
+function dismissRecommendation(mediaItemId, btn) {
+  state.dismissedIds.add(mediaItemId);
+  sendFeedback(mediaItemId, 'dismissed');
+  const card = btn.closest('.movie-card');
+  if (card) {
+    card.classList.add('dismissed');
+    setTimeout(() => card.remove(), 220);
+  }
+  showToast('Noted. It will learn from that.');
 }
 
 function updateLoadMoreButton() {
@@ -670,7 +706,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
       : watchButtonHtml(m);
 
     const overview = m.overview
-      ? `<p class="movie-synopsis" onclick="this.classList.toggle('expanded')" title="Tap to expand">${escapeHtml(m.overview)}</p>`
+      ? `<p class="movie-synopsis" onclick="openSynopsis(this, ${m.id})" title="Tap to expand">${escapeHtml(m.overview)}</p>`
       : `<p class="movie-synopsis empty">No synopsis available.</p>`;
 
     card.innerHTML = `
@@ -692,6 +728,8 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
         <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
           <span class="label">Jellyfin</span> ${icon('external')}
         </a>
+        <button class="btn-dismiss" onclick="dismissRecommendation(${m.id}, this)"
+                title="Not this one" aria-label="Not this one: ${escapeHtml(m.title)}">${icon('x')}</button>
       </div>
     `;
     return card;
@@ -1547,6 +1585,7 @@ function initDiscoverTab() {
 }
 
 function initRateTab() {
+  initRateSearch();
   renderRateGenres();
   if (!state.rateGenreList.length) loadRateGenres();
   // Profiles may already be cached (loadPartnerName), but the queue still
@@ -1748,7 +1787,11 @@ function renderRateCard() {
 
   const done = state.rateIndex;
   const total = state.rateQueue.length;
-  setRateProgress(`${done + 1} of ${total}` + (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : ''));
+  if (item.fromSearch) {
+    setRateProgress('From your search');
+  } else {
+    setRateProgress(`${done + 1} of ${total}` + (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : ''));
+  }
 
   // Both people's verdicts, shown on the card's stub: yours is the one
   // being filled in now; theirs, if they've answered, sits beside it.
@@ -1759,6 +1802,16 @@ function renderRateCard() {
   let otherPending = true;
   if (other?.status === 'not_seen') { otherVerdict = "<b>hasn't seen it</b>"; otherPending = false; }
   else if (other?.user_rating) { otherVerdict = `<b>${escapeHtml(other.user_rating)}/10</b>`; otherPending = false; }
+
+  // A title opened from search may already carry this person's verdict:
+  // show it, and let them change it.
+  const mine = (item.co_view?.verdicts || []).find(v => v.profile_id === state.rateProfileId);
+  let myVerdict = '<b>not yet</b>';
+  if (mine?.status === 'not_seen') myVerdict = "<b>hasn't seen it</b>";
+  else if (mine?.user_rating) myVerdict = `<b>${escapeHtml(mine.user_rating)}/10</b>`;
+  const question = mine?.user_rating
+    ? `You gave it ${escapeHtml(mine.user_rating)}/10. Change it?`
+    : (me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? How was it?` : 'Seen it? How was it?');
 
   const pills = [];
   if (item.in_library) pills.push('<span class="badge badge-coview-score">In your library</span>');
@@ -1786,7 +1839,7 @@ function renderRateCard() {
     </div>
 
     <div class="rate-controls">
-      <p class="rate-question" id="rateQuestion">${me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? How was it?` : 'Seen it? How was it?'}</p>
+      <p class="rate-question" id="rateQuestion">${question}</p>
       <div class="rate-stars" role="group" aria-labelledby="rateQuestion">
         ${Array.from({ length: 10 }, (_, i) => `<button class="star-btn" onclick="submitRating(${i + 1})" aria-label="${i + 1} out of 10 — ${RATING_WORDS[i + 1]}" title="${i + 1} · ${RATING_WORDS[i + 1]}">${icon('star', 'icon star-icon')}</button>`).join('')}
       </div>
@@ -1801,7 +1854,7 @@ function renderRateCard() {
 
     <div class="rate-stub">
       <span class="stub-label">Verdicts</span>
-      <span class="stub-verdict pending">${escapeHtml(me.name)}: <b>not yet</b></span>
+      <span class="stub-verdict ${mine ? '' : 'pending'}">${escapeHtml(me.name)}: ${myVerdict}</span>
       <span class="stub-sep">/</span>
       <span class="stub-verdict ${otherPending ? 'pending' : ''}">${escapeHtml(otherName)}: ${otherVerdict}</span>
     </div>
@@ -1813,7 +1866,10 @@ let ratingInFlight = false;
 async function submitRating(value) {
   const item = currentRateItem();
   if (!item || ratingInFlight) return;
-  if (await postRating(item.id, { user_rating: value, status: 'seen' })) advanceQueue();
+  if (await postRating(item.id, { user_rating: value, status: 'seen' })) {
+    if (item.fromSearch) showToast(`Saved: ${item.title}, ${value}/10`);
+    advanceQueue();
+  }
 }
 
 async function submitNotSeen() {
@@ -1923,3 +1979,221 @@ document.addEventListener('keydown', (e) => {
     skipRateItem();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Search to rate (design doc §1): find any title, rate it now.
+// ---------------------------------------------------------------------------
+// A combobox above the queue. Picking a result puts that title on the card
+// in front of the queue, so the stars, "haven't seen it" and skip all work
+// as usual. Titles missing from the catalogue can be found on TMDB and added.
+
+const rateSearch = {
+  bound: false,
+  timer: null,
+  seq: 0,           // ignores responses that arrive after a newer query
+  query: '',
+  mode: 'catalogue', // 'catalogue' | 'tmdb'
+  rows: [],          // [{kind: 'item'|'tmdb'|'more', data}]
+  active: -1,
+};
+
+function initRateSearch() {
+  if (rateSearch.bound) return;
+  const input = document.getElementById('rateSearchInput');
+  if (!input) return;
+  rateSearch.bound = true;
+
+  input.addEventListener('input', () => {
+    clearTimeout(rateSearch.timer);
+    const q = input.value.trim();
+    rateSearch.timer = setTimeout(() => runRateSearch(q), 250);
+  });
+  input.addEventListener('keydown', onRateSearchKey);
+  input.addEventListener('focus', () => { if (rateSearch.rows.length) openRateSearchList(); });
+  // Close when focus leaves the search box, but not before a click on a
+  // result has landed (mousedown below keeps focus in place).
+  input.addEventListener('blur', () => setTimeout(closeRateSearchList, 120));
+  document.getElementById('rateSearchList').addEventListener('mousedown', e => e.preventDefault());
+}
+
+async function runRateSearch(q, mode = 'catalogue') {
+  rateSearch.query = q;
+  rateSearch.mode = mode;
+  if (q.length < 2) {
+    rateSearch.rows = [];
+    closeRateSearchList();
+    return;
+  }
+  const seq = ++rateSearch.seq;
+  renderRateSearchMessage(mode === 'tmdb' ? 'Searching TMDB…' : 'Searching…');
+  try {
+    let rows;
+    if (mode === 'tmdb') {
+      const res = await fetch(`/api/catalogue/tmdb-search?${new URLSearchParams({ q })}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+      rows = (data.items || []).map(d => ({ kind: 'tmdb', data: d }));
+    } else {
+      const params = new URLSearchParams({ q, media_type: 'all', limit: 8, profile_id: state.rateProfileId });
+      const res = await fetch(`/api/catalogue/search?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      rows = (data.items || []).map(d => ({ kind: 'item', data: d }));
+      rows.push({ kind: 'more', data: null });
+    }
+    if (seq !== rateSearch.seq) return;
+    rateSearch.rows = rows;
+    rateSearch.active = rows.length && rows[0].kind !== 'more' ? 0 : -1;
+    renderRateSearchList();
+  } catch (err) {
+    if (seq !== rateSearch.seq) return;
+    console.error('Title search failed:', err);
+    rateSearch.rows = [];
+    renderRateSearchMessage(mode === 'tmdb'
+      ? `Couldn't reach TMDB (${err.message}).`
+      : "Search isn't working right now. Check the server.");
+  }
+}
+
+function rateSearchMeta(d, kind) {
+  const bits = [];
+  if (d.release_year) bits.push(escapeHtml(d.release_year));
+  bits.push(d.media_type === 'tv' ? 'TV' : 'Film');
+  if (kind === 'tmdb' && d.catalogue_id) bits.push('already in your catalogue');
+  return bits.join(' · ');
+}
+
+function rateSearchVerdict(d) {
+  const v = d.my_verdict;
+  if (!v) return '';
+  if (v.status === 'not_seen') return '<span class="rate-search-verdict">Not seen</span>';
+  if (v.user_rating) return `<span class="rate-search-verdict">You: ${escapeHtml(v.user_rating)}/10</span>`;
+  return '';
+}
+
+function renderRateSearchList() {
+  const list = document.getElementById('rateSearchList');
+  const q = escapeHtml(rateSearch.query);
+  const items = rateSearch.rows.filter(r => r.kind !== 'more');
+  let html = '';
+  if (!items.length) {
+    html += `<li class="rate-search-empty" role="presentation">${rateSearch.mode === 'tmdb'
+      ? `Nothing on TMDB matches “${q}”.` : `“${q}” isn't in your catalogue.`}</li>`;
+  }
+  html += rateSearch.rows.map((row, i) => {
+    const activeCls = i === rateSearch.active ? ' active' : '';
+    if (row.kind === 'more') {
+      return `<li id="rateOpt-${i}" class="rate-search-option rate-search-more${activeCls}" role="option"
+                  aria-selected="${i === rateSearch.active}" onclick="chooseRateSearchRow(${i})">
+                ${icon('search')}<span>Not here? Search TMDB for “${q}”</span></li>`;
+    }
+    const d = row.data;
+    return `<li id="rateOpt-${i}" class="rate-search-option${activeCls}" role="option"
+                aria-selected="${i === rateSearch.active}" onclick="chooseRateSearchRow(${i})">
+              ${posterHtml(d.poster_url, d.title, 'rate-search-poster')}
+              <span class="rate-search-text">
+                <span class="rate-search-title">${escapeHtml(d.title)}</span>
+                <span class="rate-search-meta">${rateSearchMeta(d, row.kind)}</span>
+              </span>
+              ${row.kind === 'item' ? rateSearchVerdict(d) : `<span class="rate-search-verdict add">Add</span>`}
+            </li>`;
+  }).join('');
+  list.innerHTML = html;
+  openRateSearchList();
+}
+
+function renderRateSearchMessage(text) {
+  const list = document.getElementById('rateSearchList');
+  list.innerHTML = `<li class="rate-search-empty" role="presentation">${escapeHtml(text)}</li>`;
+  openRateSearchList();
+}
+
+function openRateSearchList() {
+  const list = document.getElementById('rateSearchList');
+  const input = document.getElementById('rateSearchInput');
+  list.hidden = false;
+  input.setAttribute('aria-expanded', 'true');
+  if (rateSearch.active >= 0) input.setAttribute('aria-activedescendant', `rateOpt-${rateSearch.active}`);
+  else input.removeAttribute('aria-activedescendant');
+}
+
+function closeRateSearchList() {
+  const list = document.getElementById('rateSearchList');
+  const input = document.getElementById('rateSearchInput');
+  if (!list || !input) return;
+  list.hidden = true;
+  input.setAttribute('aria-expanded', 'false');
+  input.removeAttribute('aria-activedescendant');
+}
+
+function onRateSearchKey(e) {
+  const n = rateSearch.rows.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!n) return;
+    e.preventDefault();
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    rateSearch.active = (rateSearch.active + step + n) % n;
+    renderRateSearchList();
+    document.getElementById(`rateOpt-${rateSearch.active}`)?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    clearTimeout(rateSearch.timer);
+    const q = e.target.value.trim();
+    // Enter before the debounce fired: search now rather than pick a stale row.
+    if (q !== rateSearch.query) { runRateSearch(q); return; }
+    if (rateSearch.active >= 0) chooseRateSearchRow(rateSearch.active);
+  } else if (e.key === 'Escape') {
+    if (!document.getElementById('rateSearchList').hidden) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeRateSearchList();
+    }
+  }
+}
+
+async function chooseRateSearchRow(i) {
+  const row = rateSearch.rows[i];
+  if (!row) return;
+  if (row.kind === 'more') {
+    runRateSearch(rateSearch.query, 'tmdb');
+    return;
+  }
+  if (row.kind === 'item') {
+    openSearchedTitle(row.data);
+    return;
+  }
+  // TMDB result: add it to the catalogue (a no-op if it's already there).
+  renderRateSearchMessage(`Adding ${row.data.title}…`);
+  try {
+    const res = await fetch(`/api/catalogue/tmdb-import?profile_id=${state.rateProfileId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_type: row.data.media_type, tmdb_id: row.data.tmdb_id })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    openSearchedTitle(data);
+  } catch (err) {
+    console.error('TMDB import failed:', err);
+    renderRateSearchMessage(`Couldn't add it (${err.message}).`);
+  }
+}
+
+// Puts the chosen title on the card, in front of the queue.
+function openSearchedTitle(item) {
+  item.fromSearch = true;
+  state.rateQueue = state.rateQueue.filter((it, idx) => idx < state.rateIndex || it.id !== item.id);
+  state.rateQueue.splice(state.rateIndex, 0, item);
+  state.rateSkipped.delete(item.id);
+
+  const input = document.getElementById('rateSearchInput');
+  input.value = '';
+  rateSearch.rows = [];
+  rateSearch.query = '';
+  closeRateSearchList();
+  input.blur(); // so 1–0 / N / S go to the card straight away
+
+  renderRateCard();
+  document.getElementById('rateCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+

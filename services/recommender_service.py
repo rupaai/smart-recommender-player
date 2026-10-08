@@ -409,6 +409,11 @@ PROFILE_MIX: Dict[str, Tuple[float, float]] = {
     "partner": (0.75, 0.25),
 }
 
+# Vibe search (design doc §2.6): weight of the text-to-film similarity, and
+# how many nearest titles join the SQL shortlist.
+VIBE_WEIGHT = 3.0
+VIBE_SHORTLIST = 400
+
 TIER_BOOSTS: Dict[str, float] = {
     # A: you both liked it — the scarcest and most useful signal
     # B: one of you loved it, the other hasn't seen it — "he'd recommend this"
@@ -435,7 +440,9 @@ def parse_origin_intent(query: Optional[str]) -> Optional[Dict[str, Any]]:
     text = query.lower()
     best = None
     for phrase, spec in ORIGIN_INTENT.items():
-        if phrase in text:
+        # Whole words only (an optional plural "s"): a bare substring test read
+        # "indiana jones" as Indian, "polished" as Polish and "animated" as anime.
+        if re.search(rf"\b{re.escape(phrase)}s?\b", text):
             # Prefer the longest matching phrase (most specific region).
             if best is None or len(phrase) > len(best[0]):
                 best = (phrase, spec)
@@ -459,6 +466,27 @@ def _theme_mentioned(theme: str, tokens: List[str]) -> bool:
     """True when the request itself names a theme (not just its genre)."""
     haystack = " ".join(tokens)
     return any(t in haystack for t in THEMES[theme]["terms"])
+
+
+NEGATORS = {"not", "no", "never", "without", "less", "nothing", "avoid", "skip",
+            "dont", "don", "isn", "aren", "nor", "none"}
+# Words that end a negation's reach: "not scary but funny" negates scary only.
+NEGATION_BREAKERS = {"but", "and", "or", "yet", "though", "although", "however", "just", "also"}
+NEGATION_WINDOW = 3
+NEGATION_KEEPS_EFFECT = {"complicated", "simple"}
+
+
+def _is_negated(tokens: List[str], i: int) -> bool:
+    """A negator up to three words back, with no "but"/"and" in between.
+
+    A one-word window missed "not too complicated" and "no really scary".
+    """
+    for j in range(i - 1, max(i - 1 - NEGATION_WINDOW, -1), -1):
+        if tokens[j] in NEGATION_BREAKERS:
+            return False
+        if tokens[j] in NEGATORS:
+            return True
+    return False
 
 
 def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
@@ -490,13 +518,15 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
     matched_terms: List[str] = []
 
     for i, word in enumerate(tokens):
-        # Negation-aware: "not too complicated" must not read as wanting
-        # complexity. Check the previous token for a negator.
-        negated = i > 0 and tokens[i - 1] in ("not", "no", "never", "without", "less")
         intent = QUERY_INTENT.get(word)
         if not intent:
             continue
+        negated = _is_negated(tokens, i)
         matched_terms.append(word)
+        # "not complicated" means simple, and both words carry the same
+        # exclusions, so for these the negation must not flip anything.
+        if negated and word in NEGATION_KEEPS_EFFECT:
+            negated = False
 
         for g in intent.get("genres", []):
             if negated:
@@ -614,7 +644,7 @@ def resolve_effective_genres(
 _SERIES_INHERITED_KEYS = (
     "recommendation_score", "base_weighted_rating", "taste_bonus",
     "taste_bonus_own", "taste_bonus_other", "relevance_boost", "query_boost",
-    "co_view_tier", "tier_boost", "matched_themes",
+    "co_view_tier", "tier_boost", "matched_themes", "vibe_similarity", "vibe_boost",
 )
 _SERIES_INTERNAL_KEYS = ("seen", "series_position")
 
@@ -704,13 +734,65 @@ class RecommenderService:
         enable_tier2: bool = True,
         shortlist_size: int = 250,
         final_pool: int = 50,
+        vibe_index: Optional[Any] = None,
     ):
         self.db = db_manager
+        self.vibe_index = vibe_index           # services.vibe_index.VibeIndex, optional
+        self._title_search = None
         self.api_key = api_key
         self.enable_tier2 = enable_tier2
         self.shortlist_size = shortlist_size   # Funnel 2: quality-cut pool size
         self.final_pool = final_pool           # Funnel 4: diverse pool for pagination
         self.http = requests.Session()
+
+    # -- Vibe search (design doc §2) ----------------------------------------
+    def vibe_ready(self, query: Optional[str]) -> bool:
+        """True when a typed request can be answered by vibe similarity."""
+        return bool(query and query.strip() and self.vibe_index is not None and self.vibe_index.is_ready())
+
+    def _vibe_query(self, query: str) -> Optional[Dict[str, Any]]:
+        from services.vibe_index import resolve_like_titles
+
+        if self._title_search is None:
+            from services.catalogue_search import CatalogueSearch
+            self._title_search = CatalogueSearch(self.db)
+        try:
+            like = resolve_like_titles(query, self.db, self._title_search)
+            vec = self.vibe_index.query_vector(query, [t["id"] for t in like])
+        except Exception as e:
+            print(f"[Recommender] Vibe query failed ({e}); using the older ranking.", flush=True)
+            return None
+        if vec is None:
+            return None
+        return {"vector": vec, "like": like}
+
+    def _apply_vibe(self, ranked: List[Dict[str, Any]], vibe: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """score += VIBE_WEIGHT · similarity, rescaled over this candidate pool.
+
+        Raw cosines from bge sit in a narrow band (~0.55–0.8), so they are
+        stretched from the pool's 25th percentile (0) to its best match (1).
+        Titles added after the last index build have no vector and get 0.
+        """
+        sims = self.vibe_index.similarities(vibe["vector"], [it["id"] for it in ranked if it.get("id")])
+        if not sims:
+            return ranked
+        values = sorted(sims.values())
+        lo, hi = values[len(values) // 4], values[-1]
+        span = max(hi - lo, 1e-6)
+        like_ids = {t["id"] for t in vibe["like"]}
+        for it in ranked:
+            s = sims.get(it.get("id"))
+            if s is None:
+                continue
+            boost = VIBE_WEIGHT * min(max((s - lo) / span, 0.0), 1.0)
+            it["vibe_similarity"] = round(s, 3)
+            it["vibe_boost"] = round(boost, 2)
+            it["recommendation_score"] = round(float(it.get("recommendation_score") or 0.0) + boost, 2)
+            if like_ids and it["id"] in like_ids:
+                it["vibe_named"] = True
+        ranked = [it for it in ranked if it.get("id") not in like_ids]   # don't suggest the film you named
+        ranked.sort(key=lambda it: it.get("recommendation_score") or 0.0, reverse=True)
+        return ranked
 
     def _resolve_profiles(self, profile: str) -> Tuple[int, int]:
         """Maps a profile selector to concrete profile ids.
@@ -1161,6 +1243,28 @@ class RecommenderService:
                 c for c in extra if c.get("id") not in seen_ids
             ]
 
+        # Vibe search: the titles whose vibe documents are closest to the
+        # typed request join the shortlist, through the same hard filters, so
+        # a well-matching 6.9 film isn't lost to 250 better-rated ones.
+        vibe = self._vibe_query(query) if self.vibe_ready(query) else None
+        if vibe:
+            near = self.vibe_index.top(vibe["vector"], k=VIBE_SHORTLIST)
+            extra = self.db.get_top_candidates(
+                media_type=media_type,
+                genres=genres if genres else None,
+                exclude_genres=excluded_genres or None,
+                origin_countries=origin_countries,
+                origin_languages=origin_languages,
+                exclude_watched=sql_exclude_watched,
+                min_rating=min_rating,
+                era=era_preference,
+                duration=duration_preference if media_type == "movie" else None,
+                limit=VIBE_SHORTLIST,
+                only_ids=[i for i, _ in near],
+            )
+            seen_ids = {c.get("id") for c in candidates}
+            candidates = list(candidates) + [c for c in extra if c.get("id") not in seen_ids]
+
         if not candidates:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
 
@@ -1229,6 +1333,9 @@ class RecommenderService:
         if not ranked:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
 
+        if vibe:
+            ranked = self._apply_vibe(ranked, vibe)
+
         # Stage 2b: Series order. A sequel is swapped for the earliest entry
         # neither of you has seen, and each series appears at most once.
         ranked = apply_series_order(ranked, self.db)
@@ -1252,6 +1359,7 @@ class RecommenderService:
             or genre_spec["include"]
             or genre_spec["exclude"]
             or genre_spec.get("weight", 0) > 0
+            or bool(vibe)   # a vibe-ranked list is a targeted answer too
         )
         if variety and not targeted and len(diverse_candidates) > page_size:
             random.Random(int(time.time() // 600)).shuffle(diverse_candidates)
@@ -1268,4 +1376,5 @@ class RecommenderService:
             "page_size": page_size,
             "has_more": end_idx < total_results,
             "items": paginated_items,
+            "vibe": {"used": bool(vibe), "like_titles": [t["title"] for t in vibe["like"]] if vibe else []},
         }

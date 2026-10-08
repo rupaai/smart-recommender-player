@@ -15,7 +15,12 @@ dependencies = [
     "libtorrent>=2.1.1",
     "guessit>=4.4.0",
     "onnxruntime>=1.17.0,<1.24",
+    "tokenizers>=0.15",
 ]
+
+[project.optional-dependencies]
+# Mac-only extras. `uv run --extra llm ...` for the mood tagger (utils/mood_tag.py).
+llm = ["anthropic>=1.0"]
 
 [project.scripts]
 movie-web = "server:run_server"

@@ -26,8 +26,10 @@ from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.jellyfin_service import JellyfinService
+from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
+from services.vibe_index import VibeIndex
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -61,6 +63,7 @@ recommender_service = RecommenderService(
     enable_tier2=enable_tier2,
     shortlist_size=recommender_cfg.get("shortlist_size", 250),
     final_pool=recommender_cfg.get("final_pool", 50),
+    vibe_index=VibeIndex(),
 )
 
 # TIGER generative retrieval engine (parallel — legacy recommender untouched).
@@ -150,6 +153,14 @@ class RecommendRequest(BaseModel):
     min_rating: Optional[float] = None
     profile: str = "together"  # 'me' | 'partner' | 'together'
     exclude_ids: Optional[List[int]] = None
+    session_id: Optional[int] = None  # feedback log: pass back for "Show more" pages
+
+
+class FeedbackRequest(BaseModel):
+    media_item_id: int
+    outcome: str  # 'opened' | 'dismissed' | 'downloaded' | 'played' | 'rated'
+    session_id: Optional[int] = None
+    rating: Optional[float] = Field(default=None, ge=1, le=10)
 
 
 class StartWatchRequest(BaseModel):
@@ -173,6 +184,11 @@ class RateRequest(BaseModel):
     user_rating: Optional[float] = Field(default=None, ge=1, le=10)
     status: str = "seen"  # 'seen' | 'not_seen'
     notes: Optional[str] = None
+
+
+class TmdbImportRequest(BaseModel):
+    media_type: str  # 'movie' | 'tv'
+    tmdb_id: int
 
 
 class RenameProfileRequest(BaseModel):
@@ -360,7 +376,60 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     results.setdefault("has_more", False)
     results.setdefault("page", 1)
     results.setdefault("page_size", len(results.get("items") or []))
+
+    # Feedback log (schema v7): one session per Discover request, one
+    # impression per title shown. Logging must never break recommendations.
+    try:
+        session_id = req.session_id if req.session_id and db.session_exists(req.session_id) else None
+        if session_id is None:
+            session_id = db.create_discover_session(
+                profile=req.profile,
+                media_type=req.media_type,
+                query_text=req.query,
+                request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
+                engine=results.get("engine"),
+            )
+        start_rank = (req.page - 1) * effective_page_size + 1
+        db.log_impressions(session_id, results.get("items") or [], start_rank)
+        results["session_id"] = session_id
+    except Exception as e:  # noqa: BLE001
+        print(f"[Feedback] impression logging failed: {e}", flush=True)
     return results
+
+
+def _log_outcome(media_item_id: Optional[int], outcome: str, rating: Optional[float] = None) -> None:
+    """Attributes a play / rating / download to the Discover impression that
+    showed this title recently, if any. Never raises."""
+    if not media_item_id:
+        return
+    try:
+        db.record_outcome(int(media_item_id), outcome, rating=rating)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Feedback] outcome logging failed: {e}", flush=True)
+
+
+@app.post("/api/feedback")
+async def record_feedback(req: FeedbackRequest) -> Dict[str, Any]:
+    """Records what happened to a recommended title: opened (synopsis tapped),
+    dismissed ("not this one"), downloaded, played or rated."""
+    try:
+        updated = db.record_outcome(req.media_item_id, req.outcome, req.session_id, req.rating)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"updated": updated}
+
+
+@app.get("/api/feedback/stats")
+async def feedback_stats() -> Dict[str, Any]:
+    """How much training signal has been logged so far."""
+    return db.get_feedback_stats()
+
+
+@app.get("/api/vibe/status")
+async def vibe_status() -> Dict[str, Any]:
+    """Whether the vibe index (models/vibe/, built on the Mac) is loaded."""
+    index = recommender_service.vibe_index
+    return index.status() if index else {"ready": False}
 
 
 @app.get("/api/watch/current")
@@ -390,6 +459,7 @@ async def stream_media(item_id: int) -> Dict[str, Any]:
 async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
     """Begins watching a movie session."""
     session_id = db.start_active_watch(req.media_item_id)
+    _log_outcome(req.media_item_id, "played")
     active = db.get_active_watch()
     return {"success": True, "session_id": session_id, "active": active}
 
@@ -397,6 +467,10 @@ async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
 @app.post("/api/watch/finish")
 async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
     """Completes watch session with star rating & review notes, updating taste profile."""
+    with db.get_connection() as conn:
+        row = conn.execute(
+            "SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (req.session_id,)
+        ).fetchone()
     record_id = db.finish_active_watch(
         session_id=req.session_id,
         user_rating=req.user_rating,
@@ -404,6 +478,8 @@ async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
     )
     if not record_id:
         raise HTTPException(status_code=404, detail="Active session not found.")
+    if req.user_rating and row:
+        _log_outcome(row["media_item_id"], "rated", req.user_rating)
     return {"success": True, "record_id": record_id}
 
 
@@ -633,7 +709,70 @@ async def rate_item(req: RateRequest) -> Dict[str, Any]:
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    if req.status == "seen" and req.user_rating:
+        _log_outcome(req.media_item_id, "rated", req.user_rating)
     return summary
+
+
+catalogue_search = CatalogueSearch(db)
+
+
+def _with_co_view(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Adds both profiles' verdicts, the shape the Rate card already reads."""
+    summary = db.get_rating_summary(item["id"])
+    item["co_view"] = {
+        "tier": summary["tier"],
+        "tier_reason": summary["tier_reason"],
+        "combined_score": summary["combined_score"],
+        "disagreement": summary["disagreement"],
+        "verdicts": summary["verdicts"],
+    }
+    return item
+
+
+@app.get("/api/catalogue/search")
+async def search_catalogue(
+    q: str = Query(..., min_length=1, description="Title text; 2+ characters"),
+    media_type: str = Query(default="all", description="movie | tv | all"),
+    limit: int = Query(default=10, ge=1, le=25),
+    profile_id: Optional[int] = Query(default=None, description="Adds this profile's own verdict"),
+) -> Dict[str, Any]:
+    """Search-to-rate (design doc §1): accent- and punctuation-insensitive title
+    search over the catalogue, exact matches first, then by vote count."""
+    mtype = media_type if isinstance(media_type, str) else "all"
+    pid = profile_id if isinstance(profile_id, int) else None
+    lim = limit if isinstance(limit, int) else 10
+    items = await asyncio.to_thread(catalogue_search.search, q, mtype, lim, pid)
+    return {"query": q, "items": [_with_co_view(it) for it in items]}
+
+
+@app.get("/api/catalogue/tmdb-search")
+async def search_tmdb(q: str = Query(..., min_length=2), media_type: str = "all") -> Dict[str, Any]:
+    """Fallback when a title isn't in the catalogue. Needs TMDB_API_KEY + internet."""
+    if not api_key:
+        raise HTTPException(status_code=503, detail="TMDB_API_KEY is not set on the server.")
+    try:
+        items = await asyncio.to_thread(tmdb_search, api_key, db, q, media_type)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"query": q, "items": items}
+
+
+@app.post("/api/catalogue/tmdb-import")
+async def import_from_tmdb(req: TmdbImportRequest, profile_id: Optional[int] = None) -> Dict[str, Any]:
+    """Adds one TMDB title to the catalogue and returns it ready to rate."""
+    if not api_key:
+        raise HTTPException(status_code=503, detail="TMDB_API_KEY is not set on the server.")
+    try:
+        item_id = await asyncio.to_thread(tmdb_import, api_key, db, req.media_type, req.tmdb_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    catalogue_search.invalidate()
+    item = db.get_item_by_id(item_id) or {"id": item_id}
+    item["in_library"] = bool(item.pop("sources", None))
+    return _with_co_view(item)
 
 
 @app.get("/api/ratings/summary/{item_id}")
@@ -688,6 +827,8 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
                 media_type=req.media_type,
             )
 
+        if req.movie_id and req.movie_id > 0:
+            _log_outcome(req.movie_id, "downloaded")
         asyncio.create_task(
             torrent_downloader.download(
                 req.magnet_link,
