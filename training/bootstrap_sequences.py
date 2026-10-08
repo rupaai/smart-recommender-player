@@ -54,22 +54,41 @@ def load_catalog(db) -> dict:
     return catalog
 
 
-def real_history_sequences(db, sid: dict, min_seq: int) -> list:
-    """Chronological semantic ID sequences built from watch_history."""
-    history = db.get_watch_history_chronological(limit=10000)
-    by_user: dict = defaultdict(list)
-    for row in history:
-        codes = sid.get(str(int(row["media_item_id"])))
-        if codes:
-            by_user["local"].append([int(c) for c in codes[:3]])
-    seqs = []
-    for _, codes in by_user.items():
-        # collapse consecutive duplicates
-        collapsed = [c for i, c in enumerate(codes) if i == 0 or c != codes[i - 1]]
-        if len(collapsed) >= min_seq:
-            seqs.append(collapsed)
-    print(f"   real watch-history sequences: {len(seqs)}")
-    return seqs
+def real_history_sequences(db, sid: dict, min_seq: int, min_rating: float = 6.0,
+                           weight: int = 20) -> list:
+    """Your own liked films, in the order you watched/rated them.
+
+    Only films marked SEEN and rated >= `min_rating` (or seen without a
+    rating) count. The old version read every watch_history row, so 220
+    "we haven't seen it" answers and low ratings were taught to the model as
+    things you chose to watch.
+
+    One person's history is a single sequence among hundreds of MovieLens
+    strangers, so it is repeated `weight` times to make the model pay
+    attention to it.
+    """
+    with db.get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT media_item_id
+            FROM watch_history
+            WHERE COALESCE(status, 'seen') = 'seen'
+              AND (user_rating IS NULL OR user_rating >= ?)
+            ORDER BY watched_at ASC, id ASC
+            """,
+            (min_rating,),
+        ).fetchall()
+    codes = []
+    for (item_id,) in rows:
+        c = sid.get(str(int(item_id)))
+        if c:
+            codes.append([int(x) for x in c[:3]])
+    collapsed = [c for i, c in enumerate(codes) if i == 0 or c != codes[i - 1]]
+    if len(collapsed) < min_seq:
+        print(f"   real watch-history: only {len(collapsed)} liked films — skipped")
+        return []
+    print(f"   real watch-history: {len(collapsed)} liked films, repeated x{weight}")
+    return [collapsed] * max(1, weight)
 
 
 def movielens_sequences(
@@ -174,6 +193,12 @@ def main() -> None:
     ap.add_argument("--movielens", default=None, help="Path to MovieLens ratings.csv")
     ap.add_argument("--min-seq", type=int, default=3)
     ap.add_argument("--db", default=None)
+    ap.add_argument("--min-rating", type=float, default=6.0,
+                    help="your ratings below this are not 'liked' and are left out")
+    ap.add_argument("--history-weight", type=int, default=20,
+                    help="how many times your own sequence is repeated vs MovieLens users")
+    ap.add_argument("--no-synthetic", action="store_true",
+                    help="never add made-up genre sequences")
     args = ap.parse_args()
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -186,13 +211,13 @@ def main() -> None:
     sid = load_semantic_ids(sid_path)
     print(f"📊 Semantic IDs: {len(sid)} items")
 
-    db_path = args.db or os.environ.get("DATABASE_PATH") or "catalogue.db"
+    db_path = args.db or os.environ.get("DATABASE_PATH") or "catalogue_full.db"
     if not os.path.isabs(db_path):
         db_path = os.path.join(root, db_path)
     db = DatabaseManager(db_path)
 
     print("\n1️⃣  Real watch history ...")
-    sequences = real_history_sequences(db, sid, args.min_seq)
+    sequences = real_history_sequences(db, sid, args.min_seq, args.min_rating, args.history_weight)
 
     if args.movielens:
         print(f"\n2️⃣  MovieLens ({args.movielens}) ...")
@@ -204,7 +229,7 @@ def main() -> None:
             movielens_sequences(args.movielens, catalog, sid, args.min_seq, movies_csv=sibling)
         )
 
-    if len(sequences) < 50:
+    if len(sequences) < 50 and not args.no_synthetic:
         print("\n3️⃣  Synthetic genre co-watch bootstrap (sparse history fallback) ...")
         sequences.extend(synthetic_sequences(db, sid, args.min_seq))
 

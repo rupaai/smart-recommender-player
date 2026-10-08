@@ -313,3 +313,11 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 11. Genre chips widen (union with mood + query genres) instead of narrowing.
 12. Era/runtime `or candidates` silent fallback. `medium` duration is unhandled in Python.
 13. Variety: generative always shuffles. Legacy shuffles after MMR (same 50, reordered).
+
+### TIGER retraining fixes (2026-10-08)
+- `training/bootstrap_sequences.py`: real history = seen + rated ≥ `--min-rating` (6) only, repeated `--history-weight` (20)×. New `--no-synthetic`. Default DB is now `catalogue_full.db` (the one the semantic IDs come from). Verified locally: 70 liked films + 601 MovieLens sequences.
+- `training/train_tiger_predictor.py`: `make_training_examples` slid only over the last `max_seq_len-1` items of each sequence. Now it covers the whole sequence: **4,721 → 30,359 training examples** on the same data.
+- `training/retrain_tiger.sh`: one command (Steps D→G, backs up `models/tiger` to `models/tiger.bak`). Needs torch, so run it on the Mac (Claude's sandbox has no torch and no PyPI). **Not yet run**, so the deployed model is still the old synthetic one.
+
+## 8. NEXT: Recommender v2 design
+`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + optional LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up with an entropy-based question picker, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).

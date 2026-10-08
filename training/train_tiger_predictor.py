@@ -93,7 +93,10 @@ def make_training_examples(sequences: list, max_seq_len: int):
     """
     examples = []
     for seq in sequences:
-        seq = seq[-max_seq_len + 1:] if len(seq) >= max_seq_len else seq
+        # Slide over the WHOLE sequence. The previous version first cut every
+        # sequence down to its last (max_seq_len - 1) items, so a 60-film
+        # history (or a 300-rating MovieLens user) produced only ~8 examples
+        # and everything before them was thrown away.
         for t in range(1, len(seq)):
             examples.append((seq[max(0, t - (max_seq_len - 1)):t], seq[t]))
     return examples
