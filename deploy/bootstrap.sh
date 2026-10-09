@@ -20,7 +20,7 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CC_ROOT="${CC_ROOT:-/srv/couchcinema}"
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 GITHUB_REPO="${GITHUB_REPO:-rupaai/smart-recommender-player}"
-RUNNER_NAME="${RUNNER_NAME:-mars}"
+CC_RUNNER_NAME="${CC_RUNNER_NAME:-mars}"
 RUNTIME_ROOT="${RUNTIME_ROOT:-/run/user}"
 SUBUID_FILE="${SUBUID_FILE:-/etc/subuid}"
 SUBGID_FILE="${SUBGID_FILE:-/etc/subgid}"
@@ -346,10 +346,10 @@ ensure_prowlarr_config() {
   chmod 600 "$cfg"
 }
 
-runner_unit() { echo "actions.runner.${GITHUB_REPO//\//-}.${RUNNER_NAME}.service"; }
+runner_unit() { echo "actions.runner.${GITHUB_REPO//\//-}.${CC_RUNNER_NAME}.service"; }
 
 ensure_runner() {
-  info "GitHub Actions runner (label '$RUNNER_NAME')"
+  info "GitHub Actions runner (label '$CC_RUNNER_NAME')"
   if [ "${SKIP_RUNNER:-0}" = 1 ]; then ok "skipped (--skip-runner)"; return 0; fi
   local dir
   dir="$(deploy_home)/actions-runner"
@@ -379,7 +379,7 @@ print(m.group(1) if m else "")')"
     tar -xzf "$tarball" -C "$dir"
     rm -f "$tarball"
     chown -R "$DEPLOY_USER:$DEPLOY_USER" "$dir"
-    as_deploy bash -c "cd '$dir' && ./config.sh --unattended --url 'https://github.com/$GITHUB_REPO' --token '$RUNNER_TOKEN' --name '$RUNNER_NAME' --labels '$RUNNER_NAME' --replace"
+    as_deploy bash -c "cd '$dir' && ./config.sh --unattended --url 'https://github.com/$GITHUB_REPO' --token '$RUNNER_TOKEN' --name '$CC_RUNNER_NAME' --labels '$CC_RUNNER_NAME' --replace"
     ok "registered runner $tag"
   else
     ok "already registered"
