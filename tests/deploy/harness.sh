@@ -65,6 +65,7 @@ case "$name" in
   docker)
     case "$*" in
       "compose version") echo "Docker Compose version v2.test" ;;
+      "--version") echo "Docker version 29.1.3, build 29.1.3-0ubuntu3~24.04.2" ;;
       *"-H unix:///var/run/docker.sock"*) exit 1 ;;
       "info"*) [ -f "$S/daemon_up" ] || exit 1; case "$*" in *--format*) echo "name=seccomp name=rootless" ;; esac ;;
       "image ls "*) cat "$S/image_tags" 2>/dev/null || true ;;
@@ -101,6 +102,7 @@ case "$name" in
       */actions/runner/releases/latest)
         printf '{"tag_name":"v9.9.9","body":"<!-- BEGIN SHA linux-x64 -->%s<!-- END SHA linux-x64 -->"}' "$(cat "$S/runner.sha")" ;;
       */releases/download/*) cp "$S/runner.tgz" "$out" ;;
+      *docker-rootless-extras-*.tgz) cp "$S/extras.tgz" "$out" ;;
       *) [ -z "$out" ] || : >"$out" ;;
     esac ;;
   rsync)
@@ -116,7 +118,7 @@ esac
 STUB
   chmod +x "$STUBS/stub"
   local c
-  for c in id getent useradd usermod loginctl runuser docker dockerd-rootless-setuptool.sh systemctl curl \
+  for c in dockerd id getent useradd usermod loginctl runuser docker dockerd-rootless-setuptool.sh systemctl curl \
     rsync ss setfacl udevadm apparmor_parser apt-get passwd chown tailscale newuidmap slirp4netns cron dpkg; do
     ln -sf stub "$STUBS/$c"
   done
@@ -136,6 +138,14 @@ EOF
   chmod +x "$T/runner-src/"*.sh
   tar -czf "$STUB_STATE/runner.tgz" -C "$T/runner-src" config.sh svc.sh
   sha256sum "$STUB_STATE/runner.tgz" | cut -d' ' -f1 >"$STUB_STATE/runner.sha"
+
+  # Docker's rootless tools download: only used by tests that remove the setuptool stub.
+  mkdir -p "$T/extras-src/docker-rootless-extras"
+  # shellcheck disable=SC2016  # the $* and $STUB_STATE are meant to expand later, in the generated script
+  printf '#!/usr/bin/env bash\necho "dockerd-rootless-setuptool.sh $*" >>"$STUB_STATE/calls.log"\ntouch "$STUB_STATE/daemon_up"\n' >"$T/extras-src/docker-rootless-extras/dockerd-rootless-setuptool.sh"
+  printf '#!/bin/sh\n' >"$T/extras-src/docker-rootless-extras/rootlesskit"
+  chmod +x "$T/extras-src/docker-rootless-extras/"*
+  tar -czf "$STUB_STATE/extras.tgz" -C "$T/extras-src" docker-rootless-extras
 
   export PATH="$STUBS:$PATH"
   export CC_ROOT="$T/srv" RUNTIME_ROOT="$T/run" SUBUID_FILE="$T/subuid" SUBGID_FILE="$T/subgid"

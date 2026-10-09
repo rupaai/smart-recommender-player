@@ -82,6 +82,20 @@ assert_calls '^useradd ' 0 "nothing was changed"
 PATH="$SAVED_PATH"
 rm -rf "$T"
 
+echo "== bootstrap: Docker without rootless tools (Ubuntu's docker.io)"
+new_sandbox
+rm "$STUBS/dockerd-rootless-setuptool.sh"
+export TMDB_API_KEY=k MEDIA_ROOT="$T/media" RUNNER_TOKEN=t
+"$BOOT" </dev/null >"$T/run5.log" 2>&1 && pass "setup succeeds" || { cat "$T/run5.log"; fail "failed without rootless tools on the machine"; }
+assert_calls '^curl .*docker-rootless-extras-29.1.3.tgz' 1 "downloads the extras matching the installed Docker version"
+assert_file "$T/home/deploy/bin/dockerd-rootless-setuptool.sh" "installed into the deploy user's ~/bin"
+assert_calls '^dockerd-rootless-setuptool.sh install' 1 "uses it to set up the deploy user's daemon"
+assert_grep "$T/home/deploy/bin/rootlesskit" "$APPARMOR_FILE" "AppArmor profile points at that rootlesskit"
+: >"$STUB_STATE/calls.log"
+"$BOOT" </dev/null >/dev/null 2>&1
+assert_calls '^curl .*docker-rootless-extras' 0 "second run doesn't download again"
+rm -rf "$T"
+
 echo "== bootstrap: --set"
 new_sandbox
 export TMDB_API_KEY=k MEDIA_ROOT="$T/media" RUNNER_TOKEN=t

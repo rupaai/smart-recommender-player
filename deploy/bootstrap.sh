@@ -26,7 +26,8 @@ SUBUID_FILE="${SUBUID_FILE:-/etc/subuid}"
 SUBGID_FILE="${SUBGID_FILE:-/etc/subgid}"
 CRON_FILE="${CRON_FILE:-/etc/cron.d/couchcinema}"
 UDEV_RULE_FILE="${UDEV_RULE_FILE:-/etc/udev/rules.d/70-couchcinema-render.rules}"
-APPARMOR_FILE="${APPARMOR_FILE:-/etc/apparmor.d/usr.bin.rootlesskit}"
+APPARMOR_FILE="${APPARMOR_FILE:-/etc/apparmor.d/couchcinema-rootlesskit}"
+DOCKER_STATIC_URL="${DOCKER_STATIC_URL:-https://download.docker.com/linux/static/stable/x86_64}"
 USERNS_RESTRICT_FILE="${USERNS_RESTRICT_FILE:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
 RENDER_NODE="${RENDER_NODE:-/dev/dri/renderD128}"
 SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
@@ -55,6 +56,7 @@ as_deploy() {
     XDG_RUNTIME_DIR="$(xdg_dir)" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$(xdg_dir)/bus" \
     DOCKER_HOST="$(docker_host)" \
+    PATH="$(deploy_home)/bin:$PATH" \
     "$@"
 }
 
@@ -121,6 +123,7 @@ preflight() {
     command -v "$cmd" >/dev/null 2>&1 || missing_cmds+=("$cmd")
   done
   [ "${#missing_cmds[@]}" -eq 0 ] || die "missing on this server: ${missing_cmds[*]}. This script checks for Docker and Tailscale but does not install them."
+  command -v dockerd >/dev/null 2>&1 || die "dockerd not found: Docker doesn't look installed as a service on this machine"
   docker compose version >/dev/null 2>&1 || die "the Docker Compose v2 plugin is missing (apt install docker-compose-plugin)"
   dpkg -s unattended-upgrades >/dev/null 2>&1 || die "unattended-upgrades is not installed (apt install unattended-upgrades)"
 
@@ -128,7 +131,6 @@ preflight() {
   local pkgs=()
   command -v newuidmap >/dev/null 2>&1 || pkgs+=(uidmap)
   dpkg -s dbus-user-session >/dev/null 2>&1 || pkgs+=(dbus-user-session)
-  command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1 || pkgs+=(docker-ce-rootless-extras)
   command -v slirp4netns >/dev/null 2>&1 || command -v pasta >/dev/null 2>&1 || pkgs+=(slirp4netns)
   command -v rsync >/dev/null 2>&1 || pkgs+=(rsync)
   command -v setfacl >/dev/null 2>&1 || pkgs+=(acl)
@@ -188,6 +190,29 @@ ensure_deploy_user() {
   ok "user session is running (linger on)"
 }
 
+# Ubuntu's own docker.io package (and some others) ship no rootless tools. Docker publishes
+# them as a separate download; unpack the one matching the installed version into the deploy
+# user's ~/bin. Only these helper scripts and rootlesskit come from it: the Docker engine
+# stays the one already on the machine, which this script never touches.
+ensure_rootless_extras() {
+  if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1 || [ -x "$(deploy_home)/bin/dockerd-rootless-setuptool.sh" ]; then
+    return 0
+  fi
+  info "Docker's rootless tools (into $(deploy_home)/bin)"
+  local ver tmp
+  ver="${ROOTLESS_EXTRAS_VERSION:-$(docker --version | sed -n 's/^Docker version \([0-9][0-9.]*\).*/\1/p')}"
+  [ -n "$ver" ] || die "could not work out the Docker version; set ROOTLESS_EXTRAS_VERSION=29.1.3 (or whichever 'docker --version' shows) and run again"
+  tmp="$(mktemp -d)"
+  curl -fsSL "$DOCKER_STATIC_URL/docker-rootless-extras-$ver.tgz" -o "$tmp/extras.tgz" \
+    || die "could not download docker-rootless-extras-$ver.tgz from $DOCKER_STATIC_URL"
+  tar -xzf "$tmp/extras.tgz" -C "$tmp"
+  mkdir -p "$(deploy_home)/bin"
+  cp "$tmp"/docker-rootless-extras/* "$(deploy_home)/bin/"
+  chown -R "$DEPLOY_USER:$DEPLOY_USER" "$(deploy_home)/bin"
+  rm -rf "$tmp"
+  ok "installed version $ver"
+}
+
 # Ubuntu 24.04 blocks unprivileged user namespaces unless a binary has a profile that
 # allows them. This profile covers rootlesskit only and changes nothing else.
 ensure_apparmor() {
@@ -198,7 +223,7 @@ ensure_apparmor() {
     return 0
   fi
   local rk
-  rk="$(readlink -f "$(command -v rootlesskit 2>/dev/null || echo /usr/bin/rootlesskit)")"
+  if [ -x "$(deploy_home)/bin/rootlesskit" ]; then rk="$(deploy_home)/bin/rootlesskit"; else rk="$(readlink -f "$(command -v rootlesskit 2>/dev/null || echo /usr/bin/rootlesskit)")"; fi
   cat >"$APPARMOR_FILE" <<EOF
 # Installed by couchcinema bootstrap.sh: lets rootlesskit create user namespaces on Ubuntu 24.04.
 abi <abi/4.0>,
@@ -515,6 +540,7 @@ main() {
 
   preflight
   ensure_deploy_user
+  ensure_rootless_extras
   ensure_apparmor
   ensure_rootless_docker
   ensure_gpu_access
