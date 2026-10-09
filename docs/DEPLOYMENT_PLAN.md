@@ -283,7 +283,7 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 
 ## Phase 7: Mac scheduled jobs
 
-### [ ] P7.1 Nightly pipeline script (Sonnet)
+### [x] P7.1 Nightly pipeline script (Sonnet)
 `ops/mac/nightly.sh`, one lock file so runs never overlap, logs to `~/Library/Logs/CouchCinema/<date>.log`, each step can be skipped by flag:
 
 1. **Backup:** `cc.py export` to `~/CouchCinemaBackups/<date>.db`, check `PRAGMA integrity_check`, keep 30 days. This is the user-data backup.
@@ -295,10 +295,12 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 7. **Report:** ping healthchecks.io on success, send an ntfy message on any failure.
 
 **Done when:** a full run against the real server either publishes a bundle or explains in the log why it didn't.
+- **As built:** `ops/mac/nightly.sh` (bash 3.2 safe, as macOS ships), `ops/mac/pipeline.py` (settings reader, evaluation, gate), `utils/eval_taste_model.py --json`, and `SKIP_DEPLOY=1` in `training/retrain_tiger.sh` (skips Step G; new files stay in `training/tiger/`). Flags: `--skip-backup --skip-catalogue --catalogue --skip-train --skip-publish`. Choices made: the gate compares `tiger_hit_rate` (does the shortlist contain the next liked film, measured on the training histories, so it is a regression check and not a proper test), `taste_spearman` and `taste_auc`, higher is better, relative drop over `nightly.gate_max_drop_pct` (1.0) holds the model back, and the first model with numbers always passes. A held-back bundle is built and kept in `~/CouchCinemaBundles` (last 3). Backup or snapshot failure stops the run with an ntfy alert; a catalogue refresh failure only warns, and training goes on. The quality floor (`nightly.min_vote_count` 200, `nightly.min_rating` 6.0) applies to new titles only, in `cc.py diff-catalogue`. **Mood tagging uses the Anthropic API and ships off** (`nightly.mood_tag_limit: 0`). Weekly crawl = `build_full_catalogue.py` plus the four backfills on a copy of the server's database. The TIGER item codes (`training/tiger/semantic_ids.json`, from the earlier prepare/RQ-VAE steps) are not rebuilt nightly, so titles added by the catalogue refresh get no TIGER code until those steps are re-run by hand; the vibe index covers them. The vibe index is re-embedded every night (a few minutes). Tests: `tests/mac/test_nightly.sh` (stand-ins for `uv` and `curl`: normal night, held-back model, catalogue week, failures, lock) and `tests/test_pipeline.py`. **Not run for real:** training, TMDB, launchd; the first real run is on Labiba's Mac (Build guide, Step 3).
 
-### [ ] P7.2 launchd job (Haiku)
+### [x] P7.2 launchd job (Haiku)
 - `ops/mac/com.couchcinema.nightly.plist` with `StartCalendarInterval` at 03:30. launchd runs a missed job when the Mac wakes. Install instructions in `ops/mac/README.md` (`launchctl bootstrap gui/$(id -u) …`).
 - **Done when:** `launchctl print` shows the job and a manual `launchctl kickstart` runs it.
+- **As built:** `ops/mac/com.couchcinema.nightly.plist` (a template: `__REPO__` and `__HOME__` are replaced by `ops/mac/install.sh`, which also writes `~/.couchcinema/env` (mode 600), checks the server can be reached, and loads the job; `--uninstall` removes it) and `ops/mac/README.md`. Not loaded for real in the build sandbox (no macOS).
 
 ## Phase 8: Know when something breaks
 
