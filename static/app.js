@@ -136,13 +136,28 @@ function posterFailed(img) {
 }
 
 let toastTimer = null;
-function showToast(message) {
+// `action` (optional): { label, run } adds one button to the toast. It stays
+// up longer so it can be tapped.
+function showToast(message, action) {
   const el = document.getElementById('toast');
   if (!el) return;
-  el.textContent = message;
+  el.replaceChildren(document.createTextNode(message));
+  el.classList.toggle('has-action', !!action);
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'toast-action';
+    b.textContent = action.label;
+    b.onclick = () => {
+      el.classList.remove('show', 'has-action');
+      clearTimeout(toastTimer);
+      action.run();
+    };
+    el.appendChild(b);
+  }
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show', 'has-action'), action ? 6000 : 2600);
 }
 
 // Real names on the "whose taste" controls once profiles are loaded. Old
@@ -876,11 +891,19 @@ function noteOnList(items) {
   }
 }
 
-function watchLaterButtonHtml(item) {
+// `opts.inRow`: the button sits inside a clickable row (Rate search), so its
+// click must not also open the row.
+function watchLaterButtonHtml(item, opts = {}) {
   noteOnList([item]);
-  return `<button type="button" class="btn-later" data-later-id="${item.id}"
+  const stop = opts.inRow ? 'event.stopPropagation(); ' : '';
+  return `<button type="button" class="btn-later${opts.inRow ? ' btn-later-row' : ''}" data-later-id="${item.id}"
             data-later-title="${escapeHtml(item.title)}"
-            onclick="toggleWatchLater(${item.id}, ${jsArg(item.title)}, this)"></button>`;
+            onclick="${stop}toggleWatchLater(${item.id}, ${jsArg(item.title)}, this)"></button>`;
+}
+
+// True when the active person has this title on the list.
+function onMyWatchLater(id) {
+  return (state.watchLater.get(id) || []).includes(state.activeProfileId);
 }
 
 // Paint one button from state.watchLater and the active person.
@@ -1931,6 +1954,7 @@ async function loadRatingQueue(reset) {
       });
       const sortRes = await fetch(`/api/ratings/inferred-queue?${sortParams}`);
       const sortData = await sortRes.json();
+      noteOnList(sortData.items);
       state.rateQueue = (sortData.items || []).filter(it => !state.rateSkipped.has(it.id));
       state.rateCursor = (sortData.items || []).length;
       state.rateIndex = 0;
@@ -1949,6 +1973,7 @@ async function loadRatingQueue(reset) {
 
     const res = await fetch(`/api/ratings/queue?${params}`);
     const data = await res.json();
+    noteOnList(data.items);
 
     // Drop anything already rated or skipped this session so skipping really
     // advances rather than looping back to the same card.
@@ -2174,11 +2199,12 @@ function renderRateCard() {
       ${state.rateAwaitingWhy ? '' : `
       <div class="rate-actions">
         <button class="btn-not-seen" onclick="submitNotSeen()">${icon('eye-off')}Haven't seen it</button>
+        ${watchLaterButtonHtml(item)}
         <button class="btn-skip" onclick="skipRateItem()">Skip ${icon('skip')}</button>
       </div>`}
       <label class="rate-quick"><input type="checkbox" ${state.rateQuick ? 'checked' : ''}
              onchange="setRateQuick(this.checked)"> Move on right after I pick a verdict</label>
-      <p class="rate-hint"><kbd>1</kbd>–<kbd>5</kbd> verdict · <kbd>D</kbd> didn't finish · <kbd>W</kbd> why · <kbd>Enter</kbd> next · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip</p>
+      <p class="rate-hint"><kbd>1</kbd>–<kbd>5</kbd> verdict · <kbd>D</kbd> didn't finish · <kbd>W</kbd> why · <kbd>Enter</kbd> next · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip · <kbd>L</kbd> watch later</p>
     </div>
 
     <div class="rate-stub">
@@ -2188,6 +2214,7 @@ function renderRateCard() {
       <span class="stub-verdict ${otherPending ? 'pending' : ''}">${escapeHtml(otherName)}: ${otherVerdict}</span>
     </div>
   `;
+  card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
   if (state.rateVocab && state.rateWhyOpen) loadRateWhy(item);
   if (item.media_type === 'tv' && state.rateVocab) loadRateSeasons(item);
 }
@@ -2765,7 +2792,15 @@ async function submitNotSeen() {
   if (!item || ratingInFlight) return;
   // "Haven't seen it" is a real answer — stored with status='not_seen' and no
   // rating attached, never as a zero or a 1.
-  if (await postRating(item.id, { status: 'not_seen' })) advanceQueue();
+  if (!(await postRating(item.id, { status: 'not_seen' }))) return;
+  // "Haven't seen it" is often the moment someone says "later": offer it once.
+  if (!onMyWatchLater(item.id)) {
+    showToast(`Saved as not seen. Add ${item.title} to Watch later?`, {
+      label: 'Add to Watch later',
+      run: () => { if (!onMyWatchLater(item.id)) toggleWatchLater(item.id, item.title, null); }
+    });
+  }
+  advanceQueue();
 }
 
 // Returns true only when the server stored it. The card used to advance
@@ -2894,6 +2929,9 @@ document.addEventListener('keydown', (e) => {
     submitNotSeen();
   } else if (k === 's') {
     skipRateItem();
+  } else if (k === 'l') {
+    const later = document.querySelector('#rateCard .btn-later');
+    if (later) { later.click(); e.preventDefault(); }
   }
 });
 
@@ -2955,6 +2993,7 @@ async function runRateSearch(q, mode = 'catalogue') {
       const res = await fetch(`/api/catalogue/search?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      noteOnList(data.items);
       rows = (data.items || []).map(d => ({ kind: 'item', data: d }));
       rows.push({ kind: 'more', data: null });
     }
@@ -3013,9 +3052,11 @@ function renderRateSearchList() {
                 <span class="rate-search-meta">${rateSearchMeta(d, row.kind)}</span>
               </span>
               ${row.kind === 'item' ? rateSearchVerdict(d) : `<span class="rate-search-verdict add">Add</span>`}
+              ${row.kind === 'item' ? watchLaterButtonHtml(d, { inRow: true }) : ''}
             </li>`;
   }).join('');
   list.innerHTML = html;
+  list.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
   openRateSearchList();
 }
 
