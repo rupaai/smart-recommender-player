@@ -347,7 +347,7 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 - **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
 - **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
 - **Structure:**
-  - Tabs: Discover / Download / Rate / History. A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
+  - Tabs: Discover / Download / Rate / Later / History (Later is the Watch later list, see §12). A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
   - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
   - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.
   - Reason badges say why each title is there.
@@ -511,3 +511,14 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 - **State seeding:** `noteOnList()` runs on the rating queue, the inferred (sort) queue and the catalogue search response, so buttons paint their server state on first render.
 - **Helper added:** `onMyWatchLater(id)` (is the active person on the list).
 - **Verified:** Playwright on a copy of `catalogue.db` (v4 -> v11 on start) at 1280 and 390 px: Discover add shows on the Rate search row and Rate card; Rate card removal and add show on Discover without reload; row button does not open the title; L, W, N still work; not-seen offer adds the title; no horizontal scroll. Screenshot checked at 390 px. Console only shows the missing `static/fonts/Archivo-Variable.woff2` (known, see §9). All `tests/*.py` pass.
+
+### Task 5: the Later tab - done
+- **Tab:** "Later" (bookmark icon) between Rate and History; `#laterView`, `'later'` in `TABS` / `TAB_IDS` / `VIEW_IDS`, hash `#later` restores it. `switchTab('later')` calls `loadLater()` every time. Five tabs fit the 390 px bottom bar (labels one line, no clipping).
+- **Controls:** All | Movies | TV (`setLaterType`) and "Added by: Anyone | <Name 1> | <Name 2> | Both of you" (`setLaterBy`, built by `renderLaterBy()` from `state.profiles`). A person uses the API `added_by`; "Both of you" filters `entry.both` client-side.
+- **Cards:** `buildLaterCard(entry, rank, animate)` reuses the Discover `.movie-card` ticket markup. Line "Added by Labiba · 3 days ago" (`relativeAgo`, SQLite UTC) or the rose pill "You both want this". Footer: Play now (file_path) or Choose a copy (`watchButtonHtml` -> `startDownload`), the bookmark (`watchLaterButtonHtml`, painted after insert), and "Watched it".
+- **Watched it:** `POST /api/watch-later/{id}/done` (new endpoint in `server.py`, calls `mark_watch_later_done(id, 'watched')`, returns `{done: n}`; needed because there was no way to mark done without rating), then `switchTab('rate')` and `openSearchedTitle(item)` (item looked up with `/api/catalogue/search`). It waits for the Rate queue's first load so the title is not wiped. A toast offers Undo.
+- **Watched from your list:** folded `<details id="laterDone">`, last 10 done titles (from `include_done=true`), Undo button -> `POST /undo`.
+- **Count:** `refreshLaterCount()` sets "Later 7" in the tab (`#laterCount`, aria-label "Later, 7 saved"). Called at start, after every toggle (`toggleWatchLater`), after every saved rating (`postRating`), on Later tab load, done and undo. Toggling on the Later tab reloads the list quietly (no entrance animation) so a card nobody has anymore disappears.
+- **States:** empty ("Nothing saved yet" / "Tap the bookmark on any pick to save it for later."), "Nothing matches" when filters hide everything, loading, error with Try again.
+- **Verified:** Playwright on a copy of `catalogue.db` at 1280 and 390 px: add on Discover as Labiba -> Later shows "Added by Labiba"; Gabriele presses the bookmark there -> "You both want this"; Both / Labiba / TV filters; reload on `#later`; Watched it -> Rate card on that title; rating it seen -> count clears and it sits in "Watched from your list"; Undo brings it back; both unpress -> empty state; blocked request -> error state. No horizontal scroll at 390 px; tabs fit. No console errors except the known missing font and the request I blocked on purpose.
+

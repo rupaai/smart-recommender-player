@@ -241,6 +241,10 @@ def test_api(tmp):
     r = client.post(f"/api/watch-later/{FILM}/undo")
     check("undo reopens", r.json() == {"reopened": 1} and client.get("/api/watch-later").json()["count"] == 1, r.text)
 
+    r = client.post(f"/api/watch-later/{FILM}/done")
+    check("done endpoint marks watched", r.json() == {"done": 1} and client.get("/api/watch-later").json()["count"] == 0, r.text)
+    client.post(f"/api/watch-later/{FILM}/undo")
+
     # finishing a watch session marks 'watched'
     client.post("/api/watch-later", json={"media_item_id": FILM2, "profile_id": LAB})
     with server.db.get_connection() as conn:

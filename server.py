@@ -697,6 +697,13 @@ async def remove_watch_later(media_item_id: int, profile_id: int) -> Dict[str, A
     return {"removed": bool(removed)}
 
 
+@app.post("/api/watch-later/{media_item_id}/done")
+async def done_watch_later(media_item_id: int) -> Dict[str, Any]:
+    """Marks a title on the list as watched (the Later tab's "Watched it")."""
+    n = await asyncio.to_thread(db.mark_watch_later_done, media_item_id, "watched")
+    return {"done": n}
+
+
 @app.post("/api/watch-later/{media_item_id}/undo")
 async def undo_watch_later(media_item_id: int) -> Dict[str, Any]:
     """Brings a title marked done back onto the list."""

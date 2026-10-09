@@ -62,9 +62,9 @@ const state = {
   profiles: []                             // [{id, name}] from /api/profiles
 };
 
-const TABS = ['discover', 'direct', 'rate', 'history'];
-const TAB_IDS = { discover: 'tabDiscover', direct: 'tabDirect', rate: 'tabRate', history: 'tabHistory' };
-const VIEW_IDS = { discover: 'discoverView', direct: 'directView', rate: 'rateView', history: 'historyView' };
+const TABS = ['discover', 'direct', 'rate', 'later', 'history'];
+const TAB_IDS = { discover: 'tabDiscover', direct: 'tabDirect', rate: 'tabRate', later: 'tabLater', history: 'tabHistory' };
+const VIEW_IDS = { discover: 'discoverView', direct: 'directView', rate: 'rateView', later: 'laterView', history: 'historyView' };
 
 // Initialize app on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
@@ -75,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initStarSelector();
   initSpeechRecognition();
   loadPartnerName();
+  refreshLaterCount();
   updateFiltersSummary();
 
   // Open the tab named in the URL (#rate etc.) so a refresh or a home-screen
@@ -240,6 +241,9 @@ function switchTab(tab, opts = {}) {
   }
   if (tab === 'rate') {
     initRateTab();
+  }
+  if (tab === 'later') {
+    loadLater();
   }
   if (tab === 'discover' && !state.originsLoaded) {
     state.originsLoaded = true;
@@ -876,6 +880,7 @@ function renderWhoSwitch() {
       <span class="who-lead">I'm </span>${escapeHtml(p.name)}
     </button>`).join('');
   refreshWatchLaterButtons();
+  renderLaterBy();
 }
 
 function setActiveProfile(id) {
@@ -948,6 +953,8 @@ async function toggleWatchLater(id, title, btn) {
       : await fetch(`/api/watch-later/${id}?profile_id=${me}`, { method: 'DELETE' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showToast(adding ? 'Added to Watch later' : 'Removed from your list');
+    refreshLaterCount();
+    if (state.activeTab === 'later') loadLater({ quiet: true });
   } catch (err) {
     state.watchLater.set(id, before);       // roll back
     refreshWatchLaterButtons(id);
@@ -955,6 +962,221 @@ async function toggleWatchLater(id, title, btn) {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Watch later: the Later tab
+// ---------------------------------------------------------------------------
+const later = { type: 'all', by: 'any', seq: 0 };   // by: 'any' | 'both' | profile id
+
+function relativeAgo(ts) {
+  // SQLite CURRENT_TIMESTAMP is UTC without a zone marker.
+  const t = Date.parse(String(ts || '').replace(' ', 'T') + 'Z');
+  if (!t) return '';
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.round(days / 30);
+  return months < 12 ? `${months} month${months === 1 ? '' : 's'} ago` : 'over a year ago';
+}
+
+// "Later 7" in the tab. Called on start and after anything that changes the list.
+async function refreshLaterCount() {
+  const el = document.getElementById('laterCount');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/watch-later');
+    if (!res.ok) return;
+    const n = (await res.json()).count || 0;
+    el.textContent = n ? ` ${n}` : '';
+    document.getElementById('tabLater').setAttribute('aria-label', n ? `Later, ${n} saved` : 'Later');
+  } catch (_) { /* keep the old count */ }
+}
+
+function setLaterType(type) {
+  later.type = type;
+  document.querySelectorAll('[data-later-type]').forEach(b => setPressed(b, b.dataset.laterType === type));
+  loadLater();
+}
+
+function setLaterBy(by) {
+  later.by = by;
+  renderLaterBy();
+  loadLater();
+}
+
+function renderLaterBy() {
+  const el = document.getElementById('laterByGroup');
+  if (!el) return;
+  const opts = [{ key: 'any', label: 'Anyone' }];
+  state.profiles.forEach(p => opts.push({ key: String(p.id), label: p.name }));
+  if (state.profiles.length >= 2) opts.push({ key: 'both', label: 'Both of you' });
+  el.innerHTML = opts.map(o => {
+    const on = String(later.by) === o.key;
+    return `<button type="button" class="segment${on ? ' active' : ''}" aria-pressed="${on}"
+              onclick="setLaterBy(${o.key === 'any' || o.key === 'both' ? jsArg(o.key) : o.key})">${escapeHtml(o.label)}</button>`;
+  }).join('');
+}
+
+function laterAddedLine(e) {
+  if (e.both) return `<span class="later-added together">${icon('heart', 'icon badge-icon')}You both want this</span>`;
+  const a = (e.added_by || [])[0];
+  if (!a) return '';
+  const ago = relativeAgo(a.added_at);
+  return `<span class="later-added">Added by ${escapeHtml(a.name || profileName(a.profile_id))}${ago ? ` · ${escapeHtml(ago)}` : ''}</span>`;
+}
+
+function buildLaterCard(e, rank, animate = true) {
+  const card = document.createElement('article');
+  card.className = 'movie-card later-card';
+  if (animate) card.style.animationDelay = `${Math.min(rank - 1, 6) * 40}ms`;
+  else card.style.animation = 'none';   // quiet refresh: don't replay the entrance
+  const id = e.media_item_id;
+  // Same record shape the other tabs give the shared helpers.
+  const m = { id, title: e.title, media_type: e.media_type, on_list: (e.added_by || []).map(a => a.profile_id) };
+
+  const meta = [];
+  if (e.release_year) meta.push(escapeHtml(e.release_year));
+  if (e.runtime) meta.push(formatRuntime(e.runtime));
+  if (e.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(e.rating).toFixed(1))}</span>`);
+
+  const action = e.file_path
+    ? `<button class="btn-watch play" onclick="playLocalItem(${id}, ${jsArg(e.title)})">${icon('play')}<span>Play now</span></button>`
+    : watchButtonHtml(m);
+
+  card.innerHTML = `
+    <div class="movie-card-main">
+      ${posterHtml(e.poster_url, e.title, 'movie-poster')}
+      <div class="movie-details">
+        <h3 class="movie-title">${escapeHtml(e.title)}</h3>
+        <div class="movie-meta">${meta.join(' · ')}</div>
+        <div class="movie-genres">${escapeHtml(e.genres || (e.media_type === 'tv' ? 'TV series' : 'Movie'))}</div>
+        <div class="movie-badges">${laterAddedLine(e)}</div>
+      </div>
+    </div>
+    <div class="movie-footer">
+      <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
+      <div class="watch-slot">${action}</div>
+      ${watchLaterButtonHtml(m)}
+      <button type="button" class="btn-tv-link btn-watched" aria-label="Watched it: ${escapeHtml(e.title)}"
+              onclick="watchedFromLater(${id}, ${jsArg(e.title)})">Watched it</button>
+    </div>`;
+  card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
+  return card;
+}
+
+function laterQuery(extra) {
+  const p = new URLSearchParams(extra || {});
+  if (later.type !== 'all') p.set('media_type', later.type);
+  if (later.by !== 'any' && later.by !== 'both') p.set('added_by', later.by);
+  return p;
+}
+
+async function loadLater(opts = {}) {
+  const list = document.getElementById('laterList');
+  const seq = ++later.seq;
+  if (!opts.quiet) {
+    list.innerHTML = '<p class="rate-sub" style="text-align:center; padding: 20px;">Loading…</p>';
+  }
+  renderLaterBy();
+  try {
+    const [res, doneRes] = await Promise.all([
+      fetch(`/api/watch-later?${laterQuery()}`),
+      fetch('/api/watch-later?include_done=true')
+    ]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (seq !== later.seq) return;   // a newer request is on its way
+    let items = data.items || [];
+    if (later.by === 'both') items = items.filter(e => e.both);
+    noteOnList(items.map(e => ({ id: e.media_item_id, on_list: (e.added_by || []).map(a => a.profile_id) })));
+    const hadItems = items.length > 0;
+
+    list.replaceChildren();
+    if (!hadItems) {
+      const filtered = later.type !== 'all' || later.by !== 'any';
+      list.innerHTML = `
+        <div class="empty-state">
+          ${icon('bookmark', 'empty-icon')}
+          <p class="empty-title">${filtered ? 'Nothing matches' : 'Nothing saved yet'}</p>
+          <p class="empty-sub">${filtered ? 'Try a different filter.' : 'Tap the bookmark on any pick to save it for later.'}</p>
+        </div>`;
+    } else {
+      items.forEach((e, i) => list.appendChild(buildLaterCard(e, i + 1, !opts.quiet)));
+    }
+
+    const doneData = doneRes.ok ? await doneRes.json() : { items: [] };
+    renderLaterDone((doneData.items || []).filter(e => e.done_at)
+      .sort((a, b) => String(b.done_at).localeCompare(String(a.done_at))).slice(0, 10));
+    refreshLaterCount();
+  } catch (err) {
+    if (seq !== later.seq) return;
+    console.error('Load Watch later error:', err);
+    list.innerHTML = `
+      <div class="empty-state error" role="alert">
+        ${icon('x', 'empty-icon')}
+        <p class="empty-title">Couldn't load your list</p>
+        <button class="btn-secondary" onclick="loadLater()">${icon('refresh')}Try again</button>
+      </div>`;
+  }
+}
+
+function renderLaterDone(done) {
+  const box = document.getElementById('laterDone');
+  const el = document.getElementById('laterDoneList');
+  box.hidden = done.length === 0;
+  el.innerHTML = done.map(e => `
+    <div class="later-done-row">
+      <div class="later-done-info">
+        <span class="later-done-title">${escapeHtml(e.title)}</span>
+        <span class="later-done-meta">${escapeHtml(e.release_year || '')}${e.done_at ? ` · ${escapeHtml(e.done_reason === 'rated' ? 'rated' : 'watched')} ${escapeHtml(relativeAgo(e.done_at))}` : ''}</span>
+      </div>
+      <button type="button" class="btn-secondary" aria-label="Undo: put ${escapeHtml(e.title)} back on the list"
+              onclick="undoLaterDone(${e.media_item_id})">Undo</button>
+    </div>`).join('');
+}
+
+async function undoLaterDone(id) {
+  try {
+    const res = await fetch(`/api/watch-later/${id}/undo`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast('Back on your list');
+    loadLater({ quiet: true });
+  } catch (err) {
+    showToast("Couldn't undo. Try again.");
+  }
+}
+
+// "Watched it": mark it done, then open the Rate tab on that title.
+async function watchedFromLater(id, title) {
+  try {
+    const res = await fetch(`/api/watch-later/${id}/done`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    showToast("Couldn't save. Try again.");
+    return;
+  }
+  refreshLaterCount();
+  let item = null;
+  try {
+    const params = new URLSearchParams({ q: title, media_type: 'all', limit: 10, profile_id: state.rateProfileId });
+    const res = await fetch(`/api/catalogue/search?${params}`);
+    if (res.ok) item = ((await res.json()).items || []).find(it => it.id === id) || null;
+  } catch (_) { /* fall back below */ }
+  if (!item) item = { id, title, media_type: 'movie', on_list: [] };
+  noteOnList([item]);
+  switchTab('rate');
+  // initRateTab loads its queue asynchronously the first time; wait for it so
+  // the title is not wiped by that load.
+  for (let i = 0; i < 40 && !(state.rateProfiles.length && state.rateCursor > 0); i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  openSearchedTitle(item);
+  showToast('Marked as watched. Rate it?', { label: 'Undo', run: () => undoLaterDone(id).then(refreshLaterCount) });
 }
 
 // Extracted so "Show more" and the initial render build identical cards.
@@ -2824,6 +3046,7 @@ async function postRating(itemId, payload) {
       updateRateStubMine(shown);
     }
     flashRateFeedback(summary);
+    refreshLaterCount();   // a seen verdict can finish a title on the list
     return true;
   } catch (err) {
     console.error('Rating failed:', err);
