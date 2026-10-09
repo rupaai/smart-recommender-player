@@ -79,4 +79,4 @@ When the drive arrives:
 - **A session asks you a question mid-milestone:** answer in that thread; it carries on.
 - **CI is red on a PR:** the session that opened it fixes it. You don't need to.
 - **A deploy fails:** it rolls back automatically and you get an ntfy message. Reply in the M2 thread (or start a new one) with "The deploy failed, look at the latest Deploy run".
-- **You want to undo a deploy:** Actions → Deploy → Run workflow, and enter the older commit or `main~1` as the ref.
+- **You want to undo a deploy:** Actions → Deploy → Run workflow, and enter the older commit's full SHA (copy it from the commits list on GitHub) as the ref.
