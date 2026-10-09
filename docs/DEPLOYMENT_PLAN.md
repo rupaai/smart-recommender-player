@@ -92,13 +92,13 @@ So:
 - **Other services we must not disturb:** containers `homeassistant`, `matter-server`, `matterbridge`, `cloudflared`, `tplink-proxy`; Ollama installed on the host. Ports in use: 22, 8123, 8088, 5580, 5540, 8283, 21064-21066, 18555, 20241.
 - **Ports we need are free:** 8000, 8096, 9696, 6881-6891.
 - **No existing media stack:** no Jellyfin, Plex, qBittorrent or *arr anywhere. `/srv`, `/mnt`, `/media` are empty.
-- **Storage is the limit:** one 238GB SSD with ~166GB free, shared with the OS and Home Assistant. Media starts on it, so the disk guard (P8.1) and an external drive (Phase 9) matter early.
+- **Storage is the limit:** one 238GB SSD with ~166GB free, shared with the OS and Home Assistant. Media starts on it, capped at 100GB (Labiba's call, 2026-10-09); the external drive comes later.
 - **GPU:** `/dev/dri/renderD128` exists. Give the Jellyfin container access with `devices` + `group_add` of the host's `render` group id; no host user changes needed.
 
 Rules that follow from this:
 1. Our stack is its own compose project (`name: couchcinema`) on its own Docker network. Deploy scripts only ever address that project (`docker compose -p couchcinema ...`); never `docker system prune`, never stop or restart containers outside it.
 2. Set memory limits so a busy download or transcode can't starve Home Assistant: app 2GB, Jellyfin 4GB, Prowlarr 512MB.
-3. The app refuses to start a new download when free space on `MEDIA_ROOT` would drop below 20GB, and shows why.
+3. Media is capped at **100GB** for now (setting `torrent.max_media_gb: 100`). The app refuses to start a download when the media folder plus that download's size would go over the cap, or when free disk would drop below 20GB, and shows why. Raising the cap is a one-line config change.
 4. Don't expose anything through the existing cloudflared tunnel. Access is over Tailscale only.
 
 ## How to run this plan
@@ -178,7 +178,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
   - `prowlarr`: `lscr.io/linuxserver/prowlarr:<pinned version>`, mounts `./prowlarr/config`, port `9696:9696`.
 - On startup the app creates `/media/Movies`, `/media/Shows` and `/media/downloads` if they don't exist and leaves them alone if they do (`os.makedirs(..., exist_ok=True)`). Same for `/data` and `/models/releases`.
 - Follow section 4a: top-level `name: couchcinema`, its own network, memory limits (app 2GB, Jellyfin 4GB, Prowlarr 512MB), Jellyfin `group_add: ["${RENDER_GID}"]`.
-- Disk guard in the app: refuse to start a download when free space on `/media` would fall below 20GB (setting `torrent.min_free_gb`), with a clear message in the Download tab.
+- Disk guard in the app: refuse to start a download when the size of `/media` plus the download would exceed `torrent.max_media_gb` (default 100) or free space would fall below `torrent.min_free_gb` (default 20), with a clear message in the Download tab. Count in-progress downloads at their full size.
 - Pin every third-party image to an exact version (no `latest`).
 - `deploy/.env.example` listing every variable with a comment and no values: `IMAGE_TAG`, `MEDIA_ROOT`, `TMDB_API_KEY`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, `PROWLARR_API_KEY`, `ADMIN_TOKEN`, `NTFY_TOPIC`.
 - **Done when:** on the Mac, with a local image tag and `MEDIA_ROOT=./sample_library`, `docker compose -f deploy/compose.yaml up` serves the app on :8000 and Jellyfin on :8096, and `/healthz` is ok.
@@ -292,7 +292,7 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 
 ### [ ] P8.1 Alerts (Haiku)
 - Server cron, installed by `bootstrap.sh` (add it to P4.1 if Phase 8 lands later): every 5 minutes, `curl -fsS localhost:8000/healthz && curl -fsS <healthchecks.io ping url>`. If the pings stop, healthchecks.io emails/pushes you, even when the whole box is down.
-- Daily disk check: if `MEDIA_ROOT` or `/` is above 85% full, send an ntfy message.
+- Daily disk check: send an ntfy message if media is above 85GB of its 100GB cap, or `/` is above 85% full.
 - Install the ntfy app on both phones and subscribe to the private topic name from `.env`.
 - **Done when:** stopping the app container triggers an alert within 15 minutes.
 
