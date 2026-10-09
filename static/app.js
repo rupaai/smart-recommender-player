@@ -55,7 +55,11 @@ const state = {
   rateSeasons: null,       // per-season verdicts for the TV show on the card
   pairMode: false,         // "This or that" round (separate from the rating cards)
   pairs: [], pairIndex: 0, pairDone: 0, pairSkipped: new Set(), pairLoaded: false,
-  rateSortMode: false      // "Sort out my 7s": confirm verdicts for old ratings
+  rateSortMode: false,     // "Sort out my 7s": confirm verdicts for old ratings
+  // --- Watch later ---
+  activeProfileId: readActiveProfileId(),  // who is holding the phone (header switch)
+  watchLater: new Map(),                   // media_item_id -> [profile_ids] on the list
+  profiles: []                             // [{id, name}] from /api/profiles
 };
 
 const TABS = ['discover', 'direct', 'rate', 'history'];
@@ -154,6 +158,8 @@ async function loadPartnerName() {
     const profiles = await res.json();
     if (!Array.isArray(profiles) || profiles.length < 2) return;
     state.rateProfiles = state.rateProfiles.length ? state.rateProfiles : profiles;
+    state.profiles = [...profiles].sort((a, b) => a.id - b.id).slice(0, 2);
+    renderWhoSwitch();
     const [first, second] = [...profiles].sort((a, b) => a.id - b.id);
     for (const [key, person] of [['me', first], ['partner', second]]) {
       const btn = document.querySelector(`[data-rec-profile="${key}"]`);
@@ -823,6 +829,111 @@ function watchButtonHtml(m) {
           </button>`;
 }
 
+// ---------------------------------------------------------------------------
+// Watch later: the "I'm …" switch and the bookmark button
+// ---------------------------------------------------------------------------
+// One shared list. state.watchLater maps media_item_id -> [profile_ids who put
+// it on the list]; it is refilled from the `on_list` field of every item the
+// app renders, so the buttons always reflect the server after a reload.
+function readActiveProfileId() {
+  try {
+    const n = parseInt(localStorage.getItem('activeProfileId'), 10);
+    if (n > 0) return n;
+  } catch (_) { /* private mode: fall through */ }
+  return 1;
+}
+
+function profileName(id) {
+  const p = state.profiles.find(x => x.id === id);
+  return p ? p.name : 'Someone';
+}
+
+function renderWhoSwitch() {
+  const el = document.getElementById('whoSwitch');
+  if (!el || state.profiles.length < 2) return;
+  // A stored id that is not one of the two people falls back to the first.
+  if (!state.profiles.some(p => p.id === state.activeProfileId)) state.activeProfileId = state.profiles[0].id;
+  el.hidden = false;
+  el.innerHTML = state.profiles.map(p => `
+    <button type="button" class="segment${p.id === state.activeProfileId ? ' active' : ''}"
+            aria-pressed="${p.id === state.activeProfileId}"
+            onclick="setActiveProfile(${p.id})">
+      <span class="who-lead">I'm </span>${escapeHtml(p.name)}
+    </button>`).join('');
+  refreshWatchLaterButtons();
+}
+
+function setActiveProfile(id) {
+  state.activeProfileId = id;
+  try { localStorage.setItem('activeProfileId', String(id)); } catch (_) { /* not remembered */ }
+  renderWhoSwitch();
+}
+
+// Remember `on_list` from a batch of items (Discover, Rate, search).
+function noteOnList(items) {
+  for (const it of items || []) {
+    if (it && it.id != null && Array.isArray(it.on_list)) state.watchLater.set(it.id, [...it.on_list]);
+  }
+}
+
+function watchLaterButtonHtml(item) {
+  noteOnList([item]);
+  return `<button type="button" class="btn-later" data-later-id="${item.id}"
+            data-later-title="${escapeHtml(item.title)}"
+            onclick="toggleWatchLater(${item.id}, ${jsArg(item.title)}, this)"></button>`;
+}
+
+// Paint one button from state.watchLater and the active person.
+function paintWatchLaterButton(btn) {
+  const id = Number(btn.dataset.laterId);
+  const title = btn.dataset.laterTitle || '';
+  const who = state.watchLater.get(id) || [];
+  const mine = who.includes(state.activeProfileId);
+  const other = who.find(pid => pid !== state.activeProfileId);
+  const label = mine ? 'On your list' : 'Watch later';
+  const otherNote = other != null ? `${profileName(other)} wants this` : '';
+  btn.setAttribute('aria-pressed', mine ? 'true' : 'false');
+  btn.classList.toggle('on', mine);
+  btn.classList.toggle('other-wants', !mine && other != null);
+  btn.setAttribute('aria-label', `${label}: ${title}${otherNote ? ` (${otherNote})` : ''}`);
+  btn.title = mine
+    ? (other != null ? 'You both want this. Tap to take it off your list' : 'On your list. Tap to remove')
+    : (otherNote ? `${otherNote}. Tap to add it for you too` : 'Watch later');
+  btn.innerHTML = `${icon('bookmark')}<span class="later-label">${mine && other != null ? 'Both' : 'Later'}</span>`
+    + (otherNote ? `<span class="later-dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(otherNote)}</span>` : '');
+}
+
+function refreshWatchLaterButtons(id) {
+  const sel = id == null ? '.btn-later' : `.btn-later[data-later-id="${id}"]`;
+  document.querySelectorAll(sel).forEach(paintWatchLaterButton);
+}
+
+async function toggleWatchLater(id, title, btn) {
+  const me = state.activeProfileId;
+  const before = state.watchLater.get(id) || [];
+  const adding = !before.includes(me);
+  const after = adding ? [...before, me] : before.filter(p => p !== me);
+  state.watchLater.set(id, after);          // optimistic
+  refreshWatchLaterButtons(id);
+  if (btn) btn.disabled = true;
+  try {
+    const res = adding
+      ? await fetch('/api/watch-later', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ media_item_id: id, profile_id: me })
+        })
+      : await fetch(`/api/watch-later/${id}?profile_id=${me}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast(adding ? 'Added to Watch later' : 'Removed from your list');
+  } catch (err) {
+    state.watchLater.set(id, before);       // roll back
+    refreshWatchLaterButtons(id);
+    showToast("Couldn't save. Try again.");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Extracted so "Show more" and the initial render build identical cards.
 function buildMovieCard(m, engine, index = 0, rank = 1) {
     const card = document.createElement('article');
@@ -876,6 +987,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
       <div class="movie-footer">
         <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
         <div id="watch-container-${m.id}" class="watch-slot">${actionButtonHtml}</div>
+        ${watchLaterButtonHtml(m)}
         <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
           <span class="label">Jellyfin</span> ${icon('external')}
         </a>
@@ -883,6 +995,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
                 title="Not this one" aria-label="Not this one: ${escapeHtml(m.title)}">${icon('x')}</button>
       </div>
     `;
+    card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
     return card;
 }
 

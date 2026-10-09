@@ -32,6 +32,7 @@
       <symbol id="i-skip" viewBox="0 0 24 24"><path d="m6 5 9 7-9 7z"/><path d="M18 5v14"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
       <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z"/></symbol>
+      <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4.5L5 21V4a1 1 0 0 1 1-1z"/></symbol>
       <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.7-4.3L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.7 4.3L20 16"/><path d="M20 21v-5h-5"/></symbol>
     </defs>
   </svg>
@@ -44,6 +45,8 @@
         <h1 class="brand-title">Movie Night</h1>
       </div>
       <div class="header-tools">
+        <!-- Who is holding the phone: credits Watch later adds. Names are filled from /api/profiles. -->
+        <div id="whoSwitch" class="segmented small who-switch" role="group" aria-label="Who is using the app" hidden></div>
         <div id="jellyfinStatus" class="status-pill" title="Whether Jellyfin, your TV's media server, is reachable">
           <span id="statusDot" class="status-dot"></span>
           <span id="statusText">Checking TV…</span>

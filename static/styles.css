@@ -619,6 +619,33 @@ button:disabled { cursor: default; }
 .movie-card.dismissed { opacity: 0; transform: scale(0.98); transition: opacity 0.2s, transform 0.2s; }
 @media (prefers-reduced-motion: reduce) { .movie-card.dismissed { transition: none; } }
 
+/* Watch later: bookmark button (Discover footer, later Rate card/search) */
+.btn-later {
+  position: relative;
+  min-width: 44px; min-height: 44px; padding: 10px 12px;
+  background: transparent; border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); color: var(--text-2);
+  font-weight: 600; font-size: 13px; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.btn-later .icon { width: 18px; height: 18px; }
+.btn-later .later-label { display: none; }
+.btn-later:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.btn-later[aria-pressed="true"] { background: var(--select-bg); color: var(--select-text); border-color: var(--select-line); }
+.btn-later[aria-pressed="true"] .icon { fill: currentColor; }
+.btn-later:disabled { opacity: 0.7; }
+.later-dot {
+  position: absolute; top: 5px; right: 5px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--together-text); box-shadow: 0 0 0 2px var(--surface);
+}
+@media (min-width: 481px) { .btn-later .later-label { display: inline; } }
+
+/* Header "I'm …" switch */
+.who-switch[hidden] { display: none; }
+.who-switch .segment { min-height: 32px; }
+@media (max-width: 480px) { .who-switch .who-lead { display: none; } }
+
 /* Skeletons */
 .skeleton-card {
   display: flex; gap: 16px; padding: 16px;
