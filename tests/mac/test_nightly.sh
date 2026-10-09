@@ -36,6 +36,7 @@ esac
 if [ -n "${STUB_FAIL:-}" ] && echo "$args" | grep -qE -- "$STUB_FAIL"; then exit 1; fi
 exit 0
 STUB
+  # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash\necho "curl $*" >>"$CALLS"\nexit 0\n' >"$T/bin/curl"
   chmod +x "$T/bin/uv" "$T/bin/curl"
   export CALLS T

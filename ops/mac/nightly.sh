@@ -83,7 +83,8 @@ run() { "$@" || { log "command failed: $*"; return 1; }; }
 # the difference (new titles above the quality floor, changed columns) back as a patch.
 refresh_catalogue() {
   local base limit
-  base="$BACKUP_DIR/$TODAY.db"; [ -f "$base" ] || base="$(ls -t "$BACKUP_DIR"/*.db | head -1)"
+  base="$BACKUP_DIR/$TODAY.db"
+  if [ ! -f "$base" ]; then for f in "$BACKUP_DIR"/*.db; do base="$f"; done; fi   # names are dates, so the last one is newest
   [ -f "$base" ] || { log "no backup to work from"; return 1; }
   cp "$base" "$WORK/catalogue.before.db" && cp "$base" "$WORK/catalogue.work.db" || return 1
   run env DATABASE_PATH="$WORK/catalogue.work.db" uv run python utils/build_full_catalogue.py \
@@ -165,7 +166,8 @@ if [ -n "$DO_TRAIN" ]; then
   "${CC[@]}" build-bundle "$BUNDLE" --metrics "$WORK/metrics.json" --tiger training/tiger --vibe "$WORK/vibe" \
     --db-before "$WORK/snapshot.before.db" --db-after "$WORK/snapshot.db" --source-db "$WORK/snapshot.db" --gate "$GATE" \
     || fail "publish" "could not build the model bundle"
-  ls -t "$BUNDLE_DIR"/bundle-*.tar.gz | tail -n +4 | xargs -I{} rm -f {}
+  bundles=("$BUNDLE_DIR"/bundle-*.tar.gz)   # names carry the date and time: keep the last 3
+  if [ "${#bundles[@]}" -gt 3 ]; then rm -f "${bundles[@]:0:${#bundles[@]}-3}"; fi
   if [ "$GATE" = passed ] && [ -n "$DO_PUBLISH" ]; then
     "${CC[@]}" push-bundle "$BUNDLE" || fail "publish" "the server refused the new model (see the log); the old one is still running"
     log "6. publish: the server now runs the new model"
