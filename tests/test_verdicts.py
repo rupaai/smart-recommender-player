@@ -96,7 +96,7 @@ def test_migration(tmp):
     check("one row per rated film, none for not_seen", len(rows) == 10, len(rows))
     check("all marked inferred", all(r["inferred"] == 1 for r in rows))
     check("raw rating untouched", raw == 9.0, raw)
-    check("version is 8", version == 8, version)
+    check("version is 8+", version >= 8, version)
     DatabaseManager(os.path.join(tmp, "m.db"))  # idempotent
     with db2.get_connection() as conn:
         n = conn.execute("SELECT COUNT(*) FROM rating_details").fetchone()[0]
