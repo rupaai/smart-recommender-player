@@ -4,8 +4,9 @@
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
 - `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
-- `watch-later` (draft PR "Watch later list", opened 2026-10-09): shared Watch later list in 7 tasks, one branch and one PR. Tasks 1-6 done (schema v11 + methods, API, header switch + Discover button, Rate card + Rate search, Later tab, polish); optional Task 7 not built. Also renames the seeded profiles to Labiba / Gabriele.
-- Open PRs: "Watch later list" (ready to merge).
+- `watch-later`: merged into `main` as PR #12 (shared Watch later list, schema v11, §12).
+- `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
+- Open PRs: "Deployment plan".
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -533,3 +534,16 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 ### Not built
 - Task 7 (recommender signal / "On your list" badge on Discover, 'saved' feedback outcome).
 - TMDB-only search rows, History rows, "This or that" cards and Download results have no Watch later button (by design).
+
+---
+
+## 13. DEPLOYMENT: MAC TRAINS, OPTIPLEX SERVES (planned 2026-10-09, nothing built)
+
+Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`; Labiba's step-by-step with milestone prompts: `docs/BUILD_GUIDE.md`. Build only when Labiba says go. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
+
+- Server is **`mars`**, a Dell OptiPlex 3060 (i5-9500T, 16GB, one 238GB SSD with ~166GB free), not a Pi. Already has Ubuntu 24.04, Docker, Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183, SSH as `gabstevens`). It also runs Home Assistant and Matter containers that our stack must never touch (plan §4a). Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
+- Mac runs launchd jobs: backup pull, catalogue refresh + enrichment, training, eval gate, publish model bundle.
+- CI on GitHub; deploys only via the manual Deploy workflow on a self-hosted runner on the server (outbound, no Tailscale ACL changes), with health check and automatic rollback.
+- Key rule: the server alone assigns `media_items.id` and never deletes items; the Mac sends patches keyed by `(media_type, tmdb_id)` and trains on a fresh export so model ids match (plan §3).
+- Media on internal drive now, external HDD later (`MEDIA_ROOT`). Backups cover user data only.
+- Progress: no tasks done yet.
