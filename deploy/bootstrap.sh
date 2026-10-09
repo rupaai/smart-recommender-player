@@ -456,6 +456,13 @@ verify_isolation() {
   ok "$DEPLOY_USER cannot reach the system Docker daemon"
 }
 
+# If this reaches your phone, alerts work. Never fails the setup.
+send_test_notification() {
+  [ -x "$CC_ROOT/bin/notify.sh" ] || return 0
+  info "Sending a test notification to topic $(env_get NTFY_TOPIC)"
+  as_deploy env "CC_ROOT=$CC_ROOT" "$CC_ROOT/bin/notify.sh" "couchcinema is set up" "If you can read this on your phone, alerts work." default tada || true
+}
+
 cmd_set() {
   [ "$(id -u)" -eq 0 ] || die "run this with sudo"
   [ -f "$ENV_FILE" ] || die "$ENV_FILE does not exist yet; run bootstrap.sh without --set first"
@@ -519,6 +526,7 @@ main() {
   ensure_cron
   start_stack
   verify_isolation
+  send_test_notification
   summary
 }
 
