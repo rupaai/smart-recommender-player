@@ -195,22 +195,31 @@ ensure_deploy_user() {
 # user's ~/bin. Only these helper scripts and rootlesskit come from it: the Docker engine
 # stays the one already on the machine, which this script never touches.
 ensure_rootless_extras() {
-  if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1 || [ -x "$(deploy_home)/bin/dockerd-rootless-setuptool.sh" ]; then
+  local bin
+  bin="$(deploy_home)/bin"
+  # A Docker that already ships the tools (Docker's own apt repo) needs nothing from us.
+  if command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1 && [ ! -e "$bin/dockerd-rootless-setuptool.sh" ]; then
     return 0
   fi
-  info "Docker's rootless tools (into $(deploy_home)/bin)"
-  local ver tmp
-  ver="${ROOTLESS_EXTRAS_VERSION:-$(docker --version | sed -n 's/^Docker version \([0-9][0-9.]*\).*/\1/p')}"
-  [ -n "$ver" ] || die "could not work out the Docker version; set ROOTLESS_EXTRAS_VERSION=29.1.3 (or whichever 'docker --version' shows) and run again"
-  tmp="$(mktemp -d)"
-  curl -fsSL "$DOCKER_STATIC_URL/docker-rootless-extras-$ver.tgz" -o "$tmp/extras.tgz" \
-    || die "could not download docker-rootless-extras-$ver.tgz from $DOCKER_STATIC_URL"
-  tar -xzf "$tmp/extras.tgz" -C "$tmp"
-  mkdir -p "$(deploy_home)/bin"
-  cp "$tmp"/docker-rootless-extras/* "$(deploy_home)/bin/"
-  chown -R "$DEPLOY_USER:$DEPLOY_USER" "$(deploy_home)/bin"
-  rm -rf "$tmp"
-  ok "installed version $ver"
+  if [ ! -x "$bin/dockerd-rootless-setuptool.sh" ]; then
+    info "Docker's rootless tools (into $bin)"
+    local ver tmp
+    ver="${ROOTLESS_EXTRAS_VERSION:-$(docker --version | sed -n 's/^Docker version \([0-9][0-9.]*\).*/\1/p')}"
+    [ -n "$ver" ] || die "could not work out the Docker version; set ROOTLESS_EXTRAS_VERSION=29.1.3 (or whichever 'docker --version' shows) and run again"
+    tmp="$(mktemp -d)"
+    curl -fsSL "$DOCKER_STATIC_URL/docker-rootless-extras-$ver.tgz" -o "$tmp/extras.tgz" \
+      || die "could not download docker-rootless-extras-$ver.tgz from $DOCKER_STATIC_URL"
+    tar -xzf "$tmp/extras.tgz" -C "$tmp"
+    mkdir -p "$bin"
+    cp "$tmp"/docker-rootless-extras/* "$bin/"
+    rm -rf "$tmp"
+    ok "installed version $ver"
+  fi
+  # The setup script looks for docker and dockerd next to itself, so point them at the
+  # ones already installed (links only: the engine itself is never copied or changed).
+  ln -sf "$(command -v docker)" "$bin/docker"
+  ln -sf "$(command -v dockerd)" "$bin/dockerd"
+  chown -R "$DEPLOY_USER:$DEPLOY_USER" "$bin"
 }
 
 # Ubuntu 24.04 blocks unprivileged user namespaces unless a binary has a profile that
