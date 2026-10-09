@@ -18,7 +18,7 @@ It knows two specific people. Recommendations are blended across both profiles (
 ## Operating Context
 - Discover: mood, free-text description, filters → ranked picks → fetch or play.
 - Rate together: one title at a time, each person rates 1–10 or says "haven't seen it"; this is the learning signal.
-- Download: direct title search with file size / quality, progress, cancel.
+- Download: the only place downloads start. Title search (also opened from a Discover card), copies ranked by a Best match score with quality / size / seeders shown, progress, cancel.
 - History: what was watched and what the system learned.
 - Plays via Jellyfin on the TV; the web app is the remote/planner, not the player.
 

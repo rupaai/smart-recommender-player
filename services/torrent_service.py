@@ -18,6 +18,7 @@ import requests
 import yaml
 
 from services.jellyfin_service import JellyfinService
+from services.torrent_ranking import load_ranking_config, rank_results
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm"}
 SUBTITLE_EXTENSIONS = {".srt", ".ass", ".ssa", ".sub", ".vtt"}
@@ -447,7 +448,7 @@ class TorrentSearcher:
     """Searches YTS (for movies) and Apibay (for movies and TV shows).
 
     Returns results with name, quality badge, size_bytes, seeds, and magnet link.
-    Supports two sort modes: smallest-first (quick) or quality/seeders (best).
+    Sort modes: 'best' (combined score, see services/torrent_ranking.py), 'smallest' or 'quality'.
     """
 
     YTS_DOMAINS = ["https://yts.mx"]
@@ -465,6 +466,7 @@ class TorrentSearcher:
     MIN_TV_SIZE_BYTES = 100 * 1024 * 1024     # 100 MB for individual TV episodes
 
     def __init__(self, config: Optional[Dict] = None):
+        self.ranking_cfg = load_ranking_config(config)
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -479,6 +481,7 @@ class TorrentSearcher:
         query: str,
         sort_by_size: bool = True,
         media_type: str = "movie",
+        sort: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Searches torrent endpoints for movies or TV shows.
 
@@ -487,7 +490,11 @@ class TorrentSearcher:
             sort_by_size: If True sort smallest-first (quick downloads).
                           If False sort by quality tier then seeders (best quality).
             media_type: 'movie' or 'tv'.
+            sort: 'best' (combined score, default for the UI), 'smallest' or
+                  'quality'. When given it wins over sort_by_size.
         """
+        if sort is None:
+            sort = "smallest" if sort_by_size else "quality"
         results: List[Dict[str, Any]] = []
 
         # 1. Preferred provider: Prowlarr (aggregated indexers) when configured
@@ -508,10 +515,13 @@ class TorrentSearcher:
         # Filter dead torrents
         active = [r for r in results if r["seeds"] >= 1]
 
-        if sort_by_size:
+        # Always score, so every result carries score / is_pack for the UI.
+        rank_results(active, query, media_type, self.ranking_cfg)
+
+        if sort == "smallest":
             active.sort(key=lambda x: x["size_bytes"])
-        else:
-            # Sort by quality tier (4K > 1080p > 720p) then by seeds descending
+        elif sort == "quality":
+            # Quality tier (4K > 1080p > 720p) then seeds descending
             quality_order = {"2160p": 0, "4K": 0, "1080p": 1, "720p": 2}
             active.sort(
                 key=lambda x: (quality_order.get(x.get("quality", ""), 3), -x["seeds"])

@@ -212,7 +212,8 @@ class RenameProfileRequest(BaseModel):
 
 class TorrentSearchRequest(BaseModel):
     query: str
-    sort_by_size: bool = True
+    sort_by_size: bool = True  # legacy; ignored when `sort` is given
+    sort: Optional[str] = None  # 'best' | 'smallest' | 'quality'
     media_type: str = "movie"  # 'movie' or 'tv'
 
 
@@ -923,6 +924,7 @@ async def search_torrents(req: TorrentSearchRequest) -> Dict[str, Any]:
         req.query,
         sort_by_size=req.sort_by_size,
         media_type=req.media_type,
+        sort=req.sort,
     )
     return {"results": results}
 

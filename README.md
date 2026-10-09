@@ -9,7 +9,7 @@ Features a **Mobile-First PWA**, a **Direct Search & Download Subsystem** for in
 ## 🌟 Key Features
 
 1. **Dual Discovery Modes:**
-   - ⚡ **Direct Download Tab:** Search for *any* movie **or TV show** across verified public endpoints (YTS & Apibay), view resolution badges (`4K`, `1080p`, `720p`), file sizes, and seed counts. Sort by smallest size for rapid streaming or highest quality. A 🎬/📺 toggle switches between Movies and TV Shows everywhere.
+   - ⚡ **Direct Download Tab:** Search for *any* movie **or TV show** across verified public endpoints (YTS & Apibay), view resolution badges (`4K`, `1080p`, `720p`), file sizes, and seed counts. Default **Best match** sort favours good quality with enough seeders to finish; **Smallest file** and **Best quality** are one tap away. A 🎬/📺 toggle switches between Movies and TV Shows everywhere.
    - 🍿 **Smart Mood Recommender:** Suggests films using mood-to-genre maps, runtime/era narrowing, personal taste scores learned from past ratings ($\ge 7.0$), and baseline rating rules ($\ge 6.0$). Query context with keywords like *"guilty pleasure"*, *"so bad it's good"*, or *"cringe"* automatically suppresses the rating floor!
 2. **Non-Blocking Background Downloader:**
    - Downloads launch via `asyncio.create_task()` so HTTP API responses return immediately.
@@ -42,6 +42,7 @@ movie-app/
 ├── services/
 │   ├── __init__.py           # Package marker
 │   ├── torrent_service.py    # Searcher, non-blocking downloader & Jellyfin organizer
+│   ├── torrent_ranking.py    # "Best match" copy score (tunable in config.yaml)
 │   ├── jellyfin_service.py   # JellyfinService: library auto-setup, refresh + visibility verify
 │   └── recommender_service.py# Mood filtering, taste scoring, rating rules & ONNX adaptor
 ├── tests/
@@ -185,10 +186,12 @@ Console output will display:
 ### 1. Direct Search & Download Tab (⚡ Direct Download)
 - Click the **"⚡ Direct Download"** tab.
 - Type any movie name into the search bar (e.g., `Dune 2024`, `Inception`, `Mad Max`).
-- Choose your sorting preference:
+- Choose your sorting preference (default **Best match**):
+  - **✨ Best match:** one combined score = quality × seeder health × size fit. Good quality with healthy seeders comes first; huge files with few seeders and tiny low-quality ones drop down. For TV, searching a season (`The Bear S02`) ranks season packs first and searching an episode (`S02E06`) ranks episodes first. Tune the numbers under `torrent_ranking:` in `config.yaml`.
   - **⚡ Smallest File (Fast Download):** Orders candidate torrents from smallest size upwards.
   - **💎 Highest Quality / Seeds:** Prioritizes 4K/2160p and 1080p releases with the highest seeders.
-- Click **"⬇️ Direct Download"** on your preferred release.
+- Each result shows its quality, size and seeders (plus "Season pack" and size per episode for TV). Click **Download** on your preferred release.
+- Downloads only ever start here. On a Discover card, **Choose a copy** opens this tab with the title already searched; the copy you pick stays linked to that film, so it is logged as downloaded and filed under the catalogue title.
 - **In-Place Progress Bar:** The download button immediately transforms into a real-time progress bar polling every 1 second, showing:
   - Percentage completed (`64.2%`)
   - Download speed (`4.8 MB/s`)
@@ -208,7 +211,7 @@ Console output will display:
   - 🎲 *Surprise Me!* (Wildcard)
 - Apply era filters (*Modern 2015+*, *2000s*, *Classic Pre-2000*) and runtime filters (*< 105m*, *105-140m*, *> 140m*).
 - **Guilty-Pleasure Keyword Detection:** Typing phrases like *"cringe"*, *"so bad it's good"*, or *"guilty pleasure"* automatically suppresses the $\ge 6.0$ rating floor so you can discover fun B-movies.
-- Click **"✨ Find Movie for Tonight"**. If a movie is not on disk yet, click **"🍿 Watch Tonight"** to automatically search torrents, download it, and notify you when ready.
+- Click **"✨ Find Movie for Tonight"**. If a movie is not on disk yet, click **"Choose a copy"** to open the Download tab with it already searched, then pick the copy you want.
 
 ### 3. Taste Learning & Watch History (⭐ Taste & History)
 - When finished watching a film, tap **"Finished Watching ✨"** on the active watch banner.
@@ -278,7 +281,7 @@ cp model.onnx ../models/model.onnx
 | `GET` | `/api/jellyfin/status` | Jellyfin diagnostics: server online, libraries (types + locations), env config |
 | `GET` | `/api/moods` | Returns 8 mood mappings and sub-moods |
 | `POST` | `/api/recommend` | Runs mood filtering + taste scoring + rating rules |
-| `POST` | `/api/torrent/search` | Body: `{ query, sort_by_size, media_type }`. Searches YTS (movies) & Apibay (movies/TV) |
+| `POST` | `/api/torrent/search` | Body: `{ query, sort ('best' \| 'smallest' \| 'quality'), media_type }` (`sort_by_size` still accepted). Searches YTS (movies) & Apibay (movies/TV); results carry `score`, `seed_health`, `is_pack` |
 | `POST` | `/api/torrent/download` | Body: `{ magnet_link, movie_id, movie_title, media_type }`. Starts non-blocking download |
 | `GET` | `/api/torrent/status/{movie_id}` | Live progress polled every 1s (percentage, speed, bytes) |
 | `POST` | `/api/torrent/cancel` | Body: `{ movie_id }`. Cancels the download and purges partial staging files |
