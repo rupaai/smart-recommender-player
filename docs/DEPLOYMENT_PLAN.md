@@ -208,7 +208,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 `mars` already has Ubuntu, Docker, Tailscale and automatic security updates, so there's nothing to install by hand. What's left is one script run over SSH from your Mac (`ssh gabstevens@mars`, which already works with your key).
 
-### [ ] P4.1 One-command setup script (Sonnet)
+### [x] P4.1 One-command setup script (Sonnet)
 `deploy/bootstrap.sh`, safe to run again (skips anything already done; checks rather than installs Docker/Tailscale/unattended-upgrades and stops with a clear message if one is missing):
 1. Creates a `deploy` system user with **rootless Docker** (its own Docker daemon, owned by `deploy`). It is NOT added to the `docker` group: that group is root-equivalent and would let CI reach Gabriele's Home Assistant and Matter containers. With rootless Docker the `deploy` user can only see its own containers, images and networks. The runner and deploys run as this user, never as `gabstevens`.
 2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing, owned by `deploy`.
@@ -218,6 +218,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 6. Installs the healthcheck and disk-check cron entries (P8.1).
 7. Runs `docker compose -p couchcinema up -d` and waits for `/healthz`.
 - **Done when:** on a fresh Ubuntu 24.04 VM with Docker and a dummy container running, it reaches a healthy app, leaves the dummy container untouched, and a second run changes nothing.
+- **As built:** `deploy/bootstrap.sh`, `deploy/import-data.sh` (the cutover: `db`, `models`, `media`) and `deploy/RUNBOOK.md`. Differences from the text above, all forced by facts about the machine: (a) the script is copied from the Mac with `scp -r deploy` rather than `git clone`, so the server needs no GitHub login; (b) the app starts with the first deploy, not from bootstrap, because the image is private and does not exist until CI has built it (bootstrap starts Jellyfin and Prowlarr and waits for them); (c) under rootless Docker Jellyfin gets the GPU through an ACL on `/dev/dri/renderD128` for the `deploy` user (udev rule) and `RENDER_GID=0`, since a host group id can't be added to a rootless container; (d) on Ubuntu 24.04 an AppArmor profile for `rootlesskit` is added when user namespaces are restricted; (e) Prowlarr's API key is seeded into its `config.xml` so `.env` and Prowlarr agree; (f) missing apt packages are listed with the exact command, and installed only with `--install-prereqs`. `compose.yaml` now takes `SVC_PUID`/`SVC_PGID` for Prowlarr. Cron entries are installed once the Phase 8 scripts exist. **Tested with stand-ins for every system command** (`tests/deploy/`, part of `make check`): order of steps, arguments, a second run changing nothing, refusal if `deploy` is in the docker group. **Not tested on a real Ubuntu/rootless-Docker machine** (the build sandbox has no Docker daemon, systemd or VM); the first real run is on `mars`, and it is safe to re-run after a fix.
 
 ### [ ] P4.2 Your part [Labiba]
 1. Check with your boyfriend that it's fine to add a `deploy` user and the media stack next to Home Assistant.
