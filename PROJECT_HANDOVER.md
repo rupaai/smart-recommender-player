@@ -8,7 +8,7 @@ The user finds branches hard to track, so every chat updates this list when it o
 - `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
 - `deploy/phase-1` (PR "Deploy phase 1: portable app", M1): `make check`, `CONFIG_PATH`/`MODELS_DIR`, `deploy/config.server.yaml`, `/healthz`. Then `deploy/phase-2` (PR "Deploy phase 2: containers"; Docker, builds on 1) and `deploy/phase-3` (PR "Deploy phase 3: CI"; CI, builds on 2); merge in that order. The "Deployment plan" PR (#13) is merged.
 - M1 (phases 1, 2, 3) is merged. M2 (stacked, merge in order): `deploy/phase-4` (PR "Deploy phase 4: server setup script"), then `deploy/phase-5` (PR "Deploy phase 5: one-button deploy") and `deploy/phase-8` (alerts).
-- M2 (phases 4, 5, 8) is merged and live on `mars`. M3 (stacked, merge in order): `deploy/phase-6` (PR "Deploy phase 6: Mac to server data flow"), then `deploy/phase-7` (PR "Deploy phase 7: nightly Mac jobs").
+- M2 (phases 4, 5, 8) is merged and live on `mars`. M3: `deploy/phase-6` merged as PR #26; `deploy/phase-7` (PR "Deploy phase 7: nightly Mac jobs") is open.
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 

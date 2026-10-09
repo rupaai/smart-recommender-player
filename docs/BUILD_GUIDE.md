@@ -63,7 +63,7 @@ Every command says where it runs: **[Mac]** is Terminal on your Mac, **[mars]** 
 
 **A. Put the new version on the server (about 5 minutes)**
 
-1. On GitHub, merge the two M3 PRs **in this order**: "Deploy phase 6", then "Deploy phase 7". Wait for the green tick on `main` (Actions tab, CI).
+1. On GitHub, merge the M3 PR "Deploy phase 7" (phase 6, PR #26, is already merged). Wait for the green tick on `main` (Actions tab, CI).
 2. GitHub, Actions, **Deploy**, Run workflow, branch `main`. Wait until it is green.
 3. **[Mac]** Check the new admin door is there. It must answer `401` (locked), not `404` (missing):
 
