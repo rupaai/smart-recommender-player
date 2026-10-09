@@ -833,6 +833,8 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
     // Why this film matched an idea-led request — without it the concept
     // layer is invisible.
     if (m.matched_themes && m.matched_themes.length) reasons.push(`<span class="badge badge-theme" title="Themes matched from the premise">${escapeHtml(m.matched_themes.join(' · '))}</span>`);
+    // Learned taste: the real largest contributors to facet_fit / cluster_affinity.
+    (m.taste_reasons || []).forEach((t) => reasons.push(`<span class="badge badge-taste" title="facet fit ${escapeHtml(m.facet_fit ?? 0)} · cluster ${escapeHtml(m.cluster_affinity ?? 0)}">${escapeHtml(t)}</span>`));
     if (m.taste_bonus > 0) reasons.push(`<span class="badge badge-bonus" title="+${escapeHtml(m.taste_bonus)} taste boost">Fits your taste</span>`);
     if (m.query_boost > 0) reasons.push(`<span class="badge badge-query" title="+${escapeHtml(m.query_boost)} match boost">Matches your description</span>`);
 
@@ -2742,7 +2744,7 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector('.modal-overlay.active')) return;
   const k = e.key.toLowerCase();
-  if ((k === 'enter' || k === 'arrowright') && state.rateAwaitingWhy) {
+  if ((k === 'enter' || k === 'arrowright') && state.rateAwaitingWhy && !state.pairMode) {
     if (k === 'enter' && e.target && ['BUTTON', 'SUMMARY', 'A'].includes(e.target.tagName)) return;
     finishRateWhy();
     e.preventDefault();
