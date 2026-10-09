@@ -29,6 +29,7 @@ from services.jellyfin_service import JellyfinService
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
+from services import verdicts as vd
 from services.vibe_index import VibeIndex
 from services.torrent_service import (
     TorrentDownloader,
@@ -184,6 +185,12 @@ class RateRequest(BaseModel):
     user_rating: Optional[float] = Field(default=None, ge=1, le=10)
     status: str = "seen"  # 'seen' | 'not_seen'
     notes: Optional[str] = None
+    # Verdict rating (plan: "Better ratings"). With a verdict, user_rating is ignored.
+    verdict: Optional[str] = None  # rewatch | loved | liked | meh | not_for_me
+    did_not_finish: bool = False
+    worked: Optional[List[str]] = None
+    didnt: Optional[List[str]] = None
+    vibe_check: Optional[Dict[str, Any]] = None
 
 
 class TmdbImportRequest(BaseModel):
@@ -706,12 +713,51 @@ async def rate_item(req: RateRequest) -> Dict[str, Any]:
             req.user_rating,
             req.status,
             req.notes,
+            req.verdict,
+            req.did_not_finish,
+            req.worked,
+            req.didnt,
+            req.vibe_check,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    if req.status == "seen" and req.user_rating:
-        _log_outcome(req.media_item_id, "rated", req.user_rating)
+    if req.status == "seen":
+        logged = vd.legacy_rating(req.verdict, req.did_not_finish) if req.verdict else req.user_rating
+        if logged:
+            _log_outcome(req.media_item_id, "rated", logged)
     return summary
+
+
+@app.get("/api/ratings/vocab")
+async def get_rating_vocab() -> Dict[str, Any]:
+    """The verdicts and "why" chips the Rate card shows, from one place."""
+    return {
+        "verdicts": [{"id": k, **{"label": v["label"]}} for k, v in vd.VERDICTS.items()],
+        "extreme": list(vd.EXTREME_VERDICTS),
+        "chips": vd.CHIPS,
+    }
+
+
+@app.get("/api/ratings/details/{item_id}")
+async def get_rating_details(item_id: int, profile_id: int = 1) -> Dict[str, Any]:
+    """This person's verdict and answers for one title, plus the vibe-check
+    questions to show for it."""
+    details = await asyncio.to_thread(db.get_rating_details, item_id, profile_id)
+    questions = await asyncio.to_thread(db.get_vibe_check_questions, item_id)
+    return {"media_item_id": item_id, "profile_id": profile_id, "details": details, "questions": questions}
+
+
+@app.get("/api/ratings/inferred-queue")
+async def get_inferred_rating_queue(
+    profile_id: int = 1,
+    media_type: str = "movie",
+    limit: int = Query(default=100, ge=1, le=300),
+) -> Dict[str, Any]:
+    """"Sort out my 7s": old 1-10 ratings that only have a guessed verdict."""
+    items = await asyncio.to_thread(db.get_inferred_rating_queue, profile_id, media_type, limit)
+    for item in items:
+        _with_co_view(item)
+    return {"profile_id": profile_id, "media_type": media_type, "items": items}
 
 
 catalogue_search = CatalogueSearch(db)

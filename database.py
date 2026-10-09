@@ -5,6 +5,7 @@ Central hub managing the normalized SQLite catalogue, media sources, and watch h
 
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -130,6 +131,7 @@ class DatabaseManager:
             self._migrate_v5_collections(cursor)
             self._migrate_v6_vibe(cursor)
             self._migrate_v7_feedback(cursor)
+            self._migrate_v8_verdicts(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -470,6 +472,80 @@ class DatabaseManager:
         )
         cursor.execute("PRAGMA user_version = 7;")
         print("[Database] Migration v7 applied: discover_sessions / discover_impressions / vibe_clusters added.")
+
+    def _migrate_v8_verdicts(self, cursor: sqlite3.Cursor) -> None:
+        """Verdict ratings (plan: "Better ratings"): five verdicts, "why" chips
+        and vibe-check answers beside the 1-10 number.
+
+          rating_details  one row per profile and title: verdict, didn't-finish
+                          flag, worked / didn't chips, vibe-check answers, the
+                          -1..+1 taste_score, and `inferred` (1 = guessed from an
+                          old 1-10 rating, 0 = the person chose it)
+          rating_history  the previous state each time a rating is changed, so a
+                          change of mind never wipes the old one
+
+        Existing ratings get an inferred verdict read against that person's own
+        spread (services.verdicts.infer_verdict). watch_history.user_rating is
+        left untouched. Idempotent (user_version gate + IF NOT EXISTS).
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 8:
+            return
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rating_details (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id      INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                media_item_id   INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                verdict         TEXT NOT NULL,
+                did_not_finish  INTEGER NOT NULL DEFAULT 0,
+                worked          TEXT,              -- JSON list of chip ids
+                didnt           TEXT,              -- JSON list of chip ids
+                vibe_check      TEXT,              -- JSON {question_id: option id | [option ids]}
+                taste_score     REAL NOT NULL,     -- -1..+1
+                inferred        INTEGER NOT NULL DEFAULT 0,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(profile_id, media_item_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rating_history (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id      INTEGER NOT NULL,
+                media_item_id   INTEGER NOT NULL,
+                user_rating     REAL,
+                verdict         TEXT,
+                taste_score     REAL,
+                inferred        INTEGER,
+                notes           TEXT,
+                recorded_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_rating_history_item ON rating_history(profile_id, media_item_id);"
+        )
+
+        from services.verdicts import infer_verdict
+
+        rows = cursor.execute(
+            "SELECT profile_id, media_item_id, user_rating FROM watch_history "
+            "WHERE COALESCE(status, 'seen') = 'seen' AND user_rating IS NOT NULL AND profile_id IS NOT NULL;"
+        ).fetchall()
+        by_profile: Dict[int, List[float]] = {}
+        for r in rows:
+            by_profile.setdefault(r[0], []).append(float(r[2]))
+        for r in rows:
+            guess = infer_verdict(float(r[2]), by_profile[r[0]])
+            cursor.execute(
+                "INSERT OR IGNORE INTO rating_details (profile_id, media_item_id, verdict, taste_score, inferred) "
+                "VALUES (?, ?, ?, ?, 1);",
+                (r[0], r[1], guess["verdict"], guess["taste_score"]),
+            )
+        cursor.execute("PRAGMA user_version = 8;")
+        print(f"[Database] Migration v8 applied: rating_details / rating_history added, {len(rows)} ratings given an inferred verdict.")
 
     def register_source_file(
         self,
@@ -1297,6 +1373,11 @@ class DatabaseManager:
         user_rating: Optional[float] = None,
         status: str = "seen",
         notes: Optional[str] = None,
+        verdict: Optional[str] = None,
+        did_not_finish: bool = False,
+        worked: Optional[List[str]] = None,
+        didnt: Optional[List[str]] = None,
+        vibe_check: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Upserts one profile's verdict on one item (the Rate tab's write path).
 
@@ -1306,11 +1387,25 @@ class DatabaseManager:
         recommender can tell "he saw it, you haven't" apart from "neither of us
         has seen it". Any rating passed with status='not_seen' is dropped,
         because the two states are mutually exclusive.
+
+        A `verdict` (rewatch / loved / liked / meh / not_for_me) is the new way
+        to rate: it fills `rating_details` (with the chips and vibe-check
+        answers) and writes a matching legacy 1-10 number to
+        `watch_history.user_rating` for older readers. A bare `user_rating`
+        still works but removes any verdict, which would no longer match it.
+        The state being replaced is copied to `rating_history`, and a re-rate
+        that sends no notes keeps the existing ones.
         """
+        from services import verdicts as vd
+
         if status not in ("seen", "not_seen"):
             raise ValueError(f"invalid status: {status!r}")
+        verdict = vd.validate_verdict(verdict)
         if status == "not_seen":
             user_rating = None
+            verdict = None
+        elif verdict is not None:
+            user_rating = vd.legacy_rating(verdict, bool(did_not_finish))
         elif user_rating is not None:
             user_rating = max(1.0, min(10.0, float(user_rating)))
 
@@ -1321,6 +1416,19 @@ class DatabaseManager:
             if not cursor.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
                 raise ValueError(f"unknown profile_id: {profile_id}")
 
+            # Keep what is being replaced.
+            cursor.execute(
+                """
+                INSERT INTO rating_history (profile_id, media_item_id, user_rating, verdict, taste_score, inferred, notes)
+                SELECT wh.profile_id, wh.media_item_id, wh.user_rating, rd.verdict, rd.taste_score, rd.inferred, wh.notes
+                FROM watch_history wh
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+                WHERE wh.profile_id = ? AND wh.media_item_id = ? AND wh.status = 'seen';
+                """,
+                (profile_id, media_item_id),
+            )
+
             cursor.execute(
                 """
                 INSERT INTO watch_history (media_item_id, profile_id, user_rating, status, notes)
@@ -1328,17 +1436,110 @@ class DatabaseManager:
                 ON CONFLICT(profile_id, media_item_id) DO UPDATE SET
                     user_rating = excluded.user_rating,
                     status      = excluded.status,
-                    notes       = excluded.notes,
+                    notes       = COALESCE(excluded.notes, watch_history.notes),
                     watched_at  = CURRENT_TIMESTAMP;
                 """,
                 (media_item_id, profile_id, user_rating, status, notes),
             )
+
+            if verdict is not None:
+                # None = "not sent": keep whatever chips / answers are stored.
+                worked_list = vd.clean_chips(worked) if worked is not None else None
+                worked_json = json.dumps(worked_list) if worked_list is not None else None
+                didnt_json = (
+                    json.dumps([c for c in vd.clean_chips(didnt) if c not in (worked_list or [])])
+                    if didnt is not None else None
+                )
+                score = vd.taste_score(verdict, bool(did_not_finish))
+                cursor.execute(
+                    """
+                    INSERT INTO rating_details
+                        (profile_id, media_item_id, verdict, did_not_finish, worked, didnt, vibe_check,
+                         taste_score, inferred, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                    ON CONFLICT(profile_id, media_item_id) DO UPDATE SET
+                        verdict        = excluded.verdict,
+                        did_not_finish = excluded.did_not_finish,
+                        worked         = COALESCE(excluded.worked, rating_details.worked),
+                        didnt          = COALESCE(excluded.didnt, rating_details.didnt),
+                        vibe_check     = COALESCE(excluded.vibe_check, rating_details.vibe_check),
+                        taste_score    = excluded.taste_score,
+                        inferred       = 0,
+                        updated_at     = CURRENT_TIMESTAMP;
+                    """,
+                    (
+                        profile_id, media_item_id, verdict, 1 if did_not_finish else 0,
+                        worked_json, didnt_json,
+                        json.dumps(vd.clean_vibe_check(vibe_check)) if vibe_check is not None else None,
+                        score,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    "DELETE FROM rating_details WHERE profile_id = ? AND media_item_id = ?;",
+                    (profile_id, media_item_id),
+                )
 
         # Read the summary AFTER the write commits. get_rating_summary() opens
         # its own connection, and SQLite won't show it this connection's
         # uncommitted INSERT — calling it inside the `with` block returns the
         # pre-write state (the new verdict silently missing).
         return self.get_rating_summary(media_item_id)
+
+    def get_rating_details(self, media_item_id: int, profile_id: int) -> Optional[Dict[str, Any]]:
+        """One person's verdict, chips and vibe-check answers for a title, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM rating_details WHERE profile_id = ? AND media_item_id = ?;",
+                (profile_id, media_item_id),
+            ).fetchone()
+        if not row:
+            return None
+        out = dict(row)
+        for key in ("worked", "didnt"):
+            out[key] = json.loads(out[key]) if out.get(key) else []
+        out["vibe_check"] = json.loads(out["vibe_check"]) if out.get("vibe_check") else {}
+        out["did_not_finish"] = bool(out["did_not_finish"])
+        out["inferred"] = bool(out["inferred"])
+        return out
+
+    def get_vibe_check_questions(self, media_item_id: int) -> Dict[str, Any]:
+        """The vibe-check questions to show for one film (3 up front, the rest
+        under "More"), chosen from its mood dials and tags."""
+        from services.verdicts import pick_vibe_questions
+
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT facets, vibe_tags FROM media_items WHERE id = ?;", (media_item_id,)
+            ).fetchone()
+        facets = tags = None
+        if row:
+            try:
+                facets = json.loads(row["facets"]) if row["facets"] else None
+                tags = json.loads(row["vibe_tags"]) if row["vibe_tags"] else None
+            except (TypeError, ValueError):
+                pass
+        return pick_vibe_questions(facets, tags)
+
+    def get_inferred_rating_queue(self, profile_id: int, media_type: str = "movie", limit: int = 100) -> List[Dict[str, Any]]:
+        """Films this person rated before verdicts existed and hasn't confirmed:
+        the "Sort out my 7s" round. 7s first, then 8s, then the rest."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.*, wh.user_rating AS old_rating,
+                       EXISTS(SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id) AS in_library
+                FROM rating_details rd
+                JOIN watch_history wh ON wh.profile_id = rd.profile_id AND wh.media_item_id = rd.media_item_id
+                JOIN media_items mi ON mi.id = rd.media_item_id
+                WHERE rd.profile_id = ? AND rd.inferred = 1 AND wh.status = 'seen' AND mi.media_type = ?
+                ORDER BY CASE CAST(wh.user_rating AS INTEGER) WHEN 7 THEN 0 WHEN 8 THEN 1 ELSE 2 END,
+                         mi.title
+                LIMIT ?;
+                """,
+                (profile_id, media_type, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def get_rating_summary(self, media_item_id: int) -> Dict[str, Any]:
         """All profiles' verdicts on one item, plus the co-view tier.
@@ -1354,9 +1555,12 @@ class DatabaseManager:
                 dict(r)
                 for r in cursor.execute(
                     """
-                    SELECT wh.profile_id, p.name, wh.user_rating, wh.status, wh.notes, wh.watched_at
+                    SELECT wh.profile_id, p.name, wh.user_rating, wh.status, wh.notes, wh.watched_at,
+                           rd.verdict, rd.taste_score, rd.inferred, rd.did_not_finish
                     FROM watch_history wh
                     JOIN profiles p ON p.id = wh.profile_id
+                    LEFT JOIN rating_details rd
+                           ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
                     WHERE wh.media_item_id = ?
                     ORDER BY wh.profile_id;
                     """,
@@ -1654,10 +1858,13 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT mi.genres, mi.tier2_keywords, wh.user_rating
+                SELECT mi.genres, mi.tier2_keywords, wh.user_rating, rd.taste_score
                 FROM watch_history wh
                 JOIN media_items mi ON wh.media_item_id = mi.id
-                WHERE wh.profile_id = ? AND wh.status = 'seen' AND wh.user_rating >= ?;
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+                WHERE wh.profile_id = ? AND wh.status = 'seen'
+                  AND (rd.taste_score > 0 OR (rd.taste_score IS NULL AND wh.user_rating >= ?));
                 """,
                 (profile_id, min_rating),
             )
@@ -1666,7 +1873,7 @@ class DatabaseManager:
         genre_scores: Dict[str, float] = {}
         keyword_scores: Dict[str, float] = {}
         for row in rows:
-            weight = float(row["user_rating"] or 7.0) / 10.0
+            weight = self._taste_weight(row)
             for raw in (row["genres"] or "").split(","):
                 key = raw.strip().lower()
                 if key:
@@ -2039,13 +2246,18 @@ class DatabaseManager:
         with self.get_connection() as conn:
             rows = conn.execute(
                 f"""
-                SELECT media_item_id, MAX(watched_at) AS last_at
-                FROM watch_history
-                WHERE COALESCE(status, 'seen') = 'seen'
-                  AND profile_id IN ({ph})
-                  AND (user_rating IS NULL OR user_rating >= ?)
-                GROUP BY media_item_id
-                ORDER BY last_at DESC, media_item_id DESC
+                SELECT wh.media_item_id, MAX(wh.watched_at) AS last_at
+                FROM watch_history wh
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+                WHERE COALESCE(wh.status, 'seen') = 'seen'
+                  AND wh.profile_id IN ({ph})
+                  AND (
+                        rd.taste_score > 0
+                     OR (rd.taste_score IS NULL AND (wh.user_rating IS NULL OR wh.user_rating >= ?))
+                  )
+                GROUP BY wh.media_item_id
+                ORDER BY last_at DESC, wh.media_item_id DESC
                 LIMIT ?;
                 """,
                 [*profile_ids, min_rating, limit],
@@ -2075,6 +2287,16 @@ class DatabaseManager:
 
 
 
+    @staticmethod
+    def _taste_weight(row) -> float:
+        """How much one liked film counts toward the taste profile: a verdict's
+        taste_score (0.5-1.0 for anything liked) when there is one, else the old
+        rating / 10."""
+        score = row["taste_score"]
+        if score is not None:
+            return max(0.1, 0.5 + 0.5 * float(score))
+        return float(row["user_rating"] or 7.0) / 10.0
+
     def get_user_taste_profile(self, min_rating: float = 7.0) -> Dict[str, Any]:
         """
         Analyzes watched movies where user_rating >= min_rating.
@@ -2084,10 +2306,12 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT mi.genres, mi.tier2_keywords, wh.user_rating
+                SELECT mi.genres, mi.tier2_keywords, wh.user_rating, rd.taste_score
                 FROM watch_history wh
                 JOIN media_items mi ON wh.media_item_id = mi.id
-                WHERE wh.user_rating >= ?;
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+                WHERE rd.taste_score > 0 OR (rd.taste_score IS NULL AND wh.user_rating >= ?);
                 """,
                 (min_rating,),
             )
@@ -2097,7 +2321,7 @@ class DatabaseManager:
             keyword_scores: Dict[str, float] = {}
 
             for row in rows:
-                weight = float(row["user_rating"] or 7.0) / 10.0
+                weight = self._taste_weight(row)
                 if row["genres"]:
                     for g in row["genres"].split(","):
                         g_clean = g.strip().lower()
