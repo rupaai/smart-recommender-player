@@ -132,6 +132,7 @@ class DatabaseManager:
             self._migrate_v6_vibe(cursor)
             self._migrate_v7_feedback(cursor)
             self._migrate_v8_verdicts(cursor)
+            self._migrate_v9_pairs(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -546,6 +547,50 @@ class DatabaseManager:
             )
         cursor.execute("PRAGMA user_version = 8;")
         print(f"[Database] Migration v8 applied: rating_details / rating_history added, {len(rows)} ratings given an inferred verdict.")
+
+    def _migrate_v9_pairs(self, cursor: sqlite3.Cursor) -> None:
+        """"This or that" (services/pairs.py): which of two seen films, from the
+        same genre, is more this person's thing.
+
+          rating_pairs    one row per answer: the winner and loser (for "about the
+                          same", `same` = 1 and the two ids are just the pair as
+                          shown), the shared genre, and `dial_diffs` (JSON: the
+                          mood dials that differed most, winner minus loser)
+          rating_details  gains `pair_score` (Bradley-Terry strength) and
+                          `pair_nudge` (+/-0.15). `taste_score` stays the pure
+                          verdict score; the final score is built on read.
+
+        Idempotent (user_version gate + column-exists check), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        if version >= 9:
+            return
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rating_pairs (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id    INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                winner_id     INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                loser_id      INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                same          INTEGER NOT NULL DEFAULT 0,
+                shared_genre  TEXT,
+                dial_diffs    TEXT,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        # One answer per unordered pair per person.
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_rating_pairs_unique "
+            "ON rating_pairs(profile_id, MIN(winner_id, loser_id), MAX(winner_id, loser_id));"
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_rating_pairs_profile ON rating_pairs(profile_id);")
+        existing = {r[1] for r in cursor.execute("PRAGMA table_info(rating_details);").fetchall()}
+        for col in ("pair_score", "pair_nudge"):
+            if col not in existing:
+                cursor.execute(f"ALTER TABLE rating_details ADD COLUMN {col} REAL;")
+        cursor.execute("PRAGMA user_version = 9;")
+        print("[Database] Migration v9 applied: rating_pairs added, rating_details.pair_score / pair_nudge added.")
 
     def register_source_file(
         self,
@@ -1525,7 +1570,121 @@ class DatabaseManager:
         out["vibe_check"] = json.loads(out["vibe_check"]) if out.get("vibe_check") else {}
         out["did_not_finish"] = bool(out["did_not_finish"])
         out["inferred"] = bool(out["inferred"])
+        from services import pairs as pr
+        out["final_taste_score"] = pr.apply_nudge(out["taste_score"], out.get("pair_nudge") or 0.0)
         return out
+
+    # --- "This or that" pairs (services/pairs.py) ---------------------------
+
+    def get_pair_round(self, profile_id: int, media_type: str = "movie", limit: int = 10,
+                       seed: Optional[int] = None) -> Dict[str, Any]:
+        """Up to `limit` informative pairs for one person, plus how many good
+        pairs exist in total (so the card can say "3 of 10")."""
+        from services import pairs as pr
+
+        with self.get_connection() as conn:
+            films = [dict(r) for r in conn.execute(
+                """
+                SELECT mi.id, mi.title, mi.release_year, mi.media_type, mi.genres, mi.poster_url, mi.vibe_cluster_id,
+                       rd.verdict, rd.taste_score,
+                       (SELECT COUNT(*) FROM rating_pairs rp
+                         WHERE rp.profile_id = rd.profile_id AND rp.same = 0
+                           AND (rp.winner_id = mi.id OR rp.loser_id = mi.id)) AS comparisons
+                FROM rating_details rd
+                JOIN media_items mi ON mi.id = rd.media_item_id
+                JOIN watch_history wh ON wh.profile_id = rd.profile_id AND wh.media_item_id = rd.media_item_id
+                WHERE rd.profile_id = ? AND mi.media_type = ? AND wh.status = 'seen';
+                """,
+                (profile_id, media_type),
+            ).fetchall()]
+            answered = [(r[0], r[1]) for r in conn.execute(
+                "SELECT winner_id, loser_id FROM rating_pairs WHERE profile_id = ?;", (profile_id,)
+            ).fetchall()]
+        rng = random.Random(seed) if seed is not None else random.Random()
+        picked = pr.pick_pairs(films, answered, limit=limit, rng=rng)
+        return {"profile_id": profile_id, "media_type": media_type, "pairs": picked,
+                "answered": len(answered)}
+
+    def record_pair_answer(self, profile_id: int, a_id: int, b_id: int, choice: str) -> Dict[str, Any]:
+        """Stores one "This or that" answer (`choice` = 'a' | 'b' | 'same'),
+        then refits this person's pair scores and nudges. Answering a pair
+        twice keeps the first answer."""
+        from services import pairs as pr
+
+        if choice not in ("a", "b", "same"):
+            raise ValueError("choice must be 'a', 'b' or 'same'")
+        if a_id == b_id:
+            raise ValueError("a pair needs two different films")
+        with self.get_connection() as conn:
+            rows = {r["id"]: dict(r) for r in conn.execute(
+                """
+                SELECT mi.id, mi.genres, mi.facets FROM media_items mi
+                JOIN rating_details rd ON rd.media_item_id = mi.id AND rd.profile_id = ?
+                WHERE mi.id IN (?, ?);
+                """,
+                (profile_id, a_id, b_id),
+            ).fetchall()}
+            if len(rows) != 2:
+                raise ValueError("both films must be rated by this profile")
+            genre = pr.shared_genre(rows[a_id], rows[b_id])
+            if genre is None:
+                raise ValueError("the films share no genre")
+            dup = conn.execute(
+                "SELECT 1 FROM rating_pairs WHERE profile_id = ? AND MIN(winner_id, loser_id) = ? AND MAX(winner_id, loser_id) = ?;",
+                (profile_id, min(a_id, b_id), max(a_id, b_id)),
+            ).fetchone()
+            if dup:
+                return {"saved": False, "reason": "already answered"}
+
+            def facets(i):
+                try:
+                    return json.loads(rows[i]["facets"]) if rows[i]["facets"] else {}
+                except (TypeError, ValueError):
+                    return {}
+
+            same = 1 if choice == "same" else 0
+            winner, loser = (b_id, a_id) if choice == "b" else (a_id, b_id)
+            diffs = pr.dial_differences(facets(winner), facets(loser))
+            conn.execute(
+                "INSERT INTO rating_pairs (profile_id, winner_id, loser_id, same, shared_genre, dial_diffs) "
+                "VALUES (?, ?, ?, ?, ?, ?);",
+                (profile_id, winner, loser, same, genre, json.dumps(diffs)),
+            )
+        self.refresh_pair_scores(profile_id)
+        return {"saved": True, "winner_id": None if same else winner, "loser_id": None if same else loser,
+                "same": bool(same), "shared_genre": genre, "dial_diffs": diffs}
+
+    def refresh_pair_scores(self, profile_id: int) -> Dict[int, float]:
+        """Refits Bradley-Terry strengths from this person's decisive answers
+        and stores `pair_score` / `pair_nudge` on their rating_details rows.
+        `taste_score` (the verdict score) is never touched."""
+        from services import pairs as pr
+
+        with self.get_connection() as conn:
+            answers = [(r[0], r[1]) for r in conn.execute(
+                "SELECT winner_id, loser_id FROM rating_pairs WHERE profile_id = ? AND same = 0;", (profile_id,)
+            ).fetchall()]
+            strengths = pr.pair_scores(answers)
+            conn.execute(
+                "UPDATE rating_details SET pair_score = NULL, pair_nudge = NULL WHERE profile_id = ?;", (profile_id,)
+            )
+            for item_id, strength in strengths.items():
+                conn.execute(
+                    "UPDATE rating_details SET pair_score = ?, pair_nudge = ? WHERE profile_id = ? AND media_item_id = ?;",
+                    (strength, pr.nudge_for(strength), profile_id, item_id),
+                )
+        return strengths
+
+    def get_final_taste_scores(self, profile_id: int) -> Dict[int, float]:
+        """{media_item_id: verdict score + pair nudge, kept inside its verdict}."""
+        from services import pairs as pr
+
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT media_item_id, taste_score, pair_nudge FROM rating_details WHERE profile_id = ?;",
+                (profile_id,),
+            ).fetchall()
+        return {r["media_item_id"]: pr.apply_nudge(r["taste_score"], r["pair_nudge"] or 0.0) for r in rows}
 
     def get_vibe_check_questions(self, media_item_id: int) -> Dict[str, Any]:
         """The vibe-check questions to show for one film (3 up front, the rest

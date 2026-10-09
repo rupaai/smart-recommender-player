@@ -52,6 +52,8 @@ const state = {
   rateQuick: false,        // quick mode: move on right after the verdict (saved in this browser)
   rateCardShownId: null,   // item id the card was last drawn for
   rateSavedVerdict: null,
+  pairMode: false,         // "This or that" round (separate from the rating cards)
+  pairs: [], pairIndex: 0, pairDone: 0, pairSkipped: new Set(), pairLoaded: false,
   rateSortMode: false      // "Sort out my 7s": confirm verdicts for old ratings
 };
 
@@ -1790,6 +1792,7 @@ function setRateMediaType(type) {
 }
 
 async function loadRatingQueue(reset) {
+  if (state.pairMode) { loadPairRound(); return; }
   if (reset) {
     state.rateQueue = [];
     state.rateIndex = 0;
@@ -1927,6 +1930,7 @@ function currentRateItem() {
 function renderRateCard() {
   const card = document.getElementById('rateCard');
   const empty = document.getElementById('rateEmpty');
+  if (state.pairMode) { renderPairs(); return; }
   const item = currentRateItem();
   const me = activeRateProfile();
 
@@ -2307,10 +2311,140 @@ async function finishRateWhy() {
 }
 
 function toggleRateSortMode() {
+  if (state.pairMode) togglePairMode(false);
   state.rateSortMode = !state.rateSortMode;
   setPressed(document.getElementById('rateSortBtn'), state.rateSortMode);
   document.getElementById('rateGenreRow')?.classList.toggle('is-hidden', state.rateSortMode);
   loadRatingQueue(true);
+}
+
+// ---------------------------------------------------------------------------
+// This or that: two films you've seen from the same genre, pick the one that's
+// more your thing (services/pairs.py). Optional, about 10 pairs per round, and
+// never mixed into the rating cards.
+// ---------------------------------------------------------------------------
+const PAIR_ROUND = 10;
+
+function togglePairMode(on) {
+  state.pairMode = typeof on === 'boolean' ? on : !state.pairMode;
+  if (state.pairMode) {
+    state.rateSortMode = false;
+    setPressed(document.getElementById('rateSortBtn'), false);
+  }
+  setPressed(document.getElementById('pairBtn'), state.pairMode);
+  document.getElementById('rateGenreRow')?.classList.toggle('is-hidden', state.pairMode || state.rateSortMode);
+  document.getElementById('rateCard').style.display = state.pairMode ? 'none' : '';
+  document.getElementById('rateEmpty').style.display = 'none';
+  document.getElementById('pairView').classList.toggle('is-hidden', !state.pairMode);
+  state.pairSkipped = new Set();
+  state.pairDone = 0;
+  if (state.pairMode) loadPairRound();
+  else loadRatingQueue(true);
+}
+
+async function loadPairRound() {
+  state.pairLoaded = false;
+  setRateProgress('');
+  document.getElementById('pairView').innerHTML = '<p class="rate-sub" style="text-align:center; padding: 20px;">Loading…</p>';
+  try {
+    const params = new URLSearchParams({
+      profile_id: state.rateProfileId, media_type: state.rateMediaType,
+      limit: Math.min(30, PAIR_ROUND + state.pairSkipped.size)
+    });
+    const res = await fetch(`/api/ratings/pairs?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const key = p => `${Math.min(p.a.id, p.b.id)}-${Math.max(p.a.id, p.b.id)}`;
+    state.pairs = (data.pairs || []).filter(p => !state.pairSkipped.has(key(p))).slice(0, PAIR_ROUND);
+    state.pairIndex = 0;
+    state.pairDone = 0;
+    state.pairLoaded = true;
+    renderPairs();
+  } catch (err) {
+    console.error('Failed to load pairs:', err);
+    setRateProgress("Couldn't load pairs. Check the server and try again.", 'error');
+    document.getElementById('pairView').innerHTML = '';
+  }
+}
+
+function pairCardHtml(f, side, n) {
+  const mine = f.verdict ? rateVerdictLabel(f.verdict) : '';
+  return `
+    <button class="pair-card" type="button" onclick="answerPair('${side}')" aria-label="${escapeHtml(f.title)}, option ${n}">
+      ${posterHtml(f.poster_url, f.title, 'pair-poster')}
+      <span class="pair-title">${escapeHtml(f.title)}</span>
+      <span class="pair-meta">${[f.release_year, mine && `You: ${escapeHtml(mine)}`].filter(Boolean).join(' · ')}</span>
+      <span class="pair-key"><kbd>${n}</kbd></span>
+    </button>`;
+}
+
+function renderPairs() {
+  const box = document.getElementById('pairView');
+  if (!box || !state.pairMode) return;
+  const pair = state.pairs[state.pairIndex];
+  if (!state.pairLoaded) return;
+  if (!pair) {
+    const none = state.pairDone === 0;
+    setRateProgress('');
+    box.innerHTML = `
+      <div class="rate-empty">
+        <p class="empty-title">${none ? 'No good pairs left' : 'Round done'}</p>
+        <p class="rate-sub">${none
+          ? 'Nothing left to compare right now. Rate more films you have seen, and new pairs will appear.'
+          : `You answered ${state.pairDone}. Each one sharpens which flavour you mean.`}</p>
+        ${none ? '' : '<button class="btn-secondary" onclick="loadPairRound()">Another round</button>'}
+      </div>`;
+    return;
+  }
+  setRateProgress(`This or that · ${state.pairIndex + 1} of ${state.pairs.length}`);
+  box.innerHTML = `
+    <div class="pair-question">
+      <p class="rate-question">Which is more your thing?</p>
+      <p class="rate-sub pair-genre">${escapeHtml(pair.shared_genre)}</p>
+    </div>
+    <div class="pair-cards">
+      ${pairCardHtml(pair.a, 'a', 1)}
+      ${pairCardHtml(pair.b, 'b', 2)}
+    </div>
+    <div class="rate-actions pair-actions">
+      <button class="btn-secondary" type="button" onclick="answerPair('same')">About the same <kbd>3</kbd></button>
+      <button class="btn-skip" type="button" onclick="skipPair()">Skip <kbd>S</kbd></button>
+    </div>
+    <p class="rate-hint"><kbd>1</kbd> left · <kbd>2</kbd> right · <kbd>3</kbd> about the same · <kbd>S</kbd> skip</p>`;
+}
+
+let pairInFlight = false;
+async function answerPair(choice) {
+  const pair = state.pairs[state.pairIndex];
+  if (!pair || pairInFlight) return;
+  pairInFlight = true;
+  try {
+    const res = await fetch('/api/ratings/pairs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile_id: state.rateProfileId, a_id: pair.a.id, b_id: pair.b.id, choice })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    state.pairDone += 1;
+    state.pairIndex += 1;
+    renderPairs();
+  } catch (err) {
+    console.error('Pair answer failed:', err);
+    setRateProgress(`Not saved (${err.message}). Try again.`, 'error');
+  } finally {
+    pairInFlight = false;
+  }
+}
+
+function skipPair() {
+  const pair = state.pairs[state.pairIndex];
+  if (!pair) return;
+  state.pairSkipped.add(`${Math.min(pair.a.id, pair.b.id)}-${Math.max(pair.a.id, pair.b.id)}`);
+  state.pairIndex += 1;
+  renderPairs();
 }
 
 async function submitNotSeen() {
@@ -2413,13 +2547,20 @@ document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (document.querySelector('.modal-overlay.active')) return;
   const k = e.key.toLowerCase();
-  if ((k === 'enter' || k === 'arrowright') && state.rateAwaitingWhy) {
+  if ((k === 'enter' || k === 'arrowright') && state.rateAwaitingWhy && !state.pairMode) {
     if (k === 'enter' && e.target && ['BUTTON', 'SUMMARY', 'A'].includes(e.target.tagName)) return;
     finishRateWhy();
     e.preventDefault();
     return;
   }
   if (k.length !== 1) return;
+  if (state.pairMode) {
+    if (k === '1') answerPair('a'); else if (k === '2') answerPair('b');
+    else if (k === '3') answerPair('same'); else if (k === 's') skipPair();
+    else return;
+    e.preventDefault();
+    return;
+  }
   if (state.rateAwaitingWhy && (k === 'n' || k === 's')) return; // saved; Next moves on
   if (k >= '1' && k <= '5' && state.rateVocab) {
     const v = state.rateVocab.verdicts[parseInt(k, 10) - 1];
@@ -2427,7 +2568,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
   } else if (k === 'd') {
     const box = document.getElementById('rateDnf');
-    if (box && state.rateDraft) { box.checked = !box.checked; state.rateDraft.dnf = box.checked; }
+    if (box && state.rateDraft) { box.checked = !box.checked; state.rateDraft.dnf = box.checked; scheduleRateAutosave(); }
   } else if (k === 'w') {
     const why = document.getElementById('rateWhy');
     if (why) why.open = !why.open;

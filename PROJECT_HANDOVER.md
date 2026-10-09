@@ -5,6 +5,7 @@
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
 - `main`: what runs. Recommender v2 Phases 1–3 merged 2026-10-08 (PR #2).
 - `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR #3 open (see §10.6).
+- `claude/project-thread-niiyny`: "This or that" pair round on the Rate tab (§10.8), PR open.
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -426,6 +427,16 @@ The light redesign with the "ticket" look is the UI (the "clean" look was remove
 - **Multi-pick vibe questions:** "How did it leave you?" and "Different from what you expected?" (id still `darker`) each have 10 options, up to 3 picks (`max`), and an `exclusive` option ("Nothing much" / "About as expected") that stands alone. Answers are lists; `clean_vibe_check` turns old single-string answers into one-item lists. Other multi questions (felt like, best for) keep 2 picks. The question dicts from `pick_vibe_questions` carry `max` and `exclusive`; the JS reads them in `vibeQuestionMeta`.
 - **Tests:** `tests/test_verdicts.py` (maths, inference on the real spread, migration, history, readers, question picker, queue). Driven live with Playwright at 390 and 1280 px on a copy of the catalogue.
 - **Not built yet:** per-season TV verdicts; the same-genre "This or that" round (needs a `rating_pairs` table); using chips / vibe-check answers in ranking (`facet_fit`, cluster affinity, weight fitting, §5); the Discover feedback sheet still uses stars.
+
+### 10.8 "This or that" pair round (built 2026-10-09)
+- **Why:** a verdict says which genre you like, not which flavour of it. Two seen films from one genre, "Which is more your thing?", teach the flavour (docs/RECOMMENDER_V2_DESIGN.md §5, "this one over that one").
+- **Schema v9** (`_migrate_v9_pairs`): `rating_pairs` (profile_id, winner_id, loser_id, `same`, shared_genre, `dial_diffs` JSON, created_at; unique per person per unordered pair) and two new `rating_details` columns, `pair_score` (Bradley-Terry strength) and `pair_nudge`. **`rating_details.taste_score` is still the pure verdict score**; nothing that already reads it changed.
+- **`services/pairs.py`** (pure functions): `pick_pairs` (both films seen, share a genre, `taste_score` within 0.3, never an answered pair, same `vibe_cluster_id` first, then fewest comparisons, each film once per round of 10); `pair_scores` (Bradley-Terry fitted with a zero-mean prior, so one comparison barely moves a film; "about the same" is left out, it counts for neither); `nudge_for` (0.15 x tanh(strength)); `apply_nudge(verdict_score, nudge)` (cap +/-0.15 and strictly between the neighbouring verdict scores, so "Liked it" stays between Meh and Loved; the extremes stay within -1..+1); `dial_differences` (the top 3 mood dials by |winner - loser| from `media_items.facets`).
+- **Final score:** `DatabaseManager.get_final_taste_scores(profile_id)` and `get_rating_details()["final_taste_score"]` return verdict score + nudge, computed on read from the two stored columns, so changing a verdict re-bounds the nudge. **Ranking does not use the final score or `dial_diffs` yet**; the "Taste model in ranking" and "vibe checks in ranking" work can read them.
+- **API:** `GET /api/ratings/pairs?profile_id=&media_type=&limit=10` returns `{pairs: [{a, b, shared_genre, same_cluster}], answered}`; `POST /api/ratings/pairs {profile_id, a_id, b_id, choice: a|b|same}` stores the answer, refits that person's scores, and returns the shared genre and dial diffs (a repeat answer is ignored). Skip is client-side only and stores nothing.
+- **Rate tab:** a "This or that" button beside "Sort out my 7s" (exclusive with it, never mixed into the normal cards). Two cards side by side, stacked on phones, "About the same" and Skip, keys 1 / 2 / 3 / S, progress "This or that . 3 of 10", "Round done / Another round" and a "No good pairs left" empty state. Code: `togglePairMode`, `loadPairRound`, `renderPairs`, `answerPair` in `static/app.js`; `.pair-*` in `static/styles.css`.
+- **Verified:** `tests/test_pairs.py` (picker rules, no repeats, score maths, nudge cap and verdict boundaries, "about the same", database round trip); all other test files still pass (`test_verdicts` now accepts schema >= 8); the real server on a scratch copy of the catalogue driven in Chromium at 390 and 1280 px (keys 1/2/3/S, clicks, round end, no layout overflow; only pre-existing 404s for the font and favicon, and blocked poster fetches).
+- **Not built:** TV pairs use the same code but were only tried on movies; a pair round is per person (no "together" round).
 
 ## 11. DOWNLOAD TAB ONLY + "BEST MATCH" SORT (2026-10-09)
 

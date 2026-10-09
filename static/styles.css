@@ -1205,6 +1205,43 @@ kbd {
 .rate-coview-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .rate-coview-chips .taste-tag { background: var(--together-bg); color: var(--together-text); border-color: transparent; }
 
+/* This or that: two films side by side, stacked on phones */
+.pair-question { text-align: center; margin-bottom: 4px; }
+.pair-question .rate-question { margin: 6px 0 2px; }
+.pair-genre { font-weight: 700; margin-bottom: 10px; }
+.pair-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.pair-card {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 16px 14px 14px; text-align: center; cursor: pointer; font: inherit; color: inherit;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1); transition: border-color 0.15s, transform 0.15s;
+}
+.pair-card:hover { border-color: var(--text); transform: translateY(-1px); }
+.pair-card:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.pair-poster {
+  width: 132px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.pair-title {
+  font-family: var(--font-display); font-stretch: var(--display-stretch);
+  font-weight: var(--display-weight); text-transform: var(--display-case);
+  letter-spacing: var(--display-track); font-size: 20px; line-height: 1.1; text-wrap: balance;
+}
+.pair-meta { font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.pair-key { margin-top: 2px; }
+.pair-actions { justify-content: center; margin-top: 14px; }
+.pair-actions .btn-secondary { margin-top: 0; }
+@media (max-width: 480px) {
+  .pair-cards { grid-template-columns: 1fr; gap: 10px; }
+  .pair-card { display: grid; grid-template-columns: 64px 1fr; grid-template-rows: auto auto; align-content: center; text-align: left; align-items: center; gap: 2px 12px; padding: 12px; }
+  .pair-poster { width: 64px; grid-row: 1 / span 2; }
+  .pair-card .pair-title { align-self: end; }
+  .pair-card .pair-meta { align-self: start; }
+  .pair-key { display: none; }
+  .pair-title { font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .pair-card { transition: none; } }
+
 @media (max-width: 480px) {
   .rate-card-body { gap: 12px; padding: 14px 14px 0; }
   .rate-controls { padding: 0 14px 14px; }
