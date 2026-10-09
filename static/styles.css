@@ -796,8 +796,8 @@ button:disabled { cursor: default; }
 .badge-coview-a .badge-icon { fill: currentColor; }
 
 @media (hover: hover) {
-  .star-selector:hover .star-btn, .rate-stars:hover .star-btn { color: var(--action); }
-  .star-selector .star-btn:hover ~ .star-btn, .rate-stars .star-btn:hover ~ .star-btn { color: var(--surface-3); }
+  .star-selector:hover .star-btn { color: var(--action); }
+  .star-selector .star-btn:hover ~ .star-btn { color: var(--surface-3); }
   .star-btn:hover { transform: scale(1.15); }
 }
 
@@ -1053,14 +1053,50 @@ button:disabled { cursor: default; }
 .rate-controls { padding: 0 18px 18px; }
 .rate-question { text-align: center; font-size: 14px; font-weight: 700; margin: 20px 0 4px; }
 
-.rate-stars { display: flex; justify-content: space-between; }
-.rate-stars .star-btn { flex: 1; font-size: 32px; padding: 6px 0; }
-
-.rate-scale {
-  display: flex; justify-content: space-between;
-  font-size: 11px; font-weight: 600; color: var(--text-3);
-  margin-bottom: 16px; padding: 0 6px;
+/* Verdict buttons: five behaviours instead of ten stars */
+.verdict-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 12px 0 10px; }
+.verdict-btn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 58px; padding: 8px 4px; border-radius: var(--radius-md);
+  background: var(--surface); border: 1.5px solid var(--line-strong);
+  color: var(--text); font-size: 13px; font-weight: 700; line-height: 1.15; text-align: center;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
 }
+.verdict-btn kbd { font-size: 10px; }
+.verdict-btn:hover { border-color: var(--text); transform: translateY(-1px); }
+.verdict-btn.active { background: var(--select-bg); border-color: var(--select-line); }
+.verdict-rewatch:hover, .verdict-rewatch.active { background: var(--ready-bg); }
+.verdict-not_for_me:hover, .verdict-not_for_me.active { background: var(--danger-bg); }
+.rate-dnf { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin: 0 0 12px; }
+
+/* Folded "Why?" section */
+.rate-why { border-top: 1px solid var(--line); margin: 4px 0 14px; }
+.rate-why > summary {
+  cursor: pointer; padding: 10px 0; font-size: 13px; font-weight: 700; list-style: none;
+}
+.rate-why > summary::-webkit-details-marker { display: none; }
+.rate-why > summary::before { content: "▸ "; color: var(--text-3); }
+.rate-why[open] > summary::before { content: "▾ "; }
+.rate-why-sub { font-weight: 500; color: var(--text-3); margin-left: 4px; }
+.rate-why-body { padding-bottom: 6px; }
+.why-group { margin-bottom: 14px; }
+.why-label { font-size: 12px; font-weight: 700; color: var(--text-2); margin: 0 0 6px; display: block; }
+.why-chips, .vibe-q-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.rate-why .chip { padding: 6px 11px; font-size: 12.5px; }
+.vibe-q { margin-bottom: 10px; }
+.vibe-q-text { font-size: 13px; color: var(--text); margin: 0 0 5px; }
+.vibe-more > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--text-2); padding: 4px 0 8px; }
+.rate-note {
+  width: 100%; font-size: 16px; padding: 9px 12px; border-radius: var(--radius-md);
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--text);
+}
+.btn-done {
+  width: 100%; min-height: 46px; margin: 0 0 10px; border-radius: var(--radius-md);
+  background: var(--action); color: var(--on-action); border: none;
+  font-size: 14px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-done:hover { background: var(--action-hover); }
+.is-hidden { display: none !important; }
 
 .rate-actions { display: flex; gap: 8px; align-items: stretch; }
 
@@ -1120,7 +1156,7 @@ kbd {
   .rate-card-body { gap: 12px; padding: 14px 14px 0; }
   .rate-controls { padding: 0 14px 14px; }
   .rate-stub { padding: 10px 14px; }
-  .rate-stars .star-btn { font-size: 27px; }
+  .verdict-btn { font-size: 11.5px; min-height: 54px; }
   .rate-poster { width: 86px; min-width: 86px; }
   .rate-title { font-size: 21px; }
   .movie-card-main { padding: 14px; gap: 14px; }

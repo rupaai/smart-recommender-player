@@ -319,13 +319,15 @@
             <button id="rateTypeMovie" class="segment active" aria-pressed="true" onclick="setRateMediaType('movie')">Movies</button>
             <button id="rateTypeTv" class="segment" aria-pressed="false" onclick="setRateMediaType('tv')">TV shows</button>
           </div>
+          <button class="btn-ghost" id="rateSortBtn" aria-pressed="false" onclick="toggleRateSortMode()"
+                  title="Pick a verdict for films you rated before verdicts existed">Sort out my 7s</button>
           <button class="btn-ghost" onclick="shuffleRatingQueue()" title="Show a different set">
             <svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle
           </button>
         </div>
       </div>
 
-      <div class="rate-genre-row">
+      <div class="rate-genre-row" id="rateGenreRow">
         <span class="filter-label">Genre</span>
         <div id="rateGenreChips" class="rate-genre-chips"></div>
       </div>
