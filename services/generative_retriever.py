@@ -214,6 +214,16 @@ class GenerativeRetriever:
         self._predictor_cfg: Dict[str, Any] = {}
 
     # -- artifact loading ---------------------------------------------------
+    def reload(self) -> bool:
+        """Forgets the loaded artifacts and loads them again (a new model bundle was published)."""
+        self._loaded = False
+        self._session = None
+        self._input_names = []
+        self._semantic_ids = {}
+        self._trie = {}
+        self._predictor_cfg = {}
+        return self.is_ready()
+
     def is_ready(self) -> bool:
         """True when all artifacts are present and the ONNX session loads."""
         try:

@@ -102,6 +102,20 @@ class VibeIndex:
     def is_ready(self) -> bool:
         return self.files_present() and self._load()
 
+    def reload(self) -> bool:
+        """Forgets the loaded index and loads it again (a new model bundle was published)."""
+        with self._lock:
+            self._loaded = False
+            self._error = None
+            self.vectors = None
+            self.ids = []
+            self.row = {}
+            self.config = {}
+            self.anchors = None
+            self._session = None
+            self._tokenizer = None
+        return self.is_ready()
+
     def status(self) -> Dict[str, Any]:
         return {"ready": self.is_ready(), "titles": len(self.ids), "error": self._error,
                 "built_at": self.config.get("built_at"), "model": self.config.get("model")}
