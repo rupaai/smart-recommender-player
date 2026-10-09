@@ -1286,3 +1286,45 @@ kbd {
     transition-duration: 0.01ms !important; scroll-behavior: auto !important;
   }
 }
+
+/* ---------- "Guess the vibe" questions sheet ---------- */
+.vibe-sheet { max-height: 88vh; overflow-y: auto; padding-top: 18px; }
+.vibe-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.vibe-step {
+  font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--text-3); font-variant-numeric: tabular-nums;
+}
+.vibe-done { margin: 0; padding: 8px 4px; min-height: 44px; }
+.vibe-question { text-align: left; font-size: 26px; margin-bottom: 16px; }
+.vibe-options { display: grid; gap: 10px; }
+.vibe-option {
+  display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 4px 12px;
+  width: 100%; text-align: left; padding: 12px 14px; min-height: 56px;
+  background: var(--surface-2); color: var(--text);
+  border: 1.5px solid transparent; border-radius: var(--radius-md);
+  font: inherit; font-size: 16px; font-weight: 600; cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+.vibe-option:hover:not(:disabled) { border-color: var(--text); background: var(--surface); }
+.vibe-option:active:not(:disabled) { transform: scale(0.99); }
+.vibe-option:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.vibe-option:disabled { opacity: 0.6; cursor: progress; }
+.vibe-emoji { font-size: 26px; line-height: 1; grid-row: span 2; }
+.vibe-label { line-height: 1.25; }
+.vibe-examples { display: flex; gap: 10px; grid-column: 2; min-width: 0; }
+.vibe-example { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 0; }
+.vibe-thumb { width: 22px; height: 33px; flex: none; border-radius: 3px; object-fit: cover; background: var(--surface-3); font-size: 0; overflow: hidden; }
+.vibe-example-title {
+  font-size: 12px; font-weight: 500; color: var(--text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vibe-foot { display: flex; justify-content: center; }
+.vibe-skip { min-height: 44px; }
+.vibe-sheet[aria-busy="true"] .vibe-options { opacity: 0.7; }
+
+[data-look="ticket"] .vibe-option { border-radius: var(--radius-sm); }
+[data-look="ticket"] .vibe-option:hover:not(:disabled) { background: var(--select-bg); border-color: var(--select-line); }
+
+@media (prefers-reduced-motion: reduce) {
+  .vibe-option { transition: none; }
+}

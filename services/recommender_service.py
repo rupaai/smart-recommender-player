@@ -1136,8 +1136,17 @@ class RecommenderService:
         min_rating_override: Optional[float] = None,
         variety: bool = False,
         profile: str = "together",
+        pool_hook: Optional[Any] = None,
+        return_pool: bool = False,
     ) -> Dict[str, Any]:
-        """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination."""
+        """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination.
+
+        pool_hook(ranked) -> ranked re-scores the scored pool before series
+        order and diversity (the questions pop-up applies its answers here).
+        return_pool=True stops there and returns {"pool": ranked, ...}, so
+        the pop-up can re-rank the same pool after every answer without
+        running SQL again (see `finalize`).
+        """
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
 
         # Resolve Genres. The free-text query is a first-class filter input, not
@@ -1335,6 +1344,35 @@ class RecommenderService:
 
         if vibe:
             ranked = self._apply_vibe(ranked, vibe)
+        if pool_hook is not None:
+            ranked = pool_hook(ranked)
+
+        vibe_info = {"used": bool(vibe), "like_titles": [t["title"] for t in vibe["like"]] if vibe else []}
+        if return_pool:
+            return {"pool": ranked, "vibe": vibe_info}
+
+        # Cold-start variety is suppressed when the request named an origin or
+        # genre. Those are targeted queries where the user asked for a specific
+        # shelf, and shuffling threw away the quality ordering: "bangladeshi
+        # movies" surfaced 2-vote films above The Clay Bird and Monpura because
+        # the shuffle, not the Bayesian score, decided the page.
+        targeted = bool(
+            origin_spec
+            or genre_spec["include"]
+            or genre_spec["exclude"]
+            or genre_spec.get("weight", 0) > 0
+            or bool(vibe)   # a vibe-ranked list is a targeted answer too
+            or pool_hook is not None
+        )
+        result = self.finalize(ranked, page, page_size, shuffle=variety and not targeted)
+        result["vibe"] = vibe_info
+        return result
+
+    def finalize(self, ranked: List[Dict[str, Any]], page: int = 1, page_size: int = 10,
+                 shuffle: bool = False) -> Dict[str, Any]:
+        """Series order, diversity and the page slice for an already-scored pool."""
+        if not ranked:
+            return {"total_results": 0, "page": page, "page_size": page_size, "items": [], "has_more": False}
 
         # Stage 2b: Series order. A sequel is swapped for the earliest entry
         # neither of you has seen, and each series appears at most once.
@@ -1348,20 +1386,7 @@ class RecommenderService:
         # Cold-start variety (opt-in): seeded shuffle that rotates every 10
         # minutes — repeat requests surface different picks, but the order is
         # stable within a bucket so pagination stays coherent while browsing.
-        #
-        # Suppressed when the request named an origin or genre. Those are
-        # targeted queries where the user asked for a specific shelf, and
-        # shuffling threw away the quality ordering: "bangladeshi movies"
-        # surfaced 2-vote films above The Clay Bird and Monpura because the
-        # shuffle, not the Bayesian score, decided the page.
-        targeted = bool(
-            origin_spec
-            or genre_spec["include"]
-            or genre_spec["exclude"]
-            or genre_spec.get("weight", 0) > 0
-            or bool(vibe)   # a vibe-ranked list is a targeted answer too
-        )
-        if variety and not targeted and len(diverse_candidates) > page_size:
+        if shuffle and len(diverse_candidates) > page_size:
             random.Random(int(time.time() // 600)).shuffle(diverse_candidates)
 
         # Stage 4: Pagination Slice
@@ -1376,5 +1401,4 @@ class RecommenderService:
             "page_size": page_size,
             "has_more": end_idx < total_results,
             "items": paginated_items,
-            "vibe": {"used": bool(vibe), "like_titles": [t["title"] for t in vibe["like"]] if vibe else []},
         }

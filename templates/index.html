@@ -200,6 +200,12 @@
               <span>Include things we've already seen</span>
             </label>
 
+            <label class="switch-row">
+              <input type="checkbox" id="askQuestionsBtn" checked onchange="toggleAskQuestions()">
+              <span class="switch" aria-hidden="true"></span>
+              <span>Ask me a few questions first</span>
+            </label>
+
             <button class="btn-text-link" onclick="resetAllFilters()">Reset all filters</button>
           </div>
         </details>
@@ -346,6 +352,22 @@
   </div>
 
   <!-- Post-watch rating sheet -->
+  <!-- "Guess the vibe": up to six quick questions about you and your evening.
+       Results behind it update after every answer. -->
+  <div id="vibeModal" class="modal-overlay vibe-overlay" onclick="if (event.target === this) finishVibeQuestions()">
+    <div class="modal-content vibe-sheet" role="dialog" aria-modal="true" aria-labelledby="vibeQuestionText" aria-describedby="vibeStep">
+      <div class="vibe-head">
+        <span id="vibeStep" class="vibe-step"></span>
+        <button class="btn-text-link vibe-done" onclick="finishVibeQuestions()">Just show me</button>
+      </div>
+      <h3 id="vibeQuestionText" class="modal-title vibe-question"></h3>
+      <div id="vibeOptions" class="vibe-options" role="group" aria-labelledby="vibeQuestionText"></div>
+      <div class="vibe-foot">
+        <button class="btn-secondary vibe-skip" onclick="answerVibeQuestion('skip')">Skip this one</button>
+      </div>
+    </div>
+  </div>
+
   <div id="feedbackModal" class="modal-overlay" onclick="if (event.target === this) closeFeedbackModal()">
     <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modalMovieTitle">
       <button class="modal-close" onclick="closeFeedbackModal()" aria-label="Close">

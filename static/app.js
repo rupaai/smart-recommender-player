@@ -8,6 +8,9 @@ const state = {
   originsLoaded: false,  // "From" chips fetched from /api/origins
   recHasMore: false,     // more results available in the pool
   dismissedIds: new Set(), // items tapped away ("not this one")
+  askQuestions: true,       // "guess the vibe" pop-up before results (filters switch)
+  vibeQuestion: null,       // the question on screen, if any
+  vibeBusy: false,
   recSessionId: null,      // feedback log: the Discover session these results belong to
   directMediaType: 'movie', // 'movie' or 'tv'
   activeMoodId: 8,
@@ -62,6 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // initialised here too — it used to load its "From" chips only after
   // switching away and back.
   const fromHash = location.hash.replace('#', '');
+  loadAskQuestions();
   switchTab(TABS.includes(fromHash) ? fromHash : 'discover', { initial: true });
 });
 
@@ -73,6 +77,7 @@ window.addEventListener('hashchange', () => {
 // Escape closes whichever sheet is open.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (document.getElementById('vibeModal').classList.contains('active')) finishVibeQuestions();
   if (document.getElementById('feedbackModal').classList.contains('active')) closeFeedbackModal();
   if (document.getElementById('playerModal').classList.contains('active')) closePlayerModal();
 });
@@ -437,6 +442,18 @@ function setMinRatingFilter(btn) {
   updateFiltersSummary();
 }
 
+function toggleAskQuestions() {
+  const box = document.getElementById('askQuestionsBtn');
+  state.askQuestions = box ? box.checked : !state.askQuestions;
+  try { localStorage.setItem('askQuestions', state.askQuestions ? 'on' : 'off'); } catch (e) { /* private mode */ }
+}
+
+function loadAskQuestions() {
+  try { state.askQuestions = localStorage.getItem('askQuestions') !== 'off'; } catch (e) { state.askQuestions = true; }
+  const box = document.getElementById('askQuestionsBtn');
+  if (box) box.checked = state.askQuestions;
+}
+
 function toggleIncludeWatched() {
   const box = document.getElementById('includeWatchedBtn');
   state.includeWatched = box ? box.checked : !state.includeWatched;
@@ -519,10 +536,9 @@ async function fetchRecommendations() {
   try {
     state.recPage = 1;
     state.recSessionId = null; // a new search is a new session
-    const data = await requestRecommendations(1);
-    state.recHasMore = !!data.has_more;
-    renderRecommendations(data.items || [], data.engine, data.total_results);
-    updateLoadMoreButton();
+    const data = state.askQuestions ? await startVibeSession() : await requestRecommendations(1);
+    showRecommendationPage(data);
+    if (data.question) openVibeQuestion(data.question);
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     header.innerHTML = '';
@@ -560,12 +576,118 @@ async function loadMoreRecommendations() {
   updateLoadMoreButton();
 }
 
-// Single place that builds and sends the recommend request, shared by the
-// initial search and "Show more" so the two can't drift apart.
-async function requestRecommendations(page) {
+function showRecommendationPage(data) {
+  state.recHasMore = !!data.has_more;
+  renderRecommendations(data.items || [], data.engine, data.total_results);
+  updateLoadMoreButton();
+}
+
+// ---------------------------------------------------------------------------
+// "Guess the vibe" questions pop-up (design doc §3)
+// ---------------------------------------------------------------------------
+// The server decides whether to ask (short or ambiguous requests) and which
+// question splits the current results best. Every answer re-ranks the same
+// pool, and the results behind the sheet update straight away.
+async function startVibeSession() {
+  const res = await fetch('/api/discover/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...buildRecommendPayload(1), ask: true })
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  state.recSessionId = data.session_id || null;
+  return data;
+}
+
+function openVibeQuestion(q) {
+  state.vibeQuestion = q;
+  const modal = document.getElementById('vibeModal');
+  const wasOpen = modal.classList.contains('active');
+  document.getElementById('vibeStep').textContent = `Question ${q.step} of up to ${q.max_steps}`;
+  document.getElementById('vibeQuestionText').textContent = q.text;
+  document.getElementById('vibeOptions').innerHTML = q.options.map(o => `
+    <button class="vibe-option" onclick="answerVibeQuestion(${jsArg(o.id)})">
+      <span class="vibe-emoji" aria-hidden="true">${escapeHtml(o.emoji)}</span>
+      <span class="vibe-label">${escapeHtml(o.label)}</span>
+      ${o.examples && o.examples.length ? `
+        <span class="vibe-examples">
+          ${o.examples.map(e => `<span class="vibe-example">${posterHtml(e.poster_url, e.title, 'vibe-thumb')}<span class="vibe-example-title">${escapeHtml(e.title)}</span></span>`).join('')}
+        </span>` : ''}
+    </button>`).join('');
+  if (!wasOpen) {
+    state.vibeReturnFocus = document.activeElement;
+    modal.classList.add('active');
+  }
+  setVibeBusy(false);
+  const first = modal.querySelector('.vibe-option');
+  if (first) first.focus();
+}
+
+function setVibeBusy(busy) {
+  state.vibeBusy = busy;
+  const sheet = document.querySelector('#vibeModal .vibe-sheet');
+  sheet.setAttribute('aria-busy', busy ? 'true' : 'false');
+  sheet.querySelectorAll('button').forEach(b => { b.disabled = busy; });
+}
+
+function closeVibeModal() {
+  state.vibeQuestion = null;
+  document.getElementById('vibeModal').classList.remove('active');
+  const back = state.vibeReturnFocus;
+  if (back && document.body.contains(back)) back.focus();
+}
+
+async function answerVibeQuestion(optionId) {
+  const q = state.vibeQuestion;
+  if (!q || state.vibeBusy) return;
+  setVibeBusy(true);
+  try {
+    const res = await fetch('/api/discover/answer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: state.recSessionId, question_id: q.id, option_id: optionId })
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'HTTP ' + res.status);
+    const data = await res.json();
+    state.recPage = 1;
+    showRecommendationPage(data);
+    if (data.question) {
+      openVibeQuestion(data.question);
+    } else {
+      closeVibeModal();
+      showToast('Here are your picks.');
+    }
+  } catch (err) {
+    console.error('Question answer failed:', err);
+    closeVibeModal();
+    showToast(err.message && !err.message.startsWith('HTTP') ? err.message : "Couldn't save that answer. Showing what we have.");
+  }
+}
+
+// "Just show me": stop asking, keep the answers so far.
+async function finishVibeQuestions() {
+  if (!state.vibeQuestion) { closeVibeModal(); return; }
+  closeVibeModal();
+  try {
+    const res = await fetch('/api/discover/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: state.recSessionId })
+    });
+    if (res.ok) {
+      state.recPage = 1;
+      showRecommendationPage(await res.json());
+    }
+  } catch (err) {
+    console.error('Finish failed:', err);
+  }
+}
+
+function buildRecommendPayload(page) {
   const query = document.getElementById('queryInput').value.trim();
   syncOriginChipFromQuery(query);
-  const payload = {
+  return {
     mood_id: state.activeMoodId,
     sub_mood: state.activeSubMood || null,
     media_type: state.recMediaType,
@@ -584,10 +706,15 @@ async function requestRecommendations(page) {
     // "Show more" pages belong to the same logged session as page 1.
     session_id: page > 1 ? state.recSessionId : null
   };
+}
+
+// Single place that builds and sends the recommend request, shared by the
+// initial search and "Show more" so the two can't drift apart.
+async function requestRecommendations(page) {
   const res = await fetch('/api/recommend', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(buildRecommendPayload(page))
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const data = await res.json();
