@@ -2,7 +2,7 @@
 
 Written 2026-10-09. Status: **plan only, nothing built yet.** Build one task at a time, only when Labiba says go.
 
-This plan is written to be executed by Sonnet and Haiku sessions. Each task says which model fits, which files it touches, and how to tell it is done. Read the **Rules for whoever builds this** section before starting any task.
+This plan is written to be executed by Sonnet and Haiku. You don't run the tasks one by one: one Sonnet session builds a whole milestone, hands the small tasks to Haiku helpers, and opens one PR per phase. See **How to run this plan** below.
 
 ---
 
@@ -86,16 +86,39 @@ So:
 
 ---
 
+## How to run this plan
+
+Four milestones. Each one is a single instruction to a single Sonnet session, which plans the work, gives the tasks marked (Haiku) to Haiku helpers, runs the checks, and opens **one PR per phase**. You review and merge PRs at the end of each milestone; you don't supervise individual tasks.
+
+| Milestone | Phases | Needs you for | Result |
+|---|---|---|---|
+| M1 Package | 1, 2, 3 | Merging 3 PRs, protecting `main` (P3.3) | App runs in Docker, CI checks every PR |
+| M2 Go live | 4, 5, 8 | Installing the OS and running one setup command | App on the OptiPlex, one-click deploys, alerts |
+| M3 Learning loop | 6, 7 | Merging 2 PRs, running one install command on the Mac | Nightly training publishes models to the server |
+| M4 Polish | 9, 10 | Plugging in the drive and running one command | External drive, README story |
+
+Paste this into a Sonnet session, changing the milestone:
+
+> Build milestone M1 from docs/DEPLOYMENT_PLAN.md. Read PROJECT_HANDOVER.md and the plan first, not the whole repo. Follow "Rules for whoever builds this". Use Haiku subagents for tasks marked (Haiku). One branch and one PR per phase, each PR passing `make check`. Tick the task checkboxes and update the handover in each PR. Stop and ask me only if a decision changes what we agreed in section 2.
+
+Before starting M1, run the two quick checks in **Phase 0** below. They test the riskiest assumptions in under an hour, so a surprise doesn't land halfway through.
+
+## Phase 0: Prove the risky bits first (Sonnet, part of M1)
+
+- **libtorrent in Docker:** build a throwaway `python:3.12-slim` image for `linux/amd64` that installs the pinned `libtorrent` and imports it. If no wheel exists, pick the version that has one and note it.
+- **ids survive a round trip:** copy `catalogue_full.db`, add one item through `tmdb_import` on the copy, and confirm the existing `models/tiger/semantic_ids.json` ids still all exist in `media_items`. This confirms section 3's rule before code depends on it.
+- Report both results in the M1 PR description. No code from this phase is kept.
+
 ## 5. Rules for whoever builds this
 
 1. Read `PROJECT_HANDOVER.md` and this file first. Don't read the whole repo.
-2. One task = one branch from `main` = one PR. Name branches `deploy/<task-id>`, e.g. `deploy/p1-2`.
+2. One phase = one branch from `main` = one PR. Name branches `deploy/phase-<n>`, e.g. `deploy/phase-1`. Inside the PR, one commit per task.
 3. Run `uv run pytest -q` before every push. Never skip or delete a test to get green.
 4. Push after each finished task, then update `PROJECT_HANDOVER.md` (branch list and section 13) in the same PR.
 5. Tick the task's checkbox in this file in the same PR.
 6. Never put secrets in the repo. Secrets go in the server's `.env` or the Mac's `~/.couchcinema/env`.
 7. Don't change recommender behaviour in these tasks. This is plumbing.
-8. Tasks marked **[Labiba]** are manual steps on the machines; write them as a runbook, don't try to run them.
+8. Keep Labiba's manual work to the minimum: anything that can be a script is a script. Steps marked **[Labiba]** are the few that need her hands (installing an OS, approving a device, pasting a token); write those as short numbered steps in `deploy/RUNBOOK.md`.
 9. Haiku tasks are small and mechanical. If a Haiku task turns out to need a design choice, stop and hand it to Sonnet.
 
 ---
@@ -138,6 +161,7 @@ So:
   - `app`: image `ghcr.io/rupaai/smart-recommender-player:${IMAGE_TAG}`, env from `.env` plus `CONFIG_PATH=/config/config.server.yaml`, `MODELS_DIR=/models/current`, `DATABASE_PATH=/data/catalogue_full.db`, `JELLYFIN_URL=http://jellyfin:8096`, `PROWLARR_URL=http://prowlarr:9696`. Mounts `./data:/data`, `./models:/models`, `./config.server.yaml:/config/config.server.yaml:ro`, `${MEDIA_ROOT}:/media`. Ports `8000:8000` and `6881-6891:6881-6891` (tcp+udp).
   - `jellyfin`: `jellyfin/jellyfin:<pinned version>`, mounts `./jellyfin/config`, `./jellyfin/cache`, `${MEDIA_ROOT}:/media`, `devices: [/dev/dri:/dev/dri]`, port `8096:8096`.
   - `prowlarr`: `lscr.io/linuxserver/prowlarr:<pinned version>`, mounts `./prowlarr/config`, port `9696:9696`.
+- On startup the app creates `/media/Movies`, `/media/Shows` and `/media/downloads` if they don't exist and leaves them alone if they do (`os.makedirs(..., exist_ok=True)`). Same for `/data` and `/models/releases`.
 - Pin every third-party image to an exact version (no `latest`).
 - `deploy/.env.example` listing every variable with a comment and no values: `IMAGE_TAG`, `MEDIA_ROOT`, `TMDB_API_KEY`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, `PROWLARR_API_KEY`, `ADMIN_TOKEN`, `NTFY_TOPIC`.
 - **Done when:** on the Mac, with a local image tag and `MEDIA_ROOT=./sample_library`, `docker compose -f deploy/compose.yaml up` serves the app on :8000 and Jellyfin on :8096, and `/healthz` is ok.
@@ -157,19 +181,27 @@ So:
 ### [ ] P3.3 Branch protection [Labiba]
 - On GitHub: Settings → Branches → protect `main`, require the `check` and `image` jobs to pass before merging.
 
-## Phase 4: Set up the server once [Labiba]
+## Phase 4: Set up the server once
 
-Write this as `deploy/RUNBOOK.md` (Haiku writes the runbook; Labiba runs it). Steps:
+**Why an operating system at all:** Docker runs containers, but it needs an operating system on the machine underneath it, the same way an app needs macOS on your Mac. Containers share that system's kernel; they don't bring their own. So the OptiPlex needs one OS install, and after that everything else is Docker. Ubuntu Server is the usual pick: free, light, runs Docker natively, and gives Jellyfin direct access to the Intel graphics. (If the OptiPlex already runs Linux, skip step 1. Windows also runs Docker, but through a virtual machine that makes GPU transcoding and auto-restart after reboot unreliable.)
 
-1. Install Ubuntu Server 24.04 LTS. Enable `unattended-upgrades` for security patches.
-2. Install Docker Engine and the compose plugin from Docker's apt repo. Add your user to `docker`.
-3. Install Tailscale and join it to your boyfriend's tailnet (he approves the device once). Note its MagicDNS name, e.g. `optiplex`.
-4. Create `/srv/couchcinema` and `/srv/media/{Movies,Shows,downloads}` as in section 4. Copy `deploy/config.server.yaml` there.
-5. Write `/srv/couchcinema/.env` from `.env.example`. Generate `ADMIN_TOKEN` with `openssl rand -hex 32`; put the same token in the Mac's `~/.couchcinema/env`.
-6. Log Docker in to GHCR with a read-only token (`read:packages`) so it can pull private images.
-7. Install the GitHub Actions runner from repo Settings → Actions → Runners → New self-hosted runner (Linux x64). Give it the label `optiplex`, install it as a service (`./svc.sh install && ./svc.sh start`) under a dedicated `deploy` user in the `docker` group.
-8. **Cutover of your data:** stop the app on the Mac, copy the Mac's `catalogue_full.db` to `/srv/couchcinema/data/`, and copy existing media into `/srv/media`. From now on, rate and watch only through the server. The Mac's copy becomes a dev copy.
-9. Point Jellyfin at `/media/Movies` and `/media/Shows` on first start, and enable Intel Quick Sync (VAAPI/QSV) in its playback settings.
+**Where:** step 1 happens at the OptiPlex with a keyboard and screen plugged in. Everything after that you can do from your Mac's Terminal over Tailscale (`ssh you@optiplex`), and after Phase 5 you never log in to it again.
+
+### [ ] P4.1 One-command setup script (Sonnet)
+`deploy/bootstrap.sh`, safe to run again (it skips anything already done):
+1. Installs Docker Engine + compose plugin, Tailscale, `sqlite3`, `unattended-upgrades` (security patches install themselves).
+2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing.
+3. Copies `config.server.yaml` and `compose.yaml` from the repo into place.
+4. Asks for each secret once (TMDB key, etc.), generates `ADMIN_TOKEN` itself, writes `.env`, and prints the token to copy to the Mac.
+5. Installs the GitHub Actions runner as a service under a `deploy` user with label `optiplex`, using a registration token you paste in.
+6. Runs `docker compose up -d` and waits for `/healthz`.
+- **Done when:** running it on a fresh Ubuntu VM gets to a healthy app, and running it a second time changes nothing.
+
+### [ ] P4.2 Your part [Labiba]
+1. At the OptiPlex: install Ubuntu Server 24.04 LTS from a USB stick (tick "Install OpenSSH server" during setup).
+2. Run `git clone https://github.com/rupaai/smart-recommender-player && sudo ./smart-recommender-player/deploy/bootstrap.sh`. Git asks for your GitHub username and a token because the repo is private; the runbook says where to make the token. Paste the secrets and the runner token when asked; approve the device in Tailscale when it prints a link (your boyfriend does this once).
+3. Copy your data across once: stop the app on the Mac, then `scp catalogue_full.db optiplex:/srv/couchcinema/data/` and copy existing films into `/srv/media`. From now on you both rate and watch through the server; the Mac's copy is only for development.
+4. Open Jellyfin at `http://optiplex:8096`, finish its first-run wizard (libraries are `/media/Movies` and `/media/Shows`) and turn on Intel Quick Sync under Playback.
 
 Security notes: keep the repo **private** (a self-hosted runner on a public repo can run code from forks). Only the deploy workflow uses the `optiplex` label.
 
@@ -243,7 +275,7 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 ## Phase 8: Know when something breaks
 
 ### [ ] P8.1 Alerts (Haiku)
-- Server cron (in the RUNBOOK, installed once): every 5 minutes, `curl -fsS localhost:8000/healthz && curl -fsS <healthchecks.io ping url>`. If the pings stop, healthchecks.io emails/pushes you, even when the whole box is down.
+- Server cron, installed by `bootstrap.sh` (add it to P4.1 if Phase 8 lands later): every 5 minutes, `curl -fsS localhost:8000/healthz && curl -fsS <healthchecks.io ping url>`. If the pings stop, healthchecks.io emails/pushes you, even when the whole box is down.
 - Daily disk check: if `MEDIA_ROOT` or `/` is above 85% full, send an ntfy message.
 - Install the ntfy app on both phones and subscribe to the private topic name from `.env`.
 - **Done when:** stopping the app container triggers an alert within 15 minutes.
@@ -251,12 +283,19 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 ### [ ] P8.2 Disk housekeeping (Sonnet, optional)
 - Setting `cleanup.delete_watched_after_days` (default off). A daily server job lists downloads both of you have marked watched more than N days ago and deletes them, logging what it removed. Ships off; Labiba turns it on.
 
-## Phase 9: Moving to the external drive [Labiba, runbook by Haiku]
+## Phase 9: Moving to the external drive
 
-1. Format the drive ext4, label it `media`.
-2. Add to `/etc/fstab`: `LABEL=media /mnt/media ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2`. `nofail` means a missing drive never blocks boot.
-3. `rsync -aHP /srv/media/ /mnt/media/`, then set `MEDIA_ROOT=/mnt/media` in `.env` and re-run Deploy (or `docker compose up -d`).
-4. Rescan the libraries in Jellyfin. Delete `/srv/media` once everything plays.
+### [ ] P9.1 Move-media script (Sonnet)
+`deploy/move-media.sh`:
+1. Lists attached drives and asks which one. If it isn't already ext4 labelled `media`, it shows the drive's size and name and asks you to type `FORMAT` before erasing it (this is the one step that can't be undone).
+2. Adds `LABEL=media /mnt/media ext4 defaults,nofail,x-systemd.device-timeout=10s 0 2` to `/etc/fstab` if missing (`nofail`: a missing drive never blocks boot) and mounts it.
+3. Creates `Movies`, `Shows`, `downloads` on it if missing, then `rsync`s everything from the old `MEDIA_ROOT`.
+4. Sets `MEDIA_ROOT=/mnt/media` in `.env`, restarts the stack, waits for `/healthz`, and triggers a Jellyfin library scan through its API.
+5. Leaves the old folder in place and prints the command to delete it once you've checked things play.
+- **Done when:** it works on a VM with a spare virtual disk, and re-running it is harmless.
+
+### [ ] P9.2 Your part [Labiba]
+Plug in the drive and run `sudo ~/smart-recommender-player/deploy/move-media.sh` over SSH. Answer its questions.
 
 ## Phase 10: Make it presentable (Haiku)
 
@@ -273,6 +312,6 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 
 ## Suggested order
 
-P1.1 → P1.2 → P1.3 → P1.4 → P2.1 → P2.2 → P3.1 → P3.2 → P3.3 → Phase 4 → P5.1 → P5.2 → P5.3 → P8.1 → P6.1 → P6.2 → P6.3 → P7.1 → P7.2 → Phase 9 when the drive arrives → Phase 10.
+M1 (Phase 0, 1, 2, 3) → M2 (Phase 4, 5, 8) → M3 (Phase 6, 7) → M4 (Phase 9 when the drive arrives, Phase 10).
 
-The app is usable on the server after P5.2. Phases 6–7 bring learning back; until then, models can be copied to `/srv/couchcinema/models/releases/` by hand once.
+The app is usable on the server at the end of M2. M3 brings learning back; until then, models can be copied to `/srv/couchcinema/models/releases/` by hand once.
