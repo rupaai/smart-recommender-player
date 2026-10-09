@@ -51,10 +51,17 @@ CHIP_IDS = [c["id"] for c in CHIPS]
 # One tap each, 2-4 options. `dial` names the mood dial the answer corrects or
 # confirms (None = no dial). `dynamic` options come from the film's own tags.
 VIBE_QUESTIONS: List[Dict[str, Any]] = [
-    {"id": "leaves", "text": "How did it leave you?", "dial": "weight", "always": True,
-     "options": [("lifted", "Lifted"), ("thoughtful", "Thoughtful"), ("wrecked", "Wrecked"), ("nothing", "Nothing much")]},
-    {"id": "darker", "text": "Darker or lighter than you expected?", "dial": "darkness", "always": True,
-     "options": [("darker", "Darker"), ("expected", "As expected"), ("lighter", "Lighter")]},
+    {"id": "leaves", "text": "How did it leave you? (up to 3)", "dial": "weight", "always": True,
+     "multi": True, "max": 3, "exclusive": "nothing",
+     "options": [("lifted", "Lifted"), ("warm", "Warm"), ("thoughtful", "Thoughtful"), ("inspired", "Inspired"),
+                 ("pumped", "Pumped up"), ("wrecked", "Wrecked"), ("unsettled", "Unsettled"), ("haunted", "Haunted"),
+                 ("restless", "Restless"), ("nothing", "Nothing much")]},
+    # Id stays "darker" so answers saved earlier keep their meaning.
+    {"id": "darker", "text": "Different from what you expected? (up to 3)", "dial": "darkness", "always": True,
+     "multi": True, "max": 3, "exclusive": "expected",
+     "options": [("darker", "Darker"), ("lighter", "Lighter"), ("funnier", "Funnier"), ("sadder", "Sadder"),
+                 ("scarier", "Scarier"), ("slower", "Slower"), ("faster", "Faster"), ("weirder", "Weirder"),
+                 ("sweeter", "Sweeter"), ("expected", "About as expected")]},
     {"id": "felt", "text": "Felt like… (pick up to 2)", "dial": None, "multi": True, "dynamic": "feels",
      "options": []},
     {"id": "pace", "text": "The pace?", "dial": "pace",
@@ -74,6 +81,7 @@ VIBE_QUESTIONS: List[Dict[str, Any]] = [
 ]
 _QUESTION_BY_ID = {q["id"]: q for q in VIBE_QUESTIONS}
 QUESTIONS_SHOWN = 3
+DEFAULT_MAX_PICKS = 2
 # A film with no extreme dials still gets something useful to answer.
 _BASELINE_EXTREMENESS = {"felt": 0.34, "bestfor": 0.30}
 _FALLBACK_FEELS = ["cozy", "tense", "warm", "dreamy", "funny", "haunting"]
@@ -98,16 +106,31 @@ def clean_chips(chips: Optional[Sequence[str]]) -> List[str]:
 
 
 def clean_vibe_check(answers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Keeps answers that match a known question and option; multi-pick
-    questions keep up to two. Unknown ids are dropped, never an error: the
-    question list can change between versions."""
+    """Keeps answers that match a known question and option. Multi-pick
+    questions keep up to their `max` picks (an "exclusive" option such as
+    "Nothing much" drops the others), and an old single string answer becomes a
+    one-item list. Unknown ids are dropped, never an error: the question list
+    can change between versions."""
     out: Dict[str, Any] = {}
     for qid, answer in (answers or {}).items():
         q = _QUESTION_BY_ID.get(qid)
         if not q:
             continue
         if q.get("multi"):
-            picks = [str(a) for a in (answer if isinstance(answer, list) else [answer]) if a][:2]
+            raw = answer if isinstance(answer, list) else [answer]
+            picks: List[str] = []
+            valid = {o[0] for o in q["options"]}
+            for a in raw:
+                a = str(a) if a else ""
+                if not a or a in picks:
+                    continue
+                if q["options"] and a not in valid:
+                    continue
+                picks.append(a)
+            exclusive = q.get("exclusive")
+            if exclusive and exclusive in picks:
+                picks = [exclusive] if len(picks) == 1 or picks[-1] == exclusive else [x for x in picks if x != exclusive]
+            picks = picks[: int(q.get("max", DEFAULT_MAX_PICKS))]
             if picks:
                 out[qid] = picks
         else:
@@ -197,7 +220,11 @@ def pick_vibe_questions(facets: Optional[Dict[str, Any]], vibe_tags: Optional[Di
         elif q.get("dynamic") == "good_for":
             words = [w for w in (tags.get("good_for") or []) if isinstance(w, str)][:4]
             options = [{"id": w, "label": w} for w in (words or _FALLBACK_GOOD_FOR)]
-        return {"id": q["id"], "text": q["text"], "multi": bool(q.get("multi")), "options": options}
+        return {
+            "id": q["id"], "text": q["text"], "multi": bool(q.get("multi")),
+            "max": int(q.get("max", DEFAULT_MAX_PICKS)), "exclusive": q.get("exclusive"),
+            "options": options,
+        }
 
     lead = [q for q in VIBE_QUESTIONS if q["id"] == "leaves"]
     rest = sorted((q for q in VIBE_QUESTIONS if q["id"] != "leaves"), key=extremeness, reverse=True)
