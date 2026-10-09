@@ -98,6 +98,11 @@ torrent:
   # Where to save downloaded files
   download_dir: "/Users/labibarupty/codes/smart_movie_streamer/downloads"
   
+  # Disk guard (services/disk_guard.py): refuse a download that would push the media
+  # folders + downloads over max_media_gb (0 = no cap) or leave less than min_free_gb free.
+  max_media_gb: 0
+  min_free_gb: 20
+
   # Additional libtorrent settings
   settings:
     upload_rate_limit: 0      # 0 = unlimited

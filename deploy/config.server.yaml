@@ -99,6 +99,10 @@ torrent:
   # Where to save downloaded files
   download_dir: /media/downloads
   
+  # Disk guard (services/disk_guard.py): the server's media is capped at 100 GB for now.
+  max_media_gb: 100
+  min_free_gb: 20
+
   # Additional libtorrent settings
   settings:
     upload_rate_limit: 0      # 0 = unlimited
