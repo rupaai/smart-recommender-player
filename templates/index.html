@@ -252,8 +252,9 @@
       <div class="direct-controls-row">
         <span class="control-label" id="sortLabel">Sort by</span>
         <div class="segmented small" role="group" aria-labelledby="sortLabel">
-          <button id="sortSmallestBtn" class="segment active" aria-pressed="true" onclick="setDirectSort(true)" title="Smallest files download fastest">Smallest file</button>
-          <button id="sortQualityBtn" class="segment" aria-pressed="false" onclick="setDirectSort(false)" title="4K and 1080p first, then most seeds">Best quality</button>
+          <button id="sortBestBtn" class="segment active" aria-pressed="true" onclick="setDirectSort('best')" title="High quality that has enough seeders to finish; huge files with few seeders and tiny low-quality ones drop down">Best match</button>
+          <button id="sortSmallestBtn" class="segment" aria-pressed="false" onclick="setDirectSort('smallest')" title="Smallest files download fastest">Smallest file</button>
+          <button id="sortQualityBtn" class="segment" aria-pressed="false" onclick="setDirectSort('quality')" title="4K and 1080p first, then most seeds">Best quality</button>
         </div>
       </div>
 

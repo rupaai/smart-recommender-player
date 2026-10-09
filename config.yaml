@@ -51,6 +51,30 @@ recommender:
     max_seq_len: 10         # sequence length fed to the ONNX predictor
     candidate_pool: 60      # trie-resolved candidates re-ranked per request
 
+# "Best match" sort for download copies: score = quality x seeder health x size fit
+# (x scope match for TV). Every number is optional; defaults live in
+# services/torrent_ranking.py. Tweak here, restart the server.
+torrent_ranking:
+  quality_points: {2160p: 100, 1080p: 80, 720p: 55, HD: 45, 480p: 25}
+  seeders:
+    base: 5               # seeders needed to finish = base + per_gb * size_gb
+    per_gb: 2             # health = sqrt(seeders / needed), capped at 1
+  size_fit_penalty: 0.75  # x this when far smaller/bigger than normal for its quality
+  movie_size_bands_gb:    # normal [min, max] GB per film
+    2160p: [4, 30]
+    1080p: [1.4, 15]
+    720p: [0.6, 4]
+    HD: [0.6, 6]
+    480p: [0.3, 2]
+  episode_size_bands_gb:  # normal [min, max] GB per episode (packs are divided by episode count)
+    2160p: [1.5, 10]
+    1080p: [0.5, 4]
+    720p: [0.2, 1.5]
+    HD: [0.2, 2]
+    480p: [0.1, 0.8]
+  scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
+  episodes_per_season: 10         # assumed when a pack's name doesn't say
+
 # libtorrent configuration
 torrent:
   # Port range for incoming connections
