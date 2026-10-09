@@ -102,6 +102,31 @@ Open `http://mars:9696`, set a username and password when it asks, and add your 
 new Prowlarr starts empty; your Mac's indexers do not come across). The app already has the
 API key.
 
+### 8. Alerts **[Labiba]**
+Two layers, so you hear about a broken app and also about a dead machine.
+
+1. **Phones (ntfy):** install the free **ntfy** app on both phones and subscribe to the topic
+   bootstrap printed (it is also `NTFY_TOPIC` in `/srv/couchcinema/.env`). Bootstrap sends a
+   test message; if it arrives, alerts work. You get messages for: a finished or failed
+   deploy, the app / Jellyfin / Prowlarr being down for 10 minutes (and back again), and
+   media or the disk passing 85% (checked daily).
+2. **Dead-man's switch (healthchecks.io):** the server pings a URL every 5 minutes while the app
+   is healthy. If the pings stop, healthchecks.io emails you, even if the whole machine is off.
+   Make a free account, add a check named `mars`, set **Period 5 minutes** and **Grace 10
+   minutes**, add your email as the notification, and copy the ping URL. Then:
+   ```
+   sudo bash ~/couchcinema-deploy/bootstrap.sh --set HEALTHCHECKS_URL=https://hc-ping.com/YOUR-UUID
+   ```
+   (Or paste it when bootstrap asks.)
+
+To test it, as `deploy` (`sudo -iu deploy`) stop the app, wait ten minutes for the phone
+alert, then start it again; the "back" message follows within five minutes:
+
+```
+docker compose -p couchcinema --project-directory /srv/couchcinema -f /srv/couchcinema/compose.yaml stop app
+docker compose -p couchcinema --project-directory /srv/couchcinema -f /srv/couchcinema/compose.yaml start app
+```
+
 ## Where things live
 
 ```
