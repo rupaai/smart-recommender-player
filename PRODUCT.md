@@ -25,7 +25,7 @@ It knows two specific people. Recommendations are blended across both profiles (
 ## Capabilities and Constraints
 - Single-page PWA served by FastAPI (`templates/index.html`, `static/app.js`, `static/styles.css`); no build step, no framework. Must stay light enough for a Raspberry Pi.
 - Catalogue from TMDB (posters, overviews, ratings).
-- Two renameable profiles (default "Me" / "Partner").
+- Two renameable profiles (default "Labiba" / "Gabriele"; older databases are renamed by the v11 migration).
 - Product name is undecided: "Movie Night" is a placeholder (replacing "CouchCinema", which the user wants gone).
 
 ## Brand Commitments

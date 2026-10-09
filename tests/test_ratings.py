@@ -262,7 +262,7 @@ def test_validation(db):
     check("rating clamped to 10", s["verdicts"][0]["user_rating"] == 10.0)
 
     check("rename works", db.update_profile_name(2, "Partner Two"))
-    check("duplicate name rejected", not db.update_profile_name(2, "Me"))
+    check("duplicate name rejected", not db.update_profile_name(2, "Labiba"))
     check("empty name rejected", not db.update_profile_name(2, "   "))
     check("unknown id rejected", not db.update_profile_name(42, "Nobody"))
 

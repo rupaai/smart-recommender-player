@@ -3,10 +3,9 @@
 
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
-- `main`: what runs. Recommender v2 Phases 1–3 merged 2026-10-08 (PR #2).
-- `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR #3 open (see §10.6).
-- `main` also has the taste model (facet_fit + cluster_affinity), merged 2026-10-09 (PR #8), **off by default** (see §10.8).
-- `claude/project-thread-niiyny`: "This or that" pair round on the Rate tab (§10.8), PR open.
+- `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
+- `watch-later` (draft PR "Watch later list", opened 2026-10-09): shared Watch later list in 7 tasks, one branch and one PR. Tasks 1-6 done (schema v11 + methods, API, header switch + Discover button, Rate card + Rate search, Later tab, polish); optional Task 7 not built. Also renames the seeded profiles to Labiba / Gabriele.
+- Open PRs: "Watch later list" (ready to merge).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -116,6 +115,9 @@ User review impressions fueling the taste profile:
 - `user_rating` (REAL: 1.0 to 10.0 star rating)
 - `notes` (TEXT: user review notes)
 
+### `watch_later` (schema v11)
+Shared list, one row per person per title: `id`, `media_item_id` (CASCADE), `profile_id` (CASCADE, from `profiles`), `added_at`, `done_at`, `done_reason` (`'rated'` | `'watched'`), `UNIQUE(media_item_id, profile_id)`, index on `(done_at, added_at)`. See §12.
+
 ### Key Database Methods
 - `get_user_taste_profile(min_rating=7.0)`: Computes frequency maps of preferred genres and keywords weighted by user star ratings.
 - `get_or_create_media_item(title, release_year, media_type)`: Ensures an arbitrary search term is registered with a canonical ID before downloading.
@@ -218,7 +220,7 @@ App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
 - **Vote-count quality funnel + variety + cold-start gate:** schema v2 (`media_items.vote_count`), `get_top_candidates` SQL funnel (shortlist 250), MMR final pool 50, opt-in `variety` (10-minute seeded rotation) wired through both engines, `history_threshold: 5` cold-start gate, engine badge in the UI, and `utils/backfill_vote_counts.py`. Details in Sections 3/B/F above.
 ### Schema v3: Multi-profile co-view ratings (added later on 2026-10-03)
 The recommender's core problem was **signal, not architecture**: 2 ratings in `watch_history`. Two people share one catalogue, so `watch_history` needed to know *who* rated.
-- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Me`, `Partner`).
+- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Labiba` = id 1, `Gabriele` = id 2; databases created before v11 had `Me` / `Partner`, which the v11 migration renames when they still carry those names).
 - **`watch_history.profile_id`** — who rated. Existing rows migrate to profile 1 with ratings preserved.
 - **`watch_history.status`** — `'seen'` | `'not_seen'`. "Never saw it" is a real answer stored with **no rating attached** (never a 0 or a 1); it's what makes the Tier B recommendation computable ("he saw it, you haven't" vs "neither has").
 - Indexes: `idx_watch_history_profile_item` (unique, upsert target), `idx_watch_history_item` (co-view grouping).
@@ -345,7 +347,7 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 - **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
 - **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
 - **Structure:**
-  - Tabs: Discover / Download / Rate / History. A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
+  - Tabs: Discover / Download / Rate / Later / History (Later is the Watch later list, see §12). A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
   - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
   - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.
   - Reason badges say why each title is there.
@@ -472,3 +474,62 @@ The light redesign with the "ticket" look is the UI (the "clean" look was remove
 - **Verified:** `tests/test_ranking.py` (19 checks, offline), `tests/test_searcher.py` still passes, `node --check static/app.js`, and the flow driven in a browser at 390px and 1100px against a mock API using the real ranking code (tab switch, linked `movie_id` 42 sent on download, `movie_id` 0 after searching something else, all three sorts, TV pack and episode cards). **Not yet checked against the real server or live indexers.** The scoring numbers were checked on made-up sample lists only; tune them from real results.
 - Sample ranking and rationale: `/mnt/project-files/download-sort/scoring-proposal.md`.
   
+
+## 12. WATCH LATER (done, PR "Watch later list" ready to merge)
+
+Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who added it" is `profile_id`. Built in 7 tasks on one branch / one PR. Task 7 (using the list in ranking) is optional and skipped for now.
+
+### Task 1: database (schema v11) - done
+- **Profile names:** the seeded profiles are now `Labiba` (id 1) and `Gabriele` (id 2). Fresh DBs get them from `_migrate_v3_profiles`. `_migrate_v11_watch_later` also renames existing rows, once, when the DB moves to v11: id 1 only if still named `Me`, id 2 only if still named `Partner`, skipped when the target name already exists (`profiles.name` is UNIQUE). Custom names are never touched. The UI keeps the internal keys `me` / `partner` / `together`; `isDefaultProfileName()` in `static/app.js` treats `Me` / `Partner` as "no name set".
+- **Schema:** table `watch_later` (see §3), created by `_migrate_v11_watch_later` (user_version gate, `CREATE TABLE IF NOT EXISTS`, additive).
+- **Methods (`DatabaseManager`):**
+  - `add_to_watch_later(media_item_id, profile_id)` returns the grouped entry; adding twice is a no-op; re-adding a done row reopens it and resets `added_at`; `ValueError` for unknown ids.
+  - `remove_from_watch_later(media_item_id, profile_id)` deletes that person's row only; returns bool.
+  - `get_watch_later(include_done=False, media_type=None, added_by=None)` returns one entry per title, newest add first: `media_item_id, title, release_year, media_type, poster_url, genres, runtime, rating, overview, file_path, added_by [{profile_id, name, added_at}], both, first_added_at, done_at, done_reason`. A title is done when all its rows are done.
+  - `get_watch_later_ids(ids)` returns `{media_item_id: [profile_id]}` for open rows in one query (for `on_list`).
+  - `mark_watch_later_done(media_item_id, reason)` and `undo_watch_later_done(media_item_id)` return rows changed.
+- **Test:** `uv run python tests/test_watch_later.py` (migration, names, list behaviour). `tests/test_ratings.py`, `test_pairs.py` and `test_tv_verdicts.py` were adjusted for the new default name and for `user_version >= 10`.
+- **Catalogue check:** a copy of `catalogue.db` (was v4) migrates to v11 with `media_items`, `watch_history` and `rating_details` row counts unchanged; profiles become Labiba / Gabriele.
+
+### Task 2: API - done
+- **Endpoints (`server.py`):** `GET /api/watch-later?include_done=&media_type=&added_by=` -> `{items, count}`; `POST /api/watch-later {media_item_id, profile_id}` -> grouped entry (400 on unknown ids); `DELETE /api/watch-later/{media_item_id}?profile_id=` -> `{removed}`; `POST /api/watch-later/{media_item_id}/undo` -> `{reopened}`.
+- **`on_list`:** `[profile_id, ...]` (empty when not on the list) added by `_with_on_list(items)` (one `get_watch_later_ids` query) to `/api/recommend`, the pop-up responses (`_popup_response`, so `/api/discover/start|answer|finish`), `/api/ratings/queue`, `/api/ratings/inferred-queue` and `/api/catalogue/search`. No other field changed.
+- **Auto-done:** `DatabaseManager.rate_item` marks the title done (`'rated'`) after commit when status is `seen`; `not_seen` does not. `rate_season` does the same when it saved a season verdict (clearing one does not). `POST /api/watch/finish` marks `'watched'`. All wrapped in try/except and print a `[WatchLater]` line on failure.
+- **Test:** `uv run python tests/test_watch_later.py` now also covers the hooks and the API round trip (skipped if `server` cannot import).
+
+### Task 3: header switch + Discover button - done
+- **Icon:** `i-bookmark` in the sprite (outline). The filled look is CSS (`.btn-later[aria-pressed="true"] .icon { fill: currentColor }`).
+- **"I'm …" switch:** `#whoSwitch` in `.header-tools` (a `.segmented.small` with two `aria-pressed` buttons, "I'm Labiba" | "I'm Gabriele"; names only at <=480px). Filled by `renderWhoSwitch()` from the `/api/profiles` fetch already made in `loadPartnerName()` (stored in `state.profiles`, first two by id). `state.activeProfileId` comes from `readActiveProfileId()` (localStorage `activeProfileId`, try/catch, default 1); `setActiveProfile(id)` saves it. It only decides who is credited for adds; the Rate and Discover pickers are untouched.
+- **Helpers (`static/app.js`, section "Watch later"):** `state.watchLater` (Map media_item_id -> [profile_ids]); `noteOnList(items)`; `watchLaterButtonHtml(item)` (a `<button class="btn-later" data-later-id data-later-title>`, also records the item's `on_list`); `paintWatchLaterButton(btn)` (aria-pressed, aria-label "Watch later: T" / "On your list: T", tooltip, "<Name> wants this" dot when only the other person has it, "Both" label when both); `refreshWatchLaterButtons(id?)`; `toggleWatchLater(id, title, btn)` (optimistic POST/DELETE for the active person, rollback + toast on failure); `profileName(id)`. After inserting card HTML, call `.querySelectorAll('.btn-later').forEach(paintWatchLaterButton)` (buildMovieCard does). Tasks 4-5 reuse these.
+- **Discover:** button sits in `.movie-footer` between the watch slot and the Jellyfin link; icon-only <=480px, icon + "Later" above. CSS `.btn-later`, `.later-dot`, `.who-switch` in `static/styles.css`; selected = butter (`--select-bg`).
+- **How to check:** run the server on a COPY of the catalogue (`DATABASE_PATH=/tmp/copy.db uv run uvicorn server:app`), Discover -> Find -> tap the bookmark, switch person, reload.
+
+### Task 4: Rate card + Rate search - done
+- **Rate card:** the bookmark (`watchLaterButtonHtml(item)`) sits in `.rate-actions` between "Haven't seen it" and "Skip". `renderRateCard` paints it after `innerHTML` (`card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton)`). Shortcut **L** clicks it (only when a card with the button is shown and no sheet/text field has focus); the Rate hint lists it.
+- **Not seen offer:** after a saved "Haven't seen it" on a title not on the active person's list, the toast says "Add … to Watch later?" with an action button. `showToast(message, {label, run})` is the new optional action argument (`.toast-action`, stays up 6 s). Quick mode and the other verdicts do not offer it.
+- **Rate search rows:** catalogue rows (`kind: 'item'`) get the icon-only button at the row end via `watchLaterButtonHtml(d, { inRow: true })` (`stopPropagation`, so the click does not open the title). TMDB and "Search TMDB" rows get nothing. Keyboard: Tab from the search box reaches these buttons; the list is still driven by arrows.
+- **State seeding:** `noteOnList()` runs on the rating queue, the inferred (sort) queue and the catalogue search response, so buttons paint their server state on first render.
+- **Helper added:** `onMyWatchLater(id)` (is the active person on the list).
+- **Verified:** Playwright on a copy of `catalogue.db` (v4 -> v11 on start) at 1280 and 390 px: Discover add shows on the Rate search row and Rate card; Rate card removal and add show on Discover without reload; row button does not open the title; L, W, N still work; not-seen offer adds the title; no horizontal scroll. Screenshot checked at 390 px. Console only shows the missing `static/fonts/Archivo-Variable.woff2` (known, see §9). All `tests/*.py` pass.
+
+### Task 5: the Later tab - done
+- **Tab:** "Later" (bookmark icon) between Rate and History; `#laterView`, `'later'` in `TABS` / `TAB_IDS` / `VIEW_IDS`, hash `#later` restores it. `switchTab('later')` calls `loadLater()` every time. Five tabs fit the 390 px bottom bar (labels one line, no clipping).
+- **Controls:** All | Movies | TV (`setLaterType`) and "Added by: Anyone | <Name 1> | <Name 2> | Both of you" (`setLaterBy`, built by `renderLaterBy()` from `state.profiles`). A person uses the API `added_by`; "Both of you" filters `entry.both` client-side.
+- **Cards:** `buildLaterCard(entry, rank, animate)` reuses the Discover `.movie-card` ticket markup. Line "Added by Labiba · 3 days ago" (`relativeAgo`, SQLite UTC) or the rose pill "You both want this". Footer: Play now (file_path) or Choose a copy (`watchButtonHtml` -> `startDownload`), the bookmark (`watchLaterButtonHtml`, painted after insert), and "Watched it".
+- **Watched it:** `POST /api/watch-later/{id}/done` (new endpoint in `server.py`, calls `mark_watch_later_done(id, 'watched')`, returns `{done: n}`; needed because there was no way to mark done without rating), then `switchTab('rate')` and `openSearchedTitle(item)` (item looked up with `/api/catalogue/search`). It waits for the Rate queue's first load so the title is not wiped. A toast offers Undo.
+- **Watched from your list:** folded `<details id="laterDone">`, last 10 done titles (from `include_done=true`), Undo button -> `POST /undo`.
+- **Count:** `refreshLaterCount()` sets "Later 7" in the tab (`#laterCount`, aria-label "Later, 7 saved"). Called at start, after every toggle (`toggleWatchLater`), after every saved rating (`postRating`), on Later tab load, done and undo. Toggling on the Later tab reloads the list quietly (no entrance animation) so a card nobody has anymore disappears.
+- **States:** empty ("Nothing saved yet" / "Tap the bookmark on any pick to save it for later."), "Nothing matches" when filters hide everything, loading, error with Try again.
+- **Verified:** Playwright on a copy of `catalogue.db` at 1280 and 390 px: add on Discover as Labiba -> Later shows "Added by Labiba"; Gabriele presses the bookmark there -> "You both want this"; Both / Labiba / TV filters; reload on `#later`; Watched it -> Rate card on that title; rating it seen -> count clears and it sits in "Watched from your list"; Undo brings it back; both unpress -> empty state; blocked request -> error state. No horizontal scroll at 390 px; tabs fit. No console errors except the known missing font and the request I blocked on purpose.
+
+### Task 6: polish and check - done
+- Merged `origin/main` (PR #10, only a handover edit; main is still schema v10, so the migration stays v11). `CACHE_NAME` in `static/sw.js` is now `movie-companion-v2`.
+- **"Watched it" uses the active person:** `watchedFromLater` sets `state.rateProfileId = state.activeProfileId` before opening the Rate tab (and reloads the Rate queue if it was loaded for the other profile), so the rating is under the "I'm ..." person.
+
+### Verified
+- All `tests/*.py` and `node --check static/app.js`.
+- Playwright on a copy of `catalogue.db` at 1280 and 390 px: switch person (survives reload), add from Discover, Rate card and Rate search row, both people on one title ("You both want this"), All/Movies/TV and Added by filters, Watched it (Rate opens under the active person), rated seen -> "Watched from your list" -> Undo, remove, reload on `#later`. No horizontal scroll. Console clean apart from the known missing `Archivo-Variable.woff2` and blocked external poster requests in the sandbox.
+
+### Not built
+- Task 7 (recommender signal / "On your list" badge on Discover, 'saved' feedback outcome).
+- TMDB-only search rows, History rows, "This or that" cards and Download results have no Watch later button (by design).

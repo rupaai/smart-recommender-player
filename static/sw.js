@@ -1,4 +1,4 @@
-const CACHE_NAME = 'movie-companion-v1';
+const CACHE_NAME = 'movie-companion-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

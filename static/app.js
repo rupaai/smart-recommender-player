@@ -55,12 +55,16 @@ const state = {
   rateSeasons: null,       // per-season verdicts for the TV show on the card
   pairMode: false,         // "This or that" round (separate from the rating cards)
   pairs: [], pairIndex: 0, pairDone: 0, pairSkipped: new Set(), pairLoaded: false,
-  rateSortMode: false      // "Sort out my 7s": confirm verdicts for old ratings
+  rateSortMode: false,     // "Sort out my 7s": confirm verdicts for old ratings
+  // --- Watch later ---
+  activeProfileId: readActiveProfileId(),  // who is holding the phone (header switch)
+  watchLater: new Map(),                   // media_item_id -> [profile_ids] on the list
+  profiles: []                             // [{id, name}] from /api/profiles
 };
 
-const TABS = ['discover', 'direct', 'rate', 'history'];
-const TAB_IDS = { discover: 'tabDiscover', direct: 'tabDirect', rate: 'tabRate', history: 'tabHistory' };
-const VIEW_IDS = { discover: 'discoverView', direct: 'directView', rate: 'rateView', history: 'historyView' };
+const TABS = ['discover', 'direct', 'rate', 'later', 'history'];
+const TAB_IDS = { discover: 'tabDiscover', direct: 'tabDirect', rate: 'tabRate', later: 'tabLater', history: 'tabHistory' };
+const VIEW_IDS = { discover: 'discoverView', direct: 'directView', rate: 'rateView', later: 'laterView', history: 'historyView' };
 
 // Initialize app on DOM ready
 document.addEventListener('DOMContentLoaded', () => {
@@ -71,6 +75,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initStarSelector();
   initSpeechRecognition();
   loadPartnerName();
+  refreshLaterCount();
   updateFiltersSummary();
 
   // Open the tab named in the URL (#rate etc.) so a refresh or a home-screen
@@ -132,28 +137,53 @@ function posterFailed(img) {
 }
 
 let toastTimer = null;
-function showToast(message) {
+// `action` (optional): { label, run } adds one button to the toast. It stays
+// up longer so it can be tapped.
+function showToast(message, action) {
   const el = document.getElementById('toast');
   if (!el) return;
-  el.textContent = message;
+  el.replaceChildren(document.createTextNode(message));
+  el.classList.toggle('has-action', !!action);
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'toast-action';
+    b.textContent = action.label;
+    b.onclick = () => {
+      el.classList.remove('show', 'has-action');
+      clearTimeout(toastTimer);
+      action.run();
+    };
+    el.appendChild(b);
+  }
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show', 'has-action'), action ? 6000 : 2600);
 }
 
-// Partner's real name on the "His picks" control once profiles are renamed.
+// Real names on the "whose taste" controls once profiles are loaded. Old
+// installs may still carry the former defaults ("Me" / "Partner") until the
+// v11 migration renames them, so those are treated like "no name set".
+const DEFAULT_PROFILE_NAMES = ['Me', 'Partner'];
+function isDefaultProfileName(name) {
+  return !name || DEFAULT_PROFILE_NAMES.includes(name);
+}
 async function loadPartnerName() {
   try {
     const res = await fetch('/api/profiles');
     const profiles = await res.json();
     if (!Array.isArray(profiles) || profiles.length < 2) return;
     state.rateProfiles = state.rateProfiles.length ? state.rateProfiles : profiles;
-    const partner = [...profiles].sort((a, b) => a.id - b.id)[1];
-    const btn = document.querySelector('[data-rec-profile="partner"]');
-    if (btn && partner && partner.name && partner.name !== 'Partner') {
-      btn.textContent = `${partner.name}'s picks`;
+    state.profiles = [...profiles].sort((a, b) => a.id - b.id).slice(0, 2);
+    renderWhoSwitch();
+    const [first, second] = [...profiles].sort((a, b) => a.id - b.id);
+    for (const [key, person] of [['me', first], ['partner', second]]) {
+      const btn = document.querySelector(`[data-rec-profile="${key}"]`);
+      if (btn && person && !isDefaultProfileName(person.name)) {
+        btn.textContent = `${person.name}'s picks`;
+      }
     }
-  } catch (_) { /* label stays "His picks" */ }
+  } catch (_) { /* labels stay "Just me" / "Their picks" */ }
 }
 
 // PWA Service Worker Registration
@@ -211,6 +241,9 @@ function switchTab(tab, opts = {}) {
   }
   if (tab === 'rate') {
     initRateTab();
+  }
+  if (tab === 'later') {
+    loadLater();
   }
   if (tab === 'discover' && !state.originsLoaded) {
     state.originsLoaded = true;
@@ -815,6 +848,350 @@ function watchButtonHtml(m) {
           </button>`;
 }
 
+// ---------------------------------------------------------------------------
+// Watch later: the "I'm …" switch and the bookmark button
+// ---------------------------------------------------------------------------
+// One shared list. state.watchLater maps media_item_id -> [profile_ids who put
+// it on the list]; it is refilled from the `on_list` field of every item the
+// app renders, so the buttons always reflect the server after a reload.
+function readActiveProfileId() {
+  try {
+    const n = parseInt(localStorage.getItem('activeProfileId'), 10);
+    if (n > 0) return n;
+  } catch (_) { /* private mode: fall through */ }
+  return 1;
+}
+
+function profileName(id) {
+  const p = state.profiles.find(x => x.id === id);
+  return p ? p.name : 'Someone';
+}
+
+function renderWhoSwitch() {
+  const el = document.getElementById('whoSwitch');
+  if (!el || state.profiles.length < 2) return;
+  // A stored id that is not one of the two people falls back to the first.
+  if (!state.profiles.some(p => p.id === state.activeProfileId)) state.activeProfileId = state.profiles[0].id;
+  el.hidden = false;
+  el.innerHTML = state.profiles.map(p => `
+    <button type="button" class="segment${p.id === state.activeProfileId ? ' active' : ''}"
+            aria-pressed="${p.id === state.activeProfileId}"
+            onclick="setActiveProfile(${p.id})">
+      <span class="who-lead">I'm </span>${escapeHtml(p.name)}
+    </button>`).join('');
+  refreshWatchLaterButtons();
+  renderLaterBy();
+}
+
+function setActiveProfile(id) {
+  state.activeProfileId = id;
+  try { localStorage.setItem('activeProfileId', String(id)); } catch (_) { /* not remembered */ }
+  renderWhoSwitch();
+}
+
+// Remember `on_list` from a batch of items (Discover, Rate, search).
+function noteOnList(items) {
+  for (const it of items || []) {
+    if (it && it.id != null && Array.isArray(it.on_list)) state.watchLater.set(it.id, [...it.on_list]);
+  }
+}
+
+// `opts.inRow`: the button sits inside a clickable row (Rate search), so its
+// click must not also open the row.
+function watchLaterButtonHtml(item, opts = {}) {
+  noteOnList([item]);
+  const stop = opts.inRow ? 'event.stopPropagation(); ' : '';
+  return `<button type="button" class="btn-later${opts.inRow ? ' btn-later-row' : ''}" data-later-id="${item.id}"
+            data-later-title="${escapeHtml(item.title)}"
+            onclick="${stop}toggleWatchLater(${item.id}, ${jsArg(item.title)}, this)"></button>`;
+}
+
+// True when the active person has this title on the list.
+function onMyWatchLater(id) {
+  return (state.watchLater.get(id) || []).includes(state.activeProfileId);
+}
+
+// Paint one button from state.watchLater and the active person.
+function paintWatchLaterButton(btn) {
+  const id = Number(btn.dataset.laterId);
+  const title = btn.dataset.laterTitle || '';
+  const who = state.watchLater.get(id) || [];
+  const mine = who.includes(state.activeProfileId);
+  const other = who.find(pid => pid !== state.activeProfileId);
+  const label = mine ? 'On your list' : 'Watch later';
+  const otherNote = other != null ? `${profileName(other)} wants this` : '';
+  btn.setAttribute('aria-pressed', mine ? 'true' : 'false');
+  btn.classList.toggle('on', mine);
+  btn.classList.toggle('other-wants', !mine && other != null);
+  btn.setAttribute('aria-label', `${label}: ${title}${otherNote ? ` (${otherNote})` : ''}`);
+  btn.title = mine
+    ? (other != null ? 'You both want this. Tap to take it off your list' : 'On your list. Tap to remove')
+    : (otherNote ? `${otherNote}. Tap to add it for you too` : 'Watch later');
+  btn.innerHTML = `${icon('bookmark')}<span class="later-label">${mine && other != null ? 'Both' : 'Later'}</span>`
+    + (otherNote ? `<span class="later-dot" aria-hidden="true"></span><span class="visually-hidden">${escapeHtml(otherNote)}</span>` : '');
+}
+
+function refreshWatchLaterButtons(id) {
+  const sel = id == null ? '.btn-later' : `.btn-later[data-later-id="${id}"]`;
+  document.querySelectorAll(sel).forEach(paintWatchLaterButton);
+}
+
+async function toggleWatchLater(id, title, btn) {
+  const me = state.activeProfileId;
+  const before = state.watchLater.get(id) || [];
+  const adding = !before.includes(me);
+  const after = adding ? [...before, me] : before.filter(p => p !== me);
+  state.watchLater.set(id, after);          // optimistic
+  refreshWatchLaterButtons(id);
+  if (btn) btn.disabled = true;
+  try {
+    const res = adding
+      ? await fetch('/api/watch-later', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ media_item_id: id, profile_id: me })
+        })
+      : await fetch(`/api/watch-later/${id}?profile_id=${me}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast(adding ? 'Added to Watch later' : 'Removed from your list');
+    refreshLaterCount();
+    if (state.activeTab === 'later') loadLater({ quiet: true });
+  } catch (err) {
+    state.watchLater.set(id, before);       // roll back
+    refreshWatchLaterButtons(id);
+    showToast("Couldn't save. Try again.");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Watch later: the Later tab
+// ---------------------------------------------------------------------------
+const later = { type: 'all', by: 'any', seq: 0 };   // by: 'any' | 'both' | profile id
+
+function relativeAgo(ts) {
+  // SQLite CURRENT_TIMESTAMP is UTC without a zone marker.
+  const t = Date.parse(String(ts || '').replace(' ', 'T') + 'Z');
+  if (!t) return '';
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const months = Math.round(days / 30);
+  return months < 12 ? `${months} month${months === 1 ? '' : 's'} ago` : 'over a year ago';
+}
+
+// "Later 7" in the tab. Called on start and after anything that changes the list.
+async function refreshLaterCount() {
+  const el = document.getElementById('laterCount');
+  if (!el) return;
+  try {
+    const res = await fetch('/api/watch-later');
+    if (!res.ok) return;
+    const n = (await res.json()).count || 0;
+    el.textContent = n ? ` ${n}` : '';
+    document.getElementById('tabLater').setAttribute('aria-label', n ? `Later, ${n} saved` : 'Later');
+  } catch (_) { /* keep the old count */ }
+}
+
+function setLaterType(type) {
+  later.type = type;
+  document.querySelectorAll('[data-later-type]').forEach(b => setPressed(b, b.dataset.laterType === type));
+  loadLater();
+}
+
+function setLaterBy(by) {
+  later.by = by;
+  renderLaterBy();
+  loadLater();
+}
+
+function renderLaterBy() {
+  const el = document.getElementById('laterByGroup');
+  if (!el) return;
+  const opts = [{ key: 'any', label: 'Anyone' }];
+  state.profiles.forEach(p => opts.push({ key: String(p.id), label: p.name }));
+  if (state.profiles.length >= 2) opts.push({ key: 'both', label: 'Both of you' });
+  el.innerHTML = opts.map(o => {
+    const on = String(later.by) === o.key;
+    return `<button type="button" class="segment${on ? ' active' : ''}" aria-pressed="${on}"
+              onclick="setLaterBy(${o.key === 'any' || o.key === 'both' ? jsArg(o.key) : o.key})">${escapeHtml(o.label)}</button>`;
+  }).join('');
+}
+
+function laterAddedLine(e) {
+  if (e.both) return `<span class="later-added together">${icon('heart', 'icon badge-icon')}You both want this</span>`;
+  const a = (e.added_by || [])[0];
+  if (!a) return '';
+  const ago = relativeAgo(a.added_at);
+  return `<span class="later-added">Added by ${escapeHtml(a.name || profileName(a.profile_id))}${ago ? ` · ${escapeHtml(ago)}` : ''}</span>`;
+}
+
+function buildLaterCard(e, rank, animate = true) {
+  const card = document.createElement('article');
+  card.className = 'movie-card later-card';
+  if (animate) card.style.animationDelay = `${Math.min(rank - 1, 6) * 40}ms`;
+  else card.style.animation = 'none';   // quiet refresh: don't replay the entrance
+  const id = e.media_item_id;
+  // Same record shape the other tabs give the shared helpers.
+  const m = { id, title: e.title, media_type: e.media_type, on_list: (e.added_by || []).map(a => a.profile_id) };
+
+  const meta = [];
+  if (e.release_year) meta.push(escapeHtml(e.release_year));
+  if (e.runtime) meta.push(formatRuntime(e.runtime));
+  if (e.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(e.rating).toFixed(1))}</span>`);
+
+  const action = e.file_path
+    ? `<button class="btn-watch play" onclick="playLocalItem(${id}, ${jsArg(e.title)})">${icon('play')}<span>Play now</span></button>`
+    : watchButtonHtml(m);
+
+  card.innerHTML = `
+    <div class="movie-card-main">
+      ${posterHtml(e.poster_url, e.title, 'movie-poster')}
+      <div class="movie-details">
+        <h3 class="movie-title">${escapeHtml(e.title)}</h3>
+        <div class="movie-meta">${meta.join(' · ')}</div>
+        <div class="movie-genres">${escapeHtml(e.genres || (e.media_type === 'tv' ? 'TV series' : 'Movie'))}</div>
+        <div class="movie-badges">${laterAddedLine(e)}</div>
+      </div>
+    </div>
+    <div class="movie-footer">
+      <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
+      <div class="watch-slot">${action}</div>
+      ${watchLaterButtonHtml(m)}
+      <button type="button" class="btn-tv-link btn-watched" aria-label="Watched it: ${escapeHtml(e.title)}"
+              onclick="watchedFromLater(${id}, ${jsArg(e.title)})">Watched it</button>
+    </div>`;
+  card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
+  return card;
+}
+
+function laterQuery(extra) {
+  const p = new URLSearchParams(extra || {});
+  if (later.type !== 'all') p.set('media_type', later.type);
+  if (later.by !== 'any' && later.by !== 'both') p.set('added_by', later.by);
+  return p;
+}
+
+async function loadLater(opts = {}) {
+  const list = document.getElementById('laterList');
+  const seq = ++later.seq;
+  if (!opts.quiet) {
+    list.innerHTML = '<p class="rate-sub" style="text-align:center; padding: 20px;">Loading…</p>';
+  }
+  renderLaterBy();
+  try {
+    const [res, doneRes] = await Promise.all([
+      fetch(`/api/watch-later?${laterQuery()}`),
+      fetch('/api/watch-later?include_done=true')
+    ]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (seq !== later.seq) return;   // a newer request is on its way
+    let items = data.items || [];
+    if (later.by === 'both') items = items.filter(e => e.both);
+    noteOnList(items.map(e => ({ id: e.media_item_id, on_list: (e.added_by || []).map(a => a.profile_id) })));
+    const hadItems = items.length > 0;
+
+    list.replaceChildren();
+    if (!hadItems) {
+      const filtered = later.type !== 'all' || later.by !== 'any';
+      list.innerHTML = `
+        <div class="empty-state">
+          ${icon('bookmark', 'empty-icon')}
+          <p class="empty-title">${filtered ? 'Nothing matches' : 'Nothing saved yet'}</p>
+          <p class="empty-sub">${filtered ? 'Try a different filter.' : 'Tap the bookmark on any pick to save it for later.'}</p>
+        </div>`;
+    } else {
+      items.forEach((e, i) => list.appendChild(buildLaterCard(e, i + 1, !opts.quiet)));
+    }
+
+    const doneData = doneRes.ok ? await doneRes.json() : { items: [] };
+    renderLaterDone((doneData.items || []).filter(e => e.done_at)
+      .sort((a, b) => String(b.done_at).localeCompare(String(a.done_at))).slice(0, 10));
+    refreshLaterCount();
+  } catch (err) {
+    if (seq !== later.seq) return;
+    console.error('Load Watch later error:', err);
+    list.innerHTML = `
+      <div class="empty-state error" role="alert">
+        ${icon('x', 'empty-icon')}
+        <p class="empty-title">Couldn't load your list</p>
+        <button class="btn-secondary" onclick="loadLater()">${icon('refresh')}Try again</button>
+      </div>`;
+  }
+}
+
+function renderLaterDone(done) {
+  const box = document.getElementById('laterDone');
+  const el = document.getElementById('laterDoneList');
+  box.hidden = done.length === 0;
+  el.innerHTML = done.map(e => `
+    <div class="later-done-row">
+      <div class="later-done-info">
+        <span class="later-done-title">${escapeHtml(e.title)}</span>
+        <span class="later-done-meta">${escapeHtml(e.release_year || '')}${e.done_at ? ` · ${escapeHtml(e.done_reason === 'rated' ? 'rated' : 'watched')} ${escapeHtml(relativeAgo(e.done_at))}` : ''}</span>
+      </div>
+      <button type="button" class="btn-secondary" aria-label="Undo: put ${escapeHtml(e.title)} back on the list"
+              onclick="undoLaterDone(${e.media_item_id})">Undo</button>
+    </div>`).join('');
+}
+
+async function undoLaterDone(id) {
+  try {
+    const res = await fetch(`/api/watch-later/${id}/undo`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    showToast('Back on your list');
+    loadLater({ quiet: true });
+  } catch (err) {
+    showToast("Couldn't undo. Try again.");
+  }
+}
+
+// "Watched it": mark it done, then open the Rate tab on that title.
+async function watchedFromLater(id, title) {
+  try {
+    const res = await fetch(`/api/watch-later/${id}/done`, { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    showToast("Couldn't save. Try again.");
+    return;
+  }
+  refreshLaterCount();
+  // Rate under the person holding the phone ("I'm ..."), not whichever
+  // profile the Rate tab last had selected.
+  const want = state.activeProfileId;
+  const queueLoaded = state.rateProfiles.length > 0 && state.rateCursor > 0;
+  const switchProfile = want !== state.rateProfileId;
+  if (switchProfile) state.rateProfileId = want;
+  let item = null;
+  try {
+    const params = new URLSearchParams({ q: title, media_type: 'all', limit: 10, profile_id: state.rateProfileId });
+    const res = await fetch(`/api/catalogue/search?${params}`);
+    if (res.ok) item = ((await res.json()).items || []).find(it => it.id === id) || null;
+  } catch (_) { /* fall back below */ }
+  if (!item) item = { id, title, media_type: 'movie', on_list: [] };
+  noteOnList([item]);
+  switchTab('rate');
+  // initRateTab loads its queue asynchronously the first time; wait for it so
+  // the title is not wiped by that load.
+  for (let i = 0; i < 40 && !(state.rateProfiles.length && state.rateCursor > 0); i++) {
+    await new Promise(r => setTimeout(r, 100));
+  }
+  if (switchProfile && queueLoaded) {
+    // The queue on screen belonged to the other profile; reload it for this one.
+    state.rateQueue = [];
+    state.rateIndex = 0;
+    renderRateProfiles();
+    await loadRatingQueue(true);
+  }
+  openSearchedTitle(item);
+  showToast('Marked as watched. Rate it?', { label: 'Undo', run: () => undoLaterDone(id).then(refreshLaterCount) });
+}
+
 // Extracted so "Show more" and the initial render build identical cards.
 function buildMovieCard(m, engine, index = 0, rank = 1) {
     const card = document.createElement('article');
@@ -868,6 +1245,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
       <div class="movie-footer">
         <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
         <div id="watch-container-${m.id}" class="watch-slot">${actionButtonHtml}</div>
+        ${watchLaterButtonHtml(m)}
         <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
           <span class="label">Jellyfin</span> ${icon('external')}
         </a>
@@ -875,6 +1253,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
                 title="Not this one" aria-label="Not this one: ${escapeHtml(m.title)}">${icon('x')}</button>
       </div>
     `;
+    card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
     return card;
 }
 
@@ -1810,6 +2189,7 @@ async function loadRatingQueue(reset) {
       });
       const sortRes = await fetch(`/api/ratings/inferred-queue?${sortParams}`);
       const sortData = await sortRes.json();
+      noteOnList(sortData.items);
       state.rateQueue = (sortData.items || []).filter(it => !state.rateSkipped.has(it.id));
       state.rateCursor = (sortData.items || []).length;
       state.rateIndex = 0;
@@ -1828,6 +2208,7 @@ async function loadRatingQueue(reset) {
 
     const res = await fetch(`/api/ratings/queue?${params}`);
     const data = await res.json();
+    noteOnList(data.items);
 
     // Drop anything already rated or skipped this session so skipping really
     // advances rather than looping back to the same card.
@@ -1960,7 +2341,7 @@ function renderRateCard() {
   // being filled in now; theirs, if they've answered, sits beside it.
   const other = (item.co_view?.verdicts || []).find(v => v.profile_id !== state.rateProfileId);
   const otherProfile = state.rateProfiles.find(p => p.id !== state.rateProfileId);
-  const otherName = other?.name || otherProfile?.name || 'Partner';
+  const otherName = other?.name || otherProfile?.name || 'Your partner';
   let otherVerdict = '<b>not yet</b>';
   let otherPending = true;
   if (other?.status === 'not_seen') { otherVerdict = "<b>hasn't seen it</b>"; otherPending = false; }
@@ -1975,7 +2356,7 @@ function renderRateCard() {
     const how = v.inferred ? (v.inferred_source === 'seasons' ? ' (from seasons)' : ' (guessed)') : '';
     return label ? `${label}${how}` : '';
   };
-  const asked = me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
+  const asked = me.name && !isDefaultProfileName(me.name) ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
   let myVerdict = '<b>not yet</b>';
   let question = asked;
   if (mine?.status === 'not_seen') myVerdict = "<b>hasn't seen it</b>";
@@ -2053,11 +2434,12 @@ function renderRateCard() {
       ${state.rateAwaitingWhy ? '' : `
       <div class="rate-actions">
         <button class="btn-not-seen" onclick="submitNotSeen()">${icon('eye-off')}Haven't seen it</button>
+        ${watchLaterButtonHtml(item)}
         <button class="btn-skip" onclick="skipRateItem()">Skip ${icon('skip')}</button>
       </div>`}
       <label class="rate-quick"><input type="checkbox" ${state.rateQuick ? 'checked' : ''}
              onchange="setRateQuick(this.checked)"> Move on right after I pick a verdict</label>
-      <p class="rate-hint"><kbd>1</kbd>–<kbd>5</kbd> verdict · <kbd>D</kbd> didn't finish · <kbd>W</kbd> why · <kbd>Enter</kbd> next · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip</p>
+      <p class="rate-hint"><kbd>1</kbd>–<kbd>5</kbd> verdict · <kbd>D</kbd> didn't finish · <kbd>W</kbd> why · <kbd>Enter</kbd> next · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip · <kbd>L</kbd> watch later</p>
     </div>
 
     <div class="rate-stub">
@@ -2067,6 +2449,7 @@ function renderRateCard() {
       <span class="stub-verdict ${otherPending ? 'pending' : ''}">${escapeHtml(otherName)}: ${otherVerdict}</span>
     </div>
   `;
+  card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
   if (state.rateVocab && state.rateWhyOpen) loadRateWhy(item);
   if (item.media_type === 'tv' && state.rateVocab) loadRateSeasons(item);
 }
@@ -2644,7 +3027,15 @@ async function submitNotSeen() {
   if (!item || ratingInFlight) return;
   // "Haven't seen it" is a real answer — stored with status='not_seen' and no
   // rating attached, never as a zero or a 1.
-  if (await postRating(item.id, { status: 'not_seen' })) advanceQueue();
+  if (!(await postRating(item.id, { status: 'not_seen' }))) return;
+  // "Haven't seen it" is often the moment someone says "later": offer it once.
+  if (!onMyWatchLater(item.id)) {
+    showToast(`Saved as not seen. Add ${item.title} to Watch later?`, {
+      label: 'Add to Watch later',
+      run: () => { if (!onMyWatchLater(item.id)) toggleWatchLater(item.id, item.title, null); }
+    });
+  }
+  advanceQueue();
 }
 
 // Returns true only when the server stored it. The card used to advance
@@ -2668,6 +3059,7 @@ async function postRating(itemId, payload) {
       updateRateStubMine(shown);
     }
     flashRateFeedback(summary);
+    refreshLaterCount();   // a seen verdict can finish a title on the list
     return true;
   } catch (err) {
     console.error('Rating failed:', err);
@@ -2773,6 +3165,9 @@ document.addEventListener('keydown', (e) => {
     submitNotSeen();
   } else if (k === 's') {
     skipRateItem();
+  } else if (k === 'l') {
+    const later = document.querySelector('#rateCard .btn-later');
+    if (later) { later.click(); e.preventDefault(); }
   }
 });
 
@@ -2834,6 +3229,7 @@ async function runRateSearch(q, mode = 'catalogue') {
       const res = await fetch(`/api/catalogue/search?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      noteOnList(data.items);
       rows = (data.items || []).map(d => ({ kind: 'item', data: d }));
       rows.push({ kind: 'more', data: null });
     }
@@ -2892,9 +3288,11 @@ function renderRateSearchList() {
                 <span class="rate-search-meta">${rateSearchMeta(d, row.kind)}</span>
               </span>
               ${row.kind === 'item' ? rateSearchVerdict(d) : `<span class="rate-search-verdict add">Add</span>`}
+              ${row.kind === 'item' ? watchLaterButtonHtml(d, { inRow: true }) : ''}
             </li>`;
   }).join('');
   list.innerHTML = html;
+  list.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
   openRateSearchList();
 }
 

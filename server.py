@@ -225,6 +225,11 @@ class TmdbImportRequest(BaseModel):
     tmdb_id: int
 
 
+class WatchLaterRequest(BaseModel):
+    media_item_id: int
+    profile_id: int
+
+
 class RenameProfileRequest(BaseModel):
     name: str
 
@@ -397,6 +402,7 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     results.setdefault("has_more", False)
     results.setdefault("page", 1)
     results.setdefault("page_size", len(results.get("items") or []))
+    _with_on_list(results.get("items"))
 
     # Feedback log (schema v7): one session per Discover request, one
     # impression per title shown. Logging must never break recommendations.
@@ -461,9 +467,27 @@ def _pool_for(kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
     return res.get("pool") or []
 
 
+def _with_on_list(items: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    """Adds `on_list` (profile ids with the title on Watch later) to each item, one query for all.
+    Never raises: on failure items get an empty list."""
+    if not items:
+        return items
+    try:
+        ids = [i["id"] for i in items if isinstance(i, dict) and i.get("id") is not None]
+        found = db.get_watch_later_ids(ids) if ids else {}
+    except Exception as e:  # noqa: BLE001
+        print(f"[WatchLater] on_list lookup failed: {e}", flush=True)
+        found = {}
+    for i in items:
+        if isinstance(i, dict):
+            i["on_list"] = list(found.get(i.get("id"), []))
+    return items
+
+
 def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     results = recommender_service.finalize(popup.ranked(), 1, page_size)
     results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
+    _with_on_list(results.get("items"))
     if vibe is not None:
         results["vibe"] = vibe
     try:
@@ -615,6 +639,11 @@ async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="Active session not found.")
     if req.user_rating and row:
         _log_outcome(row["media_item_id"], "rated", req.user_rating)
+    if row:
+        try:
+            db.mark_watch_later_done(row["media_item_id"], "watched")
+        except Exception as e:  # noqa: BLE001
+            print(f"[WatchLater] could not mark {row['media_item_id']} done: {e}", flush=True)
     return {"success": True, "record_id": record_id}
 
 
@@ -636,9 +665,55 @@ async def get_history() -> Dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Watch later (shared list, schema v11)
+# ---------------------------------------------------------------------------
+@app.get("/api/watch-later")
+async def get_watch_later(
+    include_done: bool = False,
+    media_type: Optional[str] = None,
+    added_by: Optional[int] = None,
+) -> Dict[str, Any]:
+    """The shared list, one entry per title, newest add first."""
+    items = await asyncio.to_thread(
+        db.get_watch_later, include_done=include_done, media_type=media_type or None, added_by=added_by
+    )
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/api/watch-later")
+async def add_watch_later(req: WatchLaterRequest) -> Dict[str, Any]:
+    """Puts a title on the list for one person; returns the grouped entry."""
+    try:
+        return await asyncio.to_thread(db.add_to_watch_later, req.media_item_id, req.profile_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.delete("/api/watch-later/{media_item_id}")
+async def remove_watch_later(media_item_id: int, profile_id: int) -> Dict[str, Any]:
+    """Takes one person's add off the list."""
+    removed = await asyncio.to_thread(db.remove_from_watch_later, media_item_id, profile_id)
+    return {"removed": bool(removed)}
+
+
+@app.post("/api/watch-later/{media_item_id}/done")
+async def done_watch_later(media_item_id: int) -> Dict[str, Any]:
+    """Marks a title on the list as watched (the Later tab's "Watched it")."""
+    n = await asyncio.to_thread(db.mark_watch_later_done, media_item_id, "watched")
+    return {"done": n}
+
+
+@app.post("/api/watch-later/{media_item_id}/undo")
+async def undo_watch_later(media_item_id: int) -> Dict[str, Any]:
+    """Brings a title marked done back onto the list."""
+    n = await asyncio.to_thread(db.undo_watch_later_done, media_item_id)
+    return {"reopened": n}
+
+
 @app.get("/api/profiles")
 async def get_profiles() -> List[Dict[str, Any]]:
-    """Lists the co-view rating profiles (you + partner) with live stats."""
+    """Lists the co-view rating profiles (Labiba and Gabriele) with live stats."""
     return db.get_profiles()
 
 
@@ -823,6 +898,7 @@ async def get_rating_queue(
             "verdicts": summary["verdicts"],
         }
         item["other_profile_id"] = other_id
+    _with_on_list(items)
     return {"profile_id": profile_id, "media_type": media_type, "items": items}
 
 
@@ -931,6 +1007,7 @@ async def get_inferred_rating_queue(
     items = await asyncio.to_thread(db.get_inferred_rating_queue, profile_id, media_type, limit)
     for item in items:
         _with_co_view(item)
+    _with_on_list(items)
     return {"profile_id": profile_id, "media_type": media_type, "items": items}
 
 
@@ -963,7 +1040,7 @@ async def search_catalogue(
     pid = profile_id if isinstance(profile_id, int) else None
     lim = limit if isinstance(limit, int) else 10
     items = await asyncio.to_thread(catalogue_search.search, q, mtype, lim, pid)
-    return {"query": q, "items": [_with_co_view(it) for it in items]}
+    return {"query": q, "items": _with_on_list([_with_co_view(it) for it in items])}
 
 
 @app.get("/api/catalogue/tmdb-search")

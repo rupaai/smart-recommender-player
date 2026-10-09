@@ -102,7 +102,7 @@ def test_migration(tmp):
     with again.get_connection() as conn:
         ok = conn.execute("SELECT name FROM sqlite_master WHERE name = 'season_ratings'").fetchone()
         version = conn.execute("PRAGMA user_version;").fetchone()[0]
-    check("re-runs on a v8 DB and is idempotent", ok is not None and version == 10, version)
+    check("re-runs on a v8 DB and is idempotent", ok is not None and version >= 10, version)
 
 
 def test_season_counts(tmp):
