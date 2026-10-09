@@ -1,0 +1,65 @@
+# couchcinema stack: app (with torrent downloads), Jellyfin, Prowlarr.
+# Copied to /srv/couchcinema/ by each deploy. Run with: docker compose -p couchcinema ...
+#
+# Shared machine rules (docs/DEPLOYMENT_PLAN.md section 4a): own project name, own
+# network, memory limits, pinned images. Never address anything outside this project.
+name: couchcinema
+
+services:
+  app:
+    image: ghcr.io/rupaai/smart-recommender-player:${IMAGE_TAG}
+    restart: unless-stopped
+    # 1000:1000 matches the image's user. Under rootless Docker, container root IS the
+    # deploy user on the host, so bootstrap.sh sets APP_USER=0:0 there (M2).
+    user: "${APP_USER:-1000:1000}"
+    env_file: .env
+    environment:
+      CONFIG_PATH: /config/config.server.yaml
+      MODELS_DIR: /models/current
+      DATABASE_PATH: /data/catalogue_full.db
+      JELLYFIN_URL: http://jellyfin:8096
+      PROWLARR_URL: http://prowlarr:9696
+    volumes:
+      - ./data:/data
+      - ./models:/models
+      - ./config.server.yaml:/config/config.server.yaml:ro
+      - ${MEDIA_ROOT}:/media   # same path in every container: the app tells Jellyfin about files by path
+    ports:
+      - "8000:8000"
+      - "6881-6891:6881-6891"
+      - "6881-6891:6881-6891/udp"
+    mem_limit: 2g
+    networks: [couchcinema]
+
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    restart: unless-stopped
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - ${MEDIA_ROOT}:/media
+    devices:
+      - /dev/dri:/dev/dri       # Intel Quick Sync
+    group_add:
+      - "${RENDER_GID}"
+    ports:
+      - "8096:8096"
+    mem_limit: 4g
+    networks: [couchcinema]
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:version-2.6.5.5623
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+    volumes:
+      - ./prowlarr/config:/config
+    ports:
+      - "9696:9696"
+    mem_limit: 512m
+    networks: [couchcinema]
+
+networks:
+  couchcinema:
+    name: couchcinema
