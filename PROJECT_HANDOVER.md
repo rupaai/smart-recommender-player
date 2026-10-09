@@ -539,7 +539,7 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 
 ## 13. DEPLOYMENT: MAC TRAINS, OPTIPLEX SERVES (planned 2026-10-09, nothing built)
 
-Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`. Build only when Labiba says go. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
+Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`; Labiba's step-by-step with milestone prompts: `docs/BUILD_GUIDE.md`. Build only when Labiba says go. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
 
 - Server is **`mars`**, a Dell OptiPlex 3060 (i5-9500T, 16GB, one 238GB SSD with ~166GB free), not a Pi. Already has Ubuntu 24.04, Docker, Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183, SSH as `gabstevens`). It also runs Home Assistant and Matter containers that our stack must never touch (plan §4a). Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
 - Mac runs launchd jobs: backup pull, catalogue refresh + enrichment, training, eval gate, publish model bundle.

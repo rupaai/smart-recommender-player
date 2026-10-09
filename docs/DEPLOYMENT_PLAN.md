@@ -112,7 +112,7 @@ Four milestones. Each one is a single instruction to a single Sonnet session, wh
 | M3 Learning loop | 6, 7 | Merging 2 PRs, running one install command on the Mac | Nightly training publishes models to the server |
 | M4 Polish | 9, 10 | Plugging in the drive and running one command | External drive, README story |
 
-Paste this into a Sonnet session, changing the milestone:
+Labiba's step-by-step, with the exact prompt for each milestone, is `docs/BUILD_GUIDE.md`. Every milestone ends with a "Your turn" checklist. The general shape of the prompt:
 
 > Build milestone M1 from docs/DEPLOYMENT_PLAN.md. Read PROJECT_HANDOVER.md and the plan first, not the whole repo. Follow "Rules for whoever builds this". Use Haiku subagents for tasks marked (Haiku). One branch and one PR per phase, each PR passing `make check`. Tick the task checkboxes and update the handover in each PR. Stop and ask me only if a decision changes what we agreed in section 2.
 
@@ -207,7 +207,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 1. Creates a `deploy` system user in the `docker` group only (no sudo). The runner and deploys run as this user, not as `gabstevens`, so CI never has his sudo rights.
 2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing, owned by `deploy`.
 3. Copies `config.server.yaml` and `compose.yaml` into place and writes the host's `render` group id into `.env` for Jellyfin.
-4. Asks for each secret once (TMDB key etc.), generates `ADMIN_TOKEN`, writes `.env` (mode 600), and prints the token to copy to the Mac.
+4. Asks for each secret once (TMDB key etc.), generates `ADMIN_TOKEN`, writes `.env` (mode 600), and prints the token to copy to the Mac. The Jellyfin API key and user id can't exist until Jellyfin's first-run wizard is done, so they're optional here; `bootstrap.sh --set KEY=value` adds one later and restarts only our app container.
 5. Installs the GitHub Actions runner as a service under `deploy` with label `mars`, using a registration token you paste in.
 6. Installs the healthcheck and disk-check cron entries (P8.1).
 7. Runs `docker compose -p couchcinema up -d` and waits for `/healthz`.
