@@ -233,3 +233,61 @@ def pick_vibe_questions(facets: Optional[Dict[str, Any]], vibe_tags: Optional[Di
         "shown": [render(q) for q in ordered[:shown]],
         "more": [render(q) for q in ordered[shown:]],
     }
+
+
+# --- Per-season TV verdicts ----------------------------------------------------
+# Optional and quick: the same five verdicts plus "Didn't finish", no chips and
+# no vibe questions. The show-level verdict stays the main taste signal; season
+# verdicts only set the show's score when there is no confirmed show verdict.
+SEASON_DID_NOT_FINISH = {"id": "did_not_finish", "label": "Didn't finish"}
+# Later seasons weigh a bit more: dropping a show late says more than a shaky
+# first season. Season n weighs 1 + 0.25 (n - 1), capped at 2.
+SEASON_WEIGHT_STEP = 0.25
+SEASON_WEIGHT_CAP = 2.0
+
+
+def season_score(verdict: Optional[str], did_not_finish: bool = False) -> Optional[float]:
+    """-1..+1 for one season. "Didn't finish" on its own scores the same cap a
+    didn't-finish film gets; with a verdict it caps that verdict's score."""
+    if verdict is None:
+        return DID_NOT_FINISH_CAP if did_not_finish else None
+    return taste_score(verdict, did_not_finish)
+
+
+def season_weight(season_number: int) -> float:
+    return min(SEASON_WEIGHT_CAP, 1.0 + SEASON_WEIGHT_STEP * max(0, int(season_number) - 1))
+
+
+def nearest_verdict(score: float) -> str:
+    """The verdict whose score is closest (ties go to the milder one)."""
+    return min(VERDICT_KEYS, key=lambda k: (abs(VERDICTS[k]["score"] - score), abs(VERDICTS[k]["score"])))
+
+
+def dropped_at_season(seasons: Sequence[Dict[str, Any]]) -> Optional[int]:
+    """The first season marked "Didn't finish", or None."""
+    stopped = [int(s["season_number"]) for s in seasons if s.get("did_not_finish")]
+    return min(stopped) if stopped else None
+
+
+def derive_show_score(seasons: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A show-level score from season verdicts alone: the weighted mean of the
+    season scores (later seasons a bit heavier), the nearest verdict, and where
+    the person stopped. None when no season has a score.
+
+    Didn't finish is not carried up to the show: loving two seasons and
+    dropping the fourth is a mixed opinion, not a show you abandoned.
+    """
+    total = weight_sum = 0.0
+    for s in seasons:
+        score = s.get("taste_score")
+        if score is None:
+            score = season_score(s.get("verdict"), bool(s.get("did_not_finish")))
+        if score is None:
+            continue
+        w = season_weight(s["season_number"])
+        total += w * float(score)
+        weight_sum += w
+    if not weight_sum:
+        return None
+    mean = round(total / weight_sum, 3)
+    return {"taste_score": mean, "verdict": nearest_verdict(mean), "dropped_at_season": dropped_at_season(seasons)}

@@ -52,6 +52,7 @@ const state = {
   rateQuick: false,        // quick mode: move on right after the verdict (saved in this browser)
   rateCardShownId: null,   // item id the card was last drawn for
   rateSavedVerdict: null,
+  rateSeasons: null,       // per-season verdicts for the TV show on the card
   pairMode: false,         // "This or that" round (separate from the rating cards)
   pairs: [], pairIndex: 0, pairDone: 0, pairSkipped: new Set(), pairLoaded: false,
   rateSortMode: false      // "Sort out my 7s": confirm verdicts for old ratings
@@ -1971,7 +1972,8 @@ function renderRateCard() {
   const verdictOf = (v) => {
     if (!v) return '';
     const label = rateVerdictLabel(v.verdict);
-    return label ? `${label}${v.inferred ? ' (guessed)' : ''}` : '';
+    const how = v.inferred ? (v.inferred_source === 'seasons' ? ' (from seasons)' : ' (guessed)') : '';
+    return label ? `${label}${how}` : '';
   };
   const asked = me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
   let myVerdict = '<b>not yet</b>';
@@ -1979,7 +1981,9 @@ function renderRateCard() {
   if (mine?.status === 'not_seen') myVerdict = "<b>hasn't seen it</b>";
   else if (mine?.verdict) {
     myVerdict = `<b>${escapeHtml(verdictOf(mine))}</b>`;
-    question = mine.inferred
+    question = mine.inferred && mine.inferred_source === 'seasons'
+      ? `Your seasons add up to ${escapeHtml(rateVerdictLabel(mine.verdict))}. Your verdict on the whole show?`
+      : mine.inferred
       ? `You gave this ${escapeHtml(mine.user_rating)}/10 before. What's your verdict?`
       : `You said ${escapeHtml(rateVerdictLabel(mine.verdict))}. Change it?`;
   } else if (mine?.user_rating) {
@@ -2031,7 +2035,8 @@ function renderRateCard() {
           </button>`).join('')}
       </div>
       <label class="rate-dnf"><input type="checkbox" id="rateDnf" ${state.rateDraft.dnf ? 'checked' : ''}
-             onchange="state.rateDraft.dnf = this.checked; scheduleRateAutosave()"> Didn't finish it</label>
+             onchange="onRateDnfChange(this.checked)"> Didn't finish it</label>
+      ${item.media_type === 'tv' ? '<div id="rateSeasonsSlot"></div>' : ''}
 
       <details class="rate-why" id="rateWhy" ${state.rateWhyOpen ? 'open' : ''} ontoggle="onRateWhyToggle(this)">
         <summary>Why? <span class="rate-why-sub">optional${state.rateAwaitingWhy ? ' · tap to add details' : ''}</span></summary>
@@ -2039,7 +2044,9 @@ function renderRateCard() {
       </details>
 
       ${state.rateAwaitingWhy ? `
-        <p class="rate-saved" role="status">✓ Saved as ${escapeHtml(rateVerdictLabel(state.rateSavedVerdict))}. Add details above if you like, or move on.</p>
+        <p class="rate-saved" role="status">${state.rateSavedVerdict
+          ? `✓ Saved as ${escapeHtml(rateVerdictLabel(state.rateSavedVerdict))}. Add details above if you like, or move on.`
+          : '✓ Season verdicts saved. A verdict on the whole show is optional.'}</p>
         <button class="btn-done" onclick="finishRateWhy()">Next ${icon('skip')}</button>` : ''}
       ` : '<p class="rate-sub" style="text-align:center">Loading…</p>'}
 
@@ -2061,6 +2068,7 @@ function renderRateCard() {
     </div>
   `;
   if (state.rateVocab && state.rateWhyOpen) loadRateWhy(item);
+  if (item.media_type === 'tv' && state.rateVocab) loadRateSeasons(item);
 }
 
 let ratingInFlight = false;
@@ -2099,6 +2107,7 @@ function resetRateDraft(item, mine) {
   state.rateMoreOpen = false;
   state.rateAwaitingWhy = false;
   state.rateSavedVerdict = null;
+  state.rateSeasons = null;
 }
 
 function onRateWhyToggle(el) {
@@ -2295,6 +2304,8 @@ async function submitVerdict(verdict) {
   // stays folded but one tap away. Tapping another verdict just changes it.
   state.rateAwaitingWhy = true;
   if (state.rateVocab.extreme.includes(verdict)) state.rateWhyOpen = true;
+  // "Which season lost me" matters most after a Meh, a Not for me or a stop.
+  if (state.rateSeasons && (SEASONS_OPEN_ON.includes(verdict) || state.rateDraft.dnf)) state.rateSeasons.open = true;
   renderRateCard();
   setRateProgress(`Saved: ${rateVerdictLabel(verdict)}. Add details or tap Next.`);
 }
@@ -2308,8 +2319,187 @@ async function finishRateWhy() {
     if (!(await flushRateAutosave())) return;
     while (ratingInFlight) await new Promise(r => setTimeout(r, 50));
   }
-  if (item.fromSearch) showToast(`Saved: ${item.title}, ${rateVerdictLabel(state.rateSavedVerdict)}`);
+  if (item.fromSearch) {
+    showToast(state.rateSavedVerdict
+      ? `Saved: ${item.title}, ${rateVerdictLabel(state.rateSavedVerdict)}`
+      : `Saved: ${item.title}, season verdicts`);
+  }
   advanceQueue();
+}
+
+// --- Per-season verdicts on TV cards -----------------------------------------
+// Optional and quick: one compact row per season with the five verdicts plus
+// "Didn't finish". Each tap saves on its own. Folded by default; it opens by
+// itself after "Didn't finish" or a show-level Meh / Not for me. Hidden for
+// one-season shows. The show verdict stays the main signal; seasons only set
+// the show's score when there isn't one.
+
+const SEASONS_OPEN_ON = ['meh', 'not_for_me'];
+const SEASON_SHORT = { rewatch: 'Again', loved: 'Loved', liked: 'Liked', meh: 'Meh', not_for_me: 'Nope', did_not_finish: 'Stop' };
+
+function seasonOptions() {
+  const extra = state.rateVocab.season_extra || { id: 'did_not_finish', label: "Didn't finish" };
+  return [...state.rateVocab.verdicts, extra];
+}
+
+function seasonChoice(r) {
+  if (!r) return null;
+  return r.verdict || (r.did_not_finish ? 'did_not_finish' : null);
+}
+
+async function loadRateSeasons(item) {
+  const cur = state.rateSeasons;
+  if (cur && cur.itemId === item.id) { renderRateSeasons(); return; }
+  state.rateSeasons = { itemId: item.id, loading: true, count: null, ratings: {}, open: false };
+  try {
+    const res = await fetch(`/api/ratings/details/${item.id}?profile_id=${state.rateProfileId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (currentRateItem()?.id !== item.id || state.rateSeasons?.itemId !== item.id) return;
+    const s = state.rateSeasons;
+    s.loading = false;
+    s.count = data.seasons?.count || null;
+    for (const r of data.seasons?.ratings || []) s.ratings[r.season_number] = seasonChoice(r);
+    if (state.rateDraft?.dnf) s.open = true;
+    renderRateSeasons();
+  } catch (err) {
+    console.error('Could not load season verdicts:', err);
+    if (state.rateSeasons?.itemId === item.id) state.rateSeasons.loading = false;
+  }
+}
+
+function seasonsSummaryText(s) {
+  const rated = Object.entries(s.ratings).filter(([, v]) => v);
+  if (!rated.length) return `optional · ${s.count} seasons`;
+  const stopped = rated.filter(([, v]) => v === 'did_not_finish').map(([n]) => +n).sort((a, b) => a - b)[0];
+  return `${rated.length} of ${s.count} rated${stopped ? ` · stopped in S${stopped}` : ''}`;
+}
+
+function renderRateSeasons() {
+  const slot = document.getElementById('rateSeasonsSlot');
+  const s = state.rateSeasons;
+  if (!slot || !s || s.itemId !== currentRateItem()?.id) return;
+  if (s.loading || !s.count || s.count < 2) { slot.innerHTML = ''; return; }
+  const opts = seasonOptions();
+  const rows = [];
+  for (let n = 1; n <= s.count; n++) {
+    const picked = s.ratings[n] || null;
+    // Roving focus: one tab stop per season (the picked option, else the first).
+    const focusId = picked || opts[0].id;
+    rows.push(`
+      <div class="season-row" role="radiogroup" aria-label="Season ${n}" data-season="${n}">
+        <span class="season-label" aria-hidden="true">S${n}</span>
+        <div class="season-opts">
+          ${opts.map((o, i) => `
+            <button type="button" role="radio" class="season-opt season-${escapeHtml(o.id)} ${picked === o.id ? 'active' : ''}"
+                    id="season-${n}-${escapeHtml(o.id)}" aria-checked="${picked === o.id}"
+                    aria-label="${escapeHtml(o.label)}" title="${escapeHtml(o.label)} (${i + 1})"
+                    tabindex="${o.id === focusId ? 0 : -1}"
+                    onclick="pickSeason(${n}, '${escapeHtml(o.id)}')">${escapeHtml(SEASON_SHORT[o.id] || o.label)}</button>`).join('')}
+        </div>
+      </div>`);
+  }
+  slot.innerHTML = `
+    <details class="rate-seasons" id="rateSeasons" ${s.open ? 'open' : ''} ontoggle="state.rateSeasons && (state.rateSeasons.open = this.open)">
+      <summary>Seasons <span class="rate-why-sub">${escapeHtml(seasonsSummaryText(s))}</span></summary>
+      <div class="rate-seasons-body" onkeydown="onSeasonKey(event)">
+        <p class="rate-seasons-hint">One tap per season, all optional. Tap again to clear.</p>
+        ${rows.join('')}
+      </div>
+    </details>`;
+}
+
+async function pickSeason(n, choice, keepFocus = true) {
+  const item = currentRateItem();
+  const s = state.rateSeasons;
+  if (!item || !s || s.itemId !== item.id) return;
+  const before = s.ratings[n] || null;
+  const next = before === choice ? null : choice; // tap again clears
+  s.ratings[n] = next;
+  renderRateSeasons();
+  if (keepFocus) document.getElementById(`season-${n}-${choice}`)?.focus();
+  const body = {
+    media_item_id: item.id, profile_id: state.rateProfileId, season_number: n,
+    verdict: next && next !== 'did_not_finish' ? next : null,
+    did_not_finish: next === 'did_not_finish'
+  };
+  try {
+    const res = await fetch('/api/ratings/season', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    if (currentRateItem()?.id !== item.id) return;
+    // The stub shows the show verdict, which may now come from the seasons.
+    if (data.summary) item.co_view = { ...(item.co_view || {}), verdicts: data.summary.verdicts, tier: data.summary.tier };
+    if (!state.rateAwaitingWhy && !state.rateSavedVerdict) {
+      // Seasons alone count as rating the show: offer Next instead of Skip.
+      state.rateAwaitingWhy = true;
+      renderRateCard();
+      document.getElementById(`season-${n}-${choice}`)?.focus();
+    } else {
+      updateRateStubMine(item);
+    }
+    setRateProgress(next ? `Saved: season ${n}, ${seasonOptions().find(o => o.id === next)?.label}` : `Cleared season ${n}`);
+  } catch (err) {
+    console.error('Season verdict failed:', err);
+    s.ratings[n] = before;
+    renderRateSeasons();
+    setRateProgress(`Season ${n} not saved (${err.message}). Try again.`, 'error');
+  }
+}
+
+function updateRateStubMine(item) {
+  const mine = (item.co_view?.verdicts || []).find(v => v.profile_id === state.rateProfileId);
+  const el = document.querySelector('#rateCard .rate-stub .stub-verdict');
+  if (!el || !mine?.verdict) return;
+  const how = mine.inferred ? (mine.inferred_source === 'seasons' ? ' (from seasons)' : ' (guessed)') : '';
+  el.classList.remove('pending');
+  el.innerHTML = `${escapeHtml(activeRateProfile().name)}: <b>${escapeHtml(rateVerdictLabel(mine.verdict) + how)}</b>`;
+}
+
+// Inside the Seasons rows: ←/→ move along a season, ↑/↓ between seasons,
+// 1-6 pick for the focused season (instead of the show-level 1-5).
+function onSeasonKey(e) {
+  const btn = e.target.closest?.('.season-opt');
+  if (!btn) return;
+  const row = btn.closest('.season-row');
+  const n = +row.dataset.season;
+  const buttons = [...row.querySelectorAll('.season-opt')];
+  const i = buttons.indexOf(btn);
+  const move = (target) => {
+    if (!target) return;
+    buttons.forEach(b => b.tabIndex = -1);
+    target.tabIndex = 0;
+    target.focus();
+  };
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    move(buttons[(i + (e.key === 'ArrowRight' ? 1 : buttons.length - 1)) % buttons.length]);
+  } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const other = document.querySelector(`.season-row[data-season="${n + (e.key === 'ArrowDown' ? 1 : -1)}"]`);
+    if (other) move(other.querySelectorAll('.season-opt')[i]);
+  } else if (/^[1-6]$/.test(e.key)) {
+    const opt = seasonOptions()[+e.key - 1];
+    if (opt) pickSeason(n, opt.id);
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
+function onRateDnfChange(checked) {
+  if (!state.rateDraft) return;
+  state.rateDraft.dnf = checked;
+  scheduleRateAutosave();
+  // Stopping partway is exactly when "which season lost me" is worth a tap.
+  if (checked && state.rateSeasons && !state.rateSeasons.open) {
+    state.rateSeasons.open = true;
+    renderRateSeasons();
+  }
 }
 
 function toggleRateSortMode() {
@@ -2472,6 +2662,11 @@ async function postRating(itemId, payload) {
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
     const summary = await res.json();
+    const shown = currentRateItem();
+    if (shown && shown.id === itemId && summary?.verdicts) {
+      shown.co_view = { ...(shown.co_view || {}), verdicts: summary.verdicts, tier: summary.tier };
+      updateRateStubMine(shown);
+    }
     flashRateFeedback(summary);
     return true;
   } catch (err) {
@@ -2570,7 +2765,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
   } else if (k === 'd') {
     const box = document.getElementById('rateDnf');
-    if (box && state.rateDraft) { box.checked = !box.checked; state.rateDraft.dnf = box.checked; scheduleRateAutosave(); }
+    if (box && state.rateDraft) { box.checked = !box.checked; onRateDnfChange(box.checked); }
   } else if (k === 'w') {
     const why = document.getElementById('rateWhy');
     if (why) why.open = !why.open;
