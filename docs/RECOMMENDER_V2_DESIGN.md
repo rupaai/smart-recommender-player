@@ -247,7 +247,7 @@ Fine-tuning on your own triplets is what teaches the model what *you* mean by "c
 | 1 | Search to rate + feedback logging tables | – | Small |
 | 2 | TMDB keywords + reviews + tagline backfill script; vibe documents | Phase 1 tables; you run the backfill | Small |
 | 3 | Vibe engine: embed films, ONNX query encoder, retrieval, facets (anchor method), clusters + names; hard-rule parser fixes | Phase 2 data; you run the embedding job on the Mac | Medium |
-| 4 | Questions pop-up (bank, entropy picker, live results, skip) | Phase 3 facets | Medium |
+| 4 | Questions pop-up (bank, entropy picker, live results, skip). **Built 2026-10-09** (handover §10.6) | Phase 3 facets | Medium |
 | 5 | Learning loops: cluster affinity, weight fitting, embedder fine-tune; rebuild TIGER semantic IDs from vibe vectors | Phase 4 logs accumulating | Medium |
 | 6 | (Later) Day-of-week auto-downloads using the same scorer + weekday features | Phase 5 | Medium |
 

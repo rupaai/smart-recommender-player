@@ -31,6 +31,7 @@ from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import verdicts as vd
 from services.vibe_index import VibeIndex
+from services.vibe_popup import PopupSession, SessionStore, should_auto_ask
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -155,6 +156,20 @@ class RecommendRequest(BaseModel):
     profile: str = "together"  # 'me' | 'partner' | 'together'
     exclude_ids: Optional[List[int]] = None
     session_id: Optional[int] = None  # feedback log: pass back for "Show more" pages
+
+
+class DiscoverStartRequest(RecommendRequest):
+    ask: bool = True  # False = "Just show me" / pop-up turned off in filters
+
+
+class DiscoverAnswerRequest(BaseModel):
+    session_id: int
+    question_id: str
+    option_id: str  # an option id, or "skip"
+
+
+class DiscoverFinishRequest(BaseModel):
+    session_id: int
 
 
 class FeedbackRequest(BaseModel):
@@ -334,40 +349,26 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     """
     # Respect top_n legacy parameter if passed by client, otherwise use page_size
     effective_page_size = req.top_n if req.top_n is not None else req.page_size
+    kwargs = _recommend_kwargs(req, effective_page_size)
 
-    # Resolve mood genres so both engines receive the same context signal
-    # (legacy already does this internally — byte-equivalent for it; the
-    # generative engine needs it passed in explicitly).
-    genres = req.genres
-    if genres is None:
-        genres = MOOD_MAPPINGS.get(req.mood_id, MOOD_MAPPINGS[8])["genres"]
-
-    kwargs = dict(
-        mood_id=req.mood_id,
-        exclude_watched=not req.include_watched,
-        era_preference=req.era,
-        duration_preference=req.duration,
-        page=req.page,
-        page_size=effective_page_size,
-        sub_mood=req.sub_mood,
-        query=req.query,
-        media_type=req.media_type,
-        genres_override=genres or None,
-        min_rating_override=req.min_rating,
-        variety=True,   # cold-start freshness: seeded 10-minute rotation
-        profile=req.profile,
-    )
-
-    # Feature-flag router: dispatches between the untouched legacy recommender
-    # and the parallel TIGER generative retrieval engine (with fallback safety).
-    # Per-item exclusion is applied after routing so it works for both engines.
-    results = await asyncio.to_thread(
-        route_recommend,
-        recommender_service,
-        generative_retriever,
-        generative_retriever.engine_mode,
-        **kwargs,
-    )
+    popup = popup_sessions.get(req.session_id)
+    if popup is not None:
+        # "Show more" after the questions pop-up: page through the same
+        # answered pool instead of starting over.
+        results = await asyncio.to_thread(
+            recommender_service.finalize, popup.ranked(), req.page, effective_page_size)
+        results["engine"] = "legacy"
+    else:
+        # Feature-flag router: dispatches between the untouched legacy recommender
+        # and the parallel TIGER generative retrieval engine (with fallback safety).
+        # Per-item exclusion is applied after routing so it works for both engines.
+        results = await asyncio.to_thread(
+            route_recommend,
+            recommender_service,
+            generative_retriever,
+            generative_retriever.engine_mode,
+            **kwargs,
+        )
 
     # exclude_ids: per-tap "not this one" — drop items the user dismissed so
     # the next request surfaces something else instead of the same list.
@@ -402,6 +403,120 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     except Exception as e:  # noqa: BLE001
         print(f"[Feedback] impression logging failed: {e}", flush=True)
     return results
+
+
+def _recommend_kwargs(req: RecommendRequest, page_size: int) -> Dict[str, Any]:
+    # Resolve mood genres so both engines receive the same context signal
+    # (legacy already does this internally — byte-equivalent for it; the
+    # generative engine needs it passed in explicitly).
+    genres = req.genres
+    if genres is None:
+        genres = MOOD_MAPPINGS.get(req.mood_id, MOOD_MAPPINGS[8])["genres"]
+    return dict(
+        mood_id=req.mood_id,
+        exclude_watched=not req.include_watched,
+        era_preference=req.era,
+        duration_preference=req.duration,
+        page=req.page,
+        page_size=page_size,
+        sub_mood=req.sub_mood,
+        query=req.query,
+        media_type=req.media_type,
+        genres_override=genres or None,
+        min_rating_override=req.min_rating,
+        variety=True,   # cold-start freshness: seeded 10-minute rotation
+        profile=req.profile,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Questions pop-up ("guess the vibe", design doc §3, services/vibe_popup.py)
+# ---------------------------------------------------------------------------
+popup_sessions = SessionStore()
+
+
+def _cluster_labels() -> Dict[int, str]:
+    try:
+        with db.get_connection() as conn:
+            return {r[0]: r[1] for r in conn.execute("SELECT id, label FROM vibe_clusters")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _pool_for(kwargs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    res = recommender_service.recommend(**{**kwargs, "page": 1}, return_pool=True)
+    return res.get("pool") or []
+
+
+def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    results = recommender_service.finalize(popup.ranked(), 1, page_size)
+    results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
+    if vibe is not None:
+        results["vibe"] = vibe
+    try:
+        db.update_discover_session(popup.id, **popup.log_fields())
+        if popup.done:
+            db.log_impressions(popup.id, results.get("items") or [], 1)
+    except Exception as e:  # noqa: BLE001
+        print(f"[Feedback] pop-up logging failed: {e}", flush=True)
+    return results
+
+
+@app.post("/api/discover/start")
+async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
+    """First results plus, when the request is thin, the first question."""
+    page_size = req.top_n if req.top_n is not None else req.page_size
+    kwargs = _recommend_kwargs(req, page_size)
+    res = await asyncio.to_thread(recommender_service.recommend, **{**kwargs, "page": 1}, return_pool=True)
+    pool = res.get("pool") or []
+    session_id = db.create_discover_session(
+        profile=req.profile, media_type=req.media_type, query_text=req.query,
+        request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
+        engine="legacy+popup",
+    )
+    popup = PopupSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
+                         recommender_service.vibe_index)
+    if req.ask and pool and should_auto_ask(req.query, pool):
+        await asyncio.to_thread(popup.next_question)
+    popup.done = popup.current is None
+    popup_sessions.put(popup)
+    return await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
+
+
+@app.post("/api/discover/answer")
+async def discover_answer(req: DiscoverAnswerRequest) -> Dict[str, Any]:
+    """Applies one answer (or "skip"), re-ranks, and picks the next question."""
+    popup = popup_sessions.get(req.session_id)
+    if popup is None:
+        raise HTTPException(status_code=404, detail="That question session has expired. Search again.")
+    try:
+        popup.answer(req.question_id, req.option_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    kwargs = popup.request["kwargs"]
+    new_profile = popup.belief.get("profile")
+    if new_profile and new_profile != kwargs.get("profile"):
+        # "Who's on the sofa?" changes whose taste counts: rebuild the pool.
+        kwargs = {**kwargs, "profile": new_profile}
+        popup.request["kwargs"] = kwargs
+        popup.set_pool(await asyncio.to_thread(_pool_for, kwargs))
+    if popup.should_stop():
+        popup.done = True
+    else:
+        await asyncio.to_thread(popup.next_question)
+        popup.done = popup.current is None
+    return await asyncio.to_thread(_popup_response, popup, kwargs.get("page_size") or 20)
+
+
+@app.post("/api/discover/finish")
+async def discover_finish(req: DiscoverFinishRequest) -> Dict[str, Any]:
+    """"Just show me": stop asking and keep the answers so far."""
+    popup = popup_sessions.get(req.session_id)
+    if popup is None:
+        raise HTTPException(status_code=404, detail="That question session has expired. Search again.")
+    popup.done = True
+    popup.current = None
+    return await asyncio.to_thread(_popup_response, popup, popup.request["kwargs"].get("page_size") or 20)
 
 
 def _log_outcome(media_item_id: Optional[int], outcome: str, rating: Optional[float] = None) -> None:

@@ -895,13 +895,24 @@ class DatabaseManager:
         with self.get_connection() as conn:
             return conn.execute("SELECT 1 FROM discover_sessions WHERE id = ?;", (session_id,)).fetchone() is not None
 
+    SESSION_LOG_FIELDS = ("answers_json", "asked_order", "rules_json", "belief_json", "engine")
+
+    def update_discover_session(self, session_id: int, **fields: Any) -> None:
+        """Stores the pop-up's answers / asked order / belief on the session."""
+        cols = [k for k in fields if k in self.SESSION_LOG_FIELDS]
+        if not cols:
+            return
+        with self.get_connection() as conn:
+            conn.execute(f"UPDATE discover_sessions SET {', '.join(f'{c} = ?' for c in cols)} WHERE id = ?;",
+                         (*[fields[c] for c in cols], session_id))
+
     def log_impressions(self, session_id: int, items: List[Dict[str, Any]], start_rank: int = 1) -> int:
         """Records the titles shown, in order. Re-showing a title in the same
         session keeps its first rank. Returns rows added."""
         import json as _json
         score_keys = ("recommendation_score", "score", "taste_bonus", "query_boost", "tier_boost",
                       "relevance_boost", "generative_rank", "co_view_tier", "combined_score",
-                      "vibe_similarity", "vibe_boost", "vibe_cluster_id")
+                      "vibe_similarity", "vibe_boost", "vibe_cluster_id", "popup_boost")
         added = 0
         with self.get_connection() as conn:
             for offset, it in enumerate(items):
