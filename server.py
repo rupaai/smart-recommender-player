@@ -6,6 +6,7 @@ Provides REST API endpoints, background downloads, cancellation, and serves the 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import socket
@@ -17,7 +18,7 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -29,6 +30,7 @@ from services.jellyfin_service import JellyfinService
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
+from services import paths as model_paths
 from services import verdicts as vd
 from services.taste_runtime import TasteRuntime
 from services.vibe_index import VibeIndex
@@ -267,6 +269,33 @@ async def serve_index(request: Request) -> Any:
         name="index.html",
         context={"local_ip": local_ip},
     )
+
+
+def _model_bundle_id() -> Optional[str]:
+    """bundle_id from <MODELS_DIR>/manifest.json, or None if absent or unreadable."""
+    try:
+        with open(os.path.join(model_paths.models_dir(), "manifest.json"), "r", encoding="utf-8") as f:
+            bundle_id = json.load(f).get("bundle_id")
+        return str(bundle_id) if bundle_id is not None else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+@app.get("/healthz")
+async def healthz() -> Any:
+    """Liveness/readiness: git SHA, model bundle, DB schema version. 503 if the DB cannot be read."""
+    try:
+        with db.get_connection() as conn:
+            conn.execute("SELECT 1").fetchone()
+        schema = db.get_schema_version()
+    except Exception as e:  # noqa: BLE001 - any DB failure means not ready
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)})
+    return {
+        "ok": True,
+        "git_sha": os.getenv("GIT_SHA", "dev"),
+        "model_bundle": _model_bundle_id(),
+        "db_schema": schema,
+    }
 
 
 @app.get("/api/status")
