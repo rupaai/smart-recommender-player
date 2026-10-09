@@ -44,6 +44,16 @@ def test_healthz(tmp):
     with open(os.path.join(models, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump({"bundle_id": "b1"}, f)
 
+    # server.py creates its media folders on import; keep them inside the tempdir
+    # (the default config.yaml points at /Users/..., which a CI runner can't create).
+    cfg_file = os.path.join(tmp, "config.yaml")
+    with open(cfg_file, "w", encoding="utf-8") as f:
+        json.dump({
+            "media_folders": [os.path.join(tmp, "Movies"), os.path.join(tmp, "Shows")],
+            "jellyfin_library": {"movie_dir": os.path.join(tmp, "Movies"), "tv_dir": os.path.join(tmp, "Shows")},
+            "torrent": {"download_dir": os.path.join(tmp, "downloads")},
+        }, f)  # JSON is valid YAML
+    os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = db_file
     os.environ["GIT_SHA"] = "abc1234"
     import server  # noqa: E402 - needs DATABASE_PATH set first
