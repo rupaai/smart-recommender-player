@@ -4,7 +4,8 @@
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
 - `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
-- Open PRs: none known as of 2026-10-09.
+- `watch-later` (draft PR "Watch later list", opened 2026-10-09): shared Watch later list in 7 tasks, one branch and one PR. Task 1 (schema v11 + database methods) done. Also renames the seeded profiles to Labiba / Gabriele.
+- Open PRs: "Watch later list" (draft).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -114,6 +115,9 @@ User review impressions fueling the taste profile:
 - `user_rating` (REAL: 1.0 to 10.0 star rating)
 - `notes` (TEXT: user review notes)
 
+### `watch_later` (schema v11)
+Shared list, one row per person per title: `id`, `media_item_id` (CASCADE), `profile_id` (CASCADE, from `profiles`), `added_at`, `done_at`, `done_reason` (`'rated'` | `'watched'`), `UNIQUE(media_item_id, profile_id)`, index on `(done_at, added_at)`. See §12.
+
 ### Key Database Methods
 - `get_user_taste_profile(min_rating=7.0)`: Computes frequency maps of preferred genres and keywords weighted by user star ratings.
 - `get_or_create_media_item(title, release_year, media_type)`: Ensures an arbitrary search term is registered with a canonical ID before downloading.
@@ -216,7 +220,7 @@ App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
 - **Vote-count quality funnel + variety + cold-start gate:** schema v2 (`media_items.vote_count`), `get_top_candidates` SQL funnel (shortlist 250), MMR final pool 50, opt-in `variety` (10-minute seeded rotation) wired through both engines, `history_threshold: 5` cold-start gate, engine badge in the UI, and `utils/backfill_vote_counts.py`. Details in Sections 3/B/F above.
 ### Schema v3: Multi-profile co-view ratings (added later on 2026-10-03)
 The recommender's core problem was **signal, not architecture**: 2 ratings in `watch_history`. Two people share one catalogue, so `watch_history` needed to know *who* rated.
-- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Me`, `Partner`).
+- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Labiba` = id 1, `Gabriele` = id 2; databases created before v11 had `Me` / `Partner`, which the v11 migration renames when they still carry those names).
 - **`watch_history.profile_id`** — who rated. Existing rows migrate to profile 1 with ratings preserved.
 - **`watch_history.status`** — `'seen'` | `'not_seen'`. "Never saw it" is a real answer stored with **no rating attached** (never a 0 or a 1); it's what makes the Tier B recommendation computable ("he saw it, you haven't" vs "neither has").
 - Indexes: `idx_watch_history_profile_item` (unique, upsert target), `idx_watch_history_item` (co-view grouping).
@@ -470,3 +474,19 @@ The light redesign with the "ticket" look is the UI (the "clean" look was remove
 - **Verified:** `tests/test_ranking.py` (19 checks, offline), `tests/test_searcher.py` still passes, `node --check static/app.js`, and the flow driven in a browser at 390px and 1100px against a mock API using the real ranking code (tab switch, linked `movie_id` 42 sent on download, `movie_id` 0 after searching something else, all three sorts, TV pack and episode cards). **Not yet checked against the real server or live indexers.** The scoring numbers were checked on made-up sample lists only; tune them from real results.
 - Sample ranking and rationale: `/mnt/project-files/download-sort/scoring-proposal.md`.
   
+
+## 12. WATCH LATER (in progress, branch `watch-later`)
+
+Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who added it" is `profile_id`. Built in 7 tasks on one branch / one PR. Task 7 (using the list in ranking) is optional and skipped for now.
+
+### Task 1: database (schema v11) - done
+- **Profile names:** the seeded profiles are now `Labiba` (id 1) and `Gabriele` (id 2). Fresh DBs get them from `_migrate_v3_profiles`. `_migrate_v11_watch_later` also renames existing rows, once, when the DB moves to v11: id 1 only if still named `Me`, id 2 only if still named `Partner`, skipped when the target name already exists (`profiles.name` is UNIQUE). Custom names are never touched. The UI keeps the internal keys `me` / `partner` / `together`; `isDefaultProfileName()` in `static/app.js` treats `Me` / `Partner` as "no name set".
+- **Schema:** table `watch_later` (see §3), created by `_migrate_v11_watch_later` (user_version gate, `CREATE TABLE IF NOT EXISTS`, additive).
+- **Methods (`DatabaseManager`):**
+  - `add_to_watch_later(media_item_id, profile_id)` returns the grouped entry; adding twice is a no-op; re-adding a done row reopens it and resets `added_at`; `ValueError` for unknown ids.
+  - `remove_from_watch_later(media_item_id, profile_id)` deletes that person's row only; returns bool.
+  - `get_watch_later(include_done=False, media_type=None, added_by=None)` returns one entry per title, newest add first: `media_item_id, title, release_year, media_type, poster_url, genres, runtime, rating, overview, file_path, added_by [{profile_id, name, added_at}], both, first_added_at, done_at, done_reason`. A title is done when all its rows are done.
+  - `get_watch_later_ids(ids)` returns `{media_item_id: [profile_id]}` for open rows in one query (for `on_list`).
+  - `mark_watch_later_done(media_item_id, reason)` and `undo_watch_later_done(media_item_id)` return rows changed.
+- **Test:** `uv run python tests/test_watch_later.py` (migration, names, list behaviour). `tests/test_ratings.py`, `test_pairs.py` and `test_tv_verdicts.py` were adjusted for the new default name and for `user_version >= 10`.
+- **Catalogue check:** a copy of `catalogue.db` (was v4) migrates to v11 with `media_items`, `watch_history` and `rating_details` row counts unchanged; profiles become Labiba / Gabriele.

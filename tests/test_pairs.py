@@ -116,7 +116,7 @@ def test_dials():
 def make_db(tmp):
     db = DatabaseManager(os.path.join(tmp, "p.db"))
     with db.get_connection() as conn:
-        conn.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Me');")
+        conn.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Labiba');")
         for i in range(1, 7):
             conn.execute(
                 "INSERT INTO media_items (id, media_type, tmdb_id, title, genres, rating, vote_count, facets) "

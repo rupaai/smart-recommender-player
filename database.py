@@ -134,6 +134,7 @@ class DatabaseManager:
             self._migrate_v8_verdicts(cursor)
             self._migrate_v9_pairs(cursor)
             self._migrate_v10_season_ratings(cursor)
+            self._migrate_v11_watch_later(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -242,10 +243,10 @@ class DatabaseManager:
             );
             """
         )
-        # Two seeded profiles so the rating UI is usable immediately; both are
-        # renameable via update_profile(). profile 1 owns the pre-v3 rows.
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Me');")
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (2, 'Partner');")
+        # Two seeded profiles (Labiba and Gabriele) so the rating UI is usable
+        # immediately; both are renameable via update_profile(). profile 1 owns the pre-v3 rows.
+        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Labiba');")
+        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (2, 'Gabriele');")
 
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(watch_history);").fetchall()}
         if "profile_id" not in columns:
@@ -640,6 +641,50 @@ class DatabaseManager:
         if version < 10:
             cursor.execute("PRAGMA user_version = 10;")
             print("[Database] Migration v10 applied: season_ratings, media_items.season_count added.")
+
+    def _migrate_v11_watch_later(self, cursor: sqlite3.Cursor) -> None:
+        """Shared "Watch later" list, plus real names for the two seeded profiles.
+
+          watch_later   one row per person per title: who added it (profile_id),
+                        when, and, once the title is watched or rated as seen,
+                        done_at / done_reason ('rated' | 'watched'). Done rows are
+                        kept so the list can offer "watched from your list" + undo.
+
+        Also renames the old seeded profiles: id 1 'Me' -> 'Labiba' and id 2
+        'Partner' -> 'Gabriele'. Only rows still carrying the old default name
+        are touched (a custom name is left alone), and a rename is skipped when
+        the target name is already taken (profiles.name is UNIQUE). Runs once,
+        when the DB moves to v11; fresh DBs are already seeded with the new
+        names by v3.
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS watch_later (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                profile_id     INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                added_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                done_at        TIMESTAMP,          -- set when watched / rated as seen
+                done_reason    TEXT,               -- 'rated' | 'watched'
+                UNIQUE(media_item_id, profile_id)
+            );
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_watch_later_done_added ON watch_later(done_at, added_at);"
+        )
+        if version < 11:
+            for pid, old, new in ((1, "Me", "Labiba"), (2, "Partner", "Gabriele")):
+                taken = cursor.execute("SELECT 1 FROM profiles WHERE name = ?;", (new,)).fetchone()
+                if not taken:
+                    cursor.execute(
+                        "UPDATE profiles SET name = ? WHERE id = ? AND name = ?;", (new, pid, old)
+                    )
+            cursor.execute("PRAGMA user_version = 11;")
+            print("[Database] Migration v11 applied: watch_later added, seeded profiles renamed.")
 
     def register_source_file(
         self,
@@ -1471,6 +1516,167 @@ class DatabaseManager:
                 # profiles.name is UNIQUE — a duplicate is a caller error, not a crash.
                 return False
             return True
+
+    # ------------------------------------------------------------------
+    # Watch later (shared list, one row per person per title)
+    # ------------------------------------------------------------------
+
+    def _watch_later_entry(self, cursor: sqlite3.Cursor, media_item_id: int) -> Optional[Dict[str, Any]]:
+        """Builds the grouped list entry for one title (all people), or None."""
+        entries = self._watch_later_entries(cursor, "wl.media_item_id = ?", (media_item_id,), include_done=True)
+        return entries[0] if entries else None
+
+    def _watch_later_entries(
+        self, cursor: sqlite3.Cursor, where: str, params: tuple, include_done: bool
+    ) -> List[Dict[str, Any]]:
+        """Groups watch_later rows (filtered by `where`) into one entry per title."""
+        rows = cursor.execute(
+            f"""
+            SELECT wl.media_item_id, wl.profile_id, wl.added_at, wl.done_at, wl.done_reason,
+                   p.name AS profile_name,
+                   m.title, m.release_year, m.media_type, m.poster_url, m.genres,
+                   m.runtime, m.rating, m.overview,
+                   (SELECT s.file_path FROM media_sources s
+                     WHERE s.media_item_id = m.id AND s.source_type = 'local'
+                     ORDER BY s.id LIMIT 1) AS file_path
+            FROM watch_later wl
+            JOIN media_items m ON m.id = wl.media_item_id
+            JOIN profiles p ON p.id = wl.profile_id
+            WHERE {where}
+            ORDER BY wl.added_at ASC, wl.id ASC;
+            """,
+            params,
+        ).fetchall()
+        grouped: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            e = grouped.get(r["media_item_id"])
+            if e is None:
+                e = grouped[r["media_item_id"]] = {
+                    "media_item_id": r["media_item_id"],
+                    "title": r["title"],
+                    "release_year": r["release_year"],
+                    "media_type": r["media_type"],
+                    "poster_url": r["poster_url"],
+                    "genres": r["genres"],
+                    "runtime": r["runtime"],
+                    "rating": r["rating"],
+                    "overview": r["overview"],
+                    "file_path": r["file_path"],
+                    "added_by": [],
+                    "both": False,
+                    "first_added_at": r["added_at"],
+                    "done_at": r["done_at"],
+                    "done_reason": r["done_reason"],
+                    "_all_done": True,
+                }
+            e["added_by"].append(
+                {"profile_id": r["profile_id"], "name": r["profile_name"], "added_at": r["added_at"]}
+            )
+            if r["added_at"] and (not e["first_added_at"] or r["added_at"] < e["first_added_at"]):
+                e["first_added_at"] = r["added_at"]
+            if r["done_at"] is None:
+                e["_all_done"] = False
+            elif e["done_at"] is None or r["done_at"] > e["done_at"]:
+                e["done_at"], e["done_reason"] = r["done_at"], r["done_reason"]
+        out = []
+        for e in grouped.values():
+            all_done = e.pop("_all_done")
+            if not all_done:
+                e["done_at"], e["done_reason"] = None, None
+            elif not include_done:
+                continue
+            e["both"] = len({a["profile_id"] for a in e["added_by"]}) >= 2
+            out.append(e)
+        # Newest add first (latest added_at among the people on the title).
+        out.sort(key=lambda e: (max(a["added_at"] or "" for a in e["added_by"]), e["media_item_id"]), reverse=True)
+        return out
+
+    def add_to_watch_later(self, media_item_id: int, profile_id: int) -> Dict[str, Any]:
+        """Adds a title to the shared list for one person (reopens it if already done)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if not cursor.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError(f"Unknown media_item_id {media_item_id}")
+            if not cursor.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
+                raise ValueError(f"Unknown profile_id {profile_id}")
+            cursor.execute(
+                """
+                INSERT INTO watch_later (media_item_id, profile_id) VALUES (?, ?)
+                ON CONFLICT(media_item_id, profile_id) DO UPDATE SET
+                    added_at = CURRENT_TIMESTAMP, done_at = NULL, done_reason = NULL
+                WHERE watch_later.done_at IS NOT NULL;
+                """,
+                (media_item_id, profile_id),
+            )
+            return self._watch_later_entry(cursor, media_item_id)
+
+    def remove_from_watch_later(self, media_item_id: int, profile_id: int) -> bool:
+        """Deletes one person's row for a title; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM watch_later WHERE media_item_id = ? AND profile_id = ?;",
+                (media_item_id, profile_id),
+            )
+            return cur.rowcount > 0
+
+    def get_watch_later(
+        self,
+        include_done: bool = False,
+        media_type: Optional[str] = None,
+        added_by: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Lists the shared list grouped by title, newest add first; done titles only if asked."""
+        clauses, params = ["1=1"], []
+        if media_type:
+            clauses.append("m.media_type = ?")
+            params.append(media_type)
+        if added_by is not None:
+            clauses.append(
+                "wl.media_item_id IN (SELECT media_item_id FROM watch_later WHERE profile_id = ?)"
+            )
+            params.append(added_by)
+        with self.get_connection() as conn:
+            return self._watch_later_entries(
+                conn.cursor(), " AND ".join(clauses), tuple(params), include_done
+            )
+
+    def get_watch_later_ids(self, media_item_ids: List[int]) -> Dict[int, List[int]]:
+        """Maps media_item_id -> profile_ids with an open (not done) row, in one query."""
+        ids = [int(i) for i in media_item_ids if i is not None]
+        if not ids:
+            return {}
+        out: Dict[int, List[int]] = {}
+        with self.get_connection() as conn:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                for r in conn.execute(
+                    f"SELECT media_item_id, profile_id FROM watch_later "
+                    f"WHERE done_at IS NULL AND media_item_id IN ({marks}) ORDER BY id;",
+                    chunk,
+                ):
+                    out.setdefault(r["media_item_id"], []).append(r["profile_id"])
+        return out
+
+    def mark_watch_later_done(self, media_item_id: int, reason: str) -> int:
+        """Marks every open row for a title done ('rated' | 'watched'); returns rows changed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE watch_later SET done_at = CURRENT_TIMESTAMP, done_reason = ? "
+                "WHERE media_item_id = ? AND done_at IS NULL;",
+                (reason, media_item_id),
+            )
+            return cur.rowcount
+
+    def undo_watch_later_done(self, media_item_id: int) -> int:
+        """Reopens a done title (clears done_at/done_reason); returns rows changed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "UPDATE watch_later SET done_at = NULL, done_reason = NULL "
+                "WHERE media_item_id = ? AND done_at IS NOT NULL;",
+                (media_item_id,),
+            )
+            return cur.rowcount
 
     def rate_item(
         self,

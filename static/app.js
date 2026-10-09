@@ -141,19 +141,27 @@ function showToast(message) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
-// Partner's real name on the "His picks" control once profiles are renamed.
+// Real names on the "whose taste" controls once profiles are loaded. Old
+// installs may still carry the former defaults ("Me" / "Partner") until the
+// v11 migration renames them, so those are treated like "no name set".
+const DEFAULT_PROFILE_NAMES = ['Me', 'Partner'];
+function isDefaultProfileName(name) {
+  return !name || DEFAULT_PROFILE_NAMES.includes(name);
+}
 async function loadPartnerName() {
   try {
     const res = await fetch('/api/profiles');
     const profiles = await res.json();
     if (!Array.isArray(profiles) || profiles.length < 2) return;
     state.rateProfiles = state.rateProfiles.length ? state.rateProfiles : profiles;
-    const partner = [...profiles].sort((a, b) => a.id - b.id)[1];
-    const btn = document.querySelector('[data-rec-profile="partner"]');
-    if (btn && partner && partner.name && partner.name !== 'Partner') {
-      btn.textContent = `${partner.name}'s picks`;
+    const [first, second] = [...profiles].sort((a, b) => a.id - b.id);
+    for (const [key, person] of [['me', first], ['partner', second]]) {
+      const btn = document.querySelector(`[data-rec-profile="${key}"]`);
+      if (btn && person && !isDefaultProfileName(person.name)) {
+        btn.textContent = `${person.name}'s picks`;
+      }
     }
-  } catch (_) { /* label stays "His picks" */ }
+  } catch (_) { /* labels stay "Just me" / "Their picks" */ }
 }
 
 // PWA Service Worker Registration
@@ -1960,7 +1968,7 @@ function renderRateCard() {
   // being filled in now; theirs, if they've answered, sits beside it.
   const other = (item.co_view?.verdicts || []).find(v => v.profile_id !== state.rateProfileId);
   const otherProfile = state.rateProfiles.find(p => p.id !== state.rateProfileId);
-  const otherName = other?.name || otherProfile?.name || 'Partner';
+  const otherName = other?.name || otherProfile?.name || 'Your partner';
   let otherVerdict = '<b>not yet</b>';
   let otherPending = true;
   if (other?.status === 'not_seen') { otherVerdict = "<b>hasn't seen it</b>"; otherPending = false; }
@@ -1975,7 +1983,7 @@ function renderRateCard() {
     const how = v.inferred ? (v.inferred_source === 'seasons' ? ' (from seasons)' : ' (guessed)') : '';
     return label ? `${label}${how}` : '';
   };
-  const asked = me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
+  const asked = me.name && !isDefaultProfileName(me.name) ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
   let myVerdict = '<b>not yet</b>';
   let question = asked;
   if (mine?.status === 'not_seen') myVerdict = "<b>hasn't seen it</b>";

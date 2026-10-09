@@ -638,7 +638,7 @@ async def get_history() -> Dict[str, Any]:
 
 @app.get("/api/profiles")
 async def get_profiles() -> List[Dict[str, Any]]:
-    """Lists the co-view rating profiles (you + partner) with live stats."""
+    """Lists the co-view rating profiles (Labiba and Gabriele) with live stats."""
     return db.get_profiles()
 
 
