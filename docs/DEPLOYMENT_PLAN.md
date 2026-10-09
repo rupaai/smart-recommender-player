@@ -118,11 +118,12 @@ Labiba's step-by-step, with the exact prompt for each milestone, is `docs/BUILD_
 
 Before starting M1, run the two quick checks in **Phase 0** below. They test the riskiest assumptions in under an hour, so a surprise doesn't land halfway through.
 
-## Phase 0: Prove the risky bits first (Sonnet, part of M1)
+## Phase 0: Prove the risky bits first (Sonnet, part of M1) — DONE 2026-10-09
 
 - **libtorrent in Docker:** build a throwaway `python:3.12-slim` image for `linux/amd64` that installs the pinned `libtorrent` and imports it. If no wheel exists, pick the version that has one and note it.
 - **ids survive a round trip:** copy `catalogue_full.db`, add one item through `tmdb_import` on the copy, and confirm the existing `models/tiger/semantic_ids.json` ids still all exist in `media_items`. This confirms section 3's rule before code depends on it.
 - Report both results in the M1 PR description. No code from this phase is kept.
+- **Results:** (1) `libtorrent==2.1.1` installs from a `manylinux_2_17_x86_64` wheel on `python:3.12-slim`/amd64 and imports (`2.1.1.0`); no pin change needed. (2) On a synthetic copy (the real `catalogue_full.db` and `models/` are not in the build sandbox), `tmdb_import` of a new title got id max+1 and every old id survived; re-importing was a no-op. Rule 3.1 holds: `upsert_catalogue_items` uses `ON CONFLICT DO NOTHING`, never replace. Re-run the check on the real DB during M2 cutover.
 
 ## 5. Rules for whoever builds this
 
@@ -140,24 +141,25 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 ## Phase 1: Make the app portable (no behaviour change)
 
-### [ ] P1.1 Dev tooling (Haiku)
+### [x] P1.1 Dev tooling (Haiku)
 - Add a `dev` dependency group in `pyproject.toml` with `pytest` and `ruff`; refresh `uv.lock`.
 - Add `[tool.ruff]` with a deliberately small rule set so nothing gets reformatted: `select = ["E9", "F63", "F7", "F82"]` (syntax errors and undefined names only).
 - Add a `Makefile` with `check: ruff check . && pytest -q`.
 - **Done when:** `uv sync --group dev && make check` passes locally.
+- **As built:** the existing tests are script-style (`uv run python tests/<file>.py`, they don't work under pytest), so `make check` runs ruff then each test file as a script. New tests follow the same style.
 
-### [ ] P1.2 Config and paths from environment (Sonnet)
+### [x] P1.2 Config and paths from environment (Sonnet)
 - `server.py` has `CONFIG_PATH = "config.yaml"`. Read `os.getenv("CONFIG_PATH", "config.yaml")` instead.
 - Add `MODELS_DIR` (default `models`) and use it everywhere `models/` is hard-coded: `services/recommender_service.py`, `services/generative_retriever.py` (respect existing `TIGER_MODEL_DIR` if set), `services/vibe_index.py`, `server.py`.
 - Add `deploy/config.server.yaml`: a copy of `config.yaml` with `media_folders: [/media/Movies, /media/Shows]`, `jellyfin_library.movie_dir: /media/Movies`, `tv_dir: /media/Shows`, `torrent.download_dir: /media/downloads`, `database_path: /data/catalogue_full.db`, and `enable_upnp: false`, `enable_natpmp: false`.
 - **Done when:** tests pass, and `CONFIG_PATH=deploy/config.server.yaml MODELS_DIR=/tmp/x uv run python -c "import server"` starts without touching `/Users/...` paths.
 
-### [ ] P1.3 Health and version endpoint (Haiku)
+### [x] P1.3 Health and version endpoint (Haiku)
 - Add `GET /healthz` returning `{"ok": true, "git_sha": $GIT_SHA, "model_bundle": <id from models/current/manifest.json or null>, "db_schema": <schema version>}`. It must also run `SELECT 1` on the DB and return 503 if that fails.
 - Add a test in `tests/test_healthz.py` using FastAPI's `TestClient`.
 - **Done when:** the test passes.
 
-### [ ] P1.4 Split serve and train dependencies (Haiku)
+### [x] P1.4 Split serve and train dependencies (Haiku)
 - Confirm nothing in `server.py`, `services/`, `database.py`, `scanner.py`, `enricher.py` imports torch, sentence-transformers or anthropic at module level. Training already uses `uv run --with torch`; keep it that way.
 - Move `anthropic` usage behind the existing `llm` extra (already done; just verify).
 - **Done when:** `uv sync --no-dev` (no extras) is enough to import `server`.

@@ -6,7 +6,8 @@ The user finds branches hard to track, so every chat updates this list when it o
 - `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
 - `watch-later`: merged into `main` as PR #12 (shared Watch later list, schema v11, §12).
 - `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
-- Open PRs: "Deployment plan".
+- `deploy/phase-1` (PR "Deploy phase 1: portable app", M1): `make check`, `CONFIG_PATH`/`MODELS_DIR`, `deploy/config.server.yaml`, `/healthz`. Then `deploy/phase-2` (Docker, builds on 1) and `deploy/phase-3` (CI, builds on 2); merge in that order. The "Deployment plan" PR (#13) is merged.
+- Open PRs: Deploy phase 1, 2, 3 (M1).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -537,13 +538,13 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 
 ---
 
-## 13. DEPLOYMENT: MAC TRAINS, OPTIPLEX SERVES (planned 2026-10-09, nothing built)
+## 13. DEPLOYMENT: MAC TRAINS, OPTIPLEX SERVES (planned 2026-10-09, M1 in progress)
 
-Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`; Labiba's step-by-step with milestone prompts: `docs/BUILD_GUIDE.md`. Build only when Labiba says go. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
+Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`; Labiba's step-by-step with milestone prompts: `docs/BUILD_GUIDE.md`. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
 
 - Server is **`mars`**, a Dell OptiPlex 3060 (i5-9500T, 16GB, one 238GB SSD with ~166GB free), not a Pi. Already has Ubuntu 24.04, Docker, Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183, SSH as `gabstevens`). It also runs Home Assistant and Matter containers that our stack must never touch (plan §4a). Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
 - Mac runs launchd jobs: backup pull, catalogue refresh + enrichment, training, eval gate, publish model bundle.
 - CI on GitHub; deploys only via the manual Deploy workflow on a self-hosted runner on the server (outbound, no Tailscale ACL changes), with health check and automatic rollback.
 - Key rule: the server alone assigns `media_items.id` and never deletes items; the Mac sends patches keyed by `(media_type, tmdb_id)` and trains on a fresh export so model ids match (plan §3).
 - Media on internal drive now, external HDD later (`MEDIA_ROOT`). Backups cover user data only.
-- Progress: no tasks done yet.
+- Progress (M1, 2026-10-09): Phase 0 done (results in plan). Phase 1 done: P1.1 `make check` (ruff + each `tests/test_*.py` run as a script, since the tests are script-style), P1.2 `CONFIG_PATH` env and `MODELS_DIR` env (`services/paths.py`; `TIGER_MODEL_DIR` still wins for tiger), `deploy/config.server.yaml`, P1.3 `GET /healthz` (503 if DB fails; `GIT_SHA` env, `<MODELS_DIR>/manifest.json` bundle id, `PRAGMA user_version`), P1.4 verified `uv sync --no-dev` imports `server` with no torch/transformers/anthropic.
