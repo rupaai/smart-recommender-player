@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import requests
 import yaml
 
+from services.disk_guard import check_download
 from services.jellyfin_service import JellyfinService
 from services.torrent_ranking import load_ranking_config, rank_results
 
@@ -867,6 +868,7 @@ class TorrentDownloader:
         )
         self.session = lt.session()
         self.db = db_manager
+        self.config = config
 
         # Jellyfin library roots: prefer explicit jellyfin_library config,
         # fall back to legacy media_folders[0] so existing setups keep working.
@@ -1310,6 +1312,7 @@ class TorrentDownloader:
             # reset to 0 every second and flush resume data on every tick
             # instead of every 30s.
             last_resume_flush = time.time()
+            disk_checked = False
 
             while True:
                 await asyncio.sleep(1)
@@ -1350,6 +1353,22 @@ class TorrentDownloader:
                     eta_seconds = int(remaining / status.download_rate)
                 else:
                     eta_seconds = None
+
+                # Disk guard: checked once, as soon as the size is known.
+                if has_meta and total_wanted > 0 and not disk_checked:
+                    disk_checked = True
+                    refusal = check_download(
+                        self.config, total_wanted, downloads_store, exclude_id=movie_id
+                    )
+                    if refusal:
+                        downloads_store[movie_id] = {
+                            "movie_id": movie_id,
+                            "status": "error",
+                            "error": refusal,
+                        }
+                        await self.cleanup(info_hash)
+                        self._purge_partial_files(movie_id)
+                        return
 
                 # Abort fake / shortcut torrents
                 if has_meta and total_wanted < min_threshold:

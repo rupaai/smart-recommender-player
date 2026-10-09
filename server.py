@@ -53,6 +53,11 @@ if os.path.exists(CONFIG_PATH):
         config = yaml.safe_load(f) or {}
 
 db_path = os.getenv("DATABASE_PATH") or config.get("database_path", "catalogue.db")
+# Folders the server layout expects (no-ops when they exist; the media folders are
+# created by TorrentDownloader below).
+os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+if os.getenv("MODELS_DIR"):
+    os.makedirs(os.path.join(os.path.dirname(os.path.abspath(os.environ["MODELS_DIR"])), "releases"), exist_ok=True)
 db = DatabaseManager(db_path)
 print(
     f"[DB] active catalogue: {os.path.abspath(db_path)} "

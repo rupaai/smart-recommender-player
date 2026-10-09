@@ -167,14 +167,15 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 ## Phase 2: Containers
 
-### [ ] P2.1 Dockerfile (Sonnet)
+### [x] P2.1 Dockerfile (Sonnet)
 - `Dockerfile` at repo root: `python:3.12-slim`, install uv, `uv sync --frozen --no-dev`, copy app code (not `training/`, `sample_library/`, `*.db`, `models/`), run as a non-root user, `EXPOSE 8000`, `HEALTHCHECK` hitting `/healthz`, `CMD ["uv","run","--no-sync","python","server.py"]`.
 - Bake `ARG GIT_SHA` into `ENV GIT_SHA`.
 - `.dockerignore` mirroring the above plus `.git`, `.venv`, `downloads`, `backups`, `reports`.
 - Check that `libtorrent` installs from wheels on `linux/amd64` for the pinned version. If not, pin to the newest version that has a wheel and say so in the PR.
 - **Done when:** `docker build --platform linux/amd64 .` succeeds and the image is under 600MB.
+- **As built:** 574MB (uncompressed, `docker image inspect`); libtorrent 2.1.1 from wheels, no pin change. `uv` is pinned to 0.11.32 in the Dockerfile. Code under `/app` is root-owned; the app writes only to mounted volumes.
 
-### [ ] P2.2 Compose file (Sonnet)
+### [x] P2.2 Compose file (Sonnet)
 - `deploy/compose.yaml` with three services, all `restart: unless-stopped`, all on one network:
   - `app`: image `ghcr.io/rupaai/smart-recommender-player:${IMAGE_TAG}`, env from `.env` plus `CONFIG_PATH=/config/config.server.yaml`, `MODELS_DIR=/models/current`, `DATABASE_PATH=/data/catalogue_full.db`, `JELLYFIN_URL=http://jellyfin:8096`, `PROWLARR_URL=http://prowlarr:9696`. Mounts `./data:/data`, `./models:/models`, `./config.server.yaml:/config/config.server.yaml:ro`, `${MEDIA_ROOT}:/media`. Ports `8000:8000` and `6881-6891:6881-6891` (tcp+udp).
   - `jellyfin`: `jellyfin/jellyfin:<pinned version>`, mounts `./jellyfin/config`, `./jellyfin/cache`, `${MEDIA_ROOT}:/media`, `devices: [/dev/dri:/dev/dri]`, port `8096:8096`.
@@ -184,6 +185,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 - Disk guard in the app: refuse to start a download when the size of `/media` plus the download would exceed `torrent.max_media_gb` (default 100) or free space would fall below `torrent.min_free_gb` (default 20), with a clear message in the Download tab. Count in-progress downloads at their full size.
 - Pin every third-party image to an exact version (no `latest`).
 - `deploy/.env.example` listing every variable with a comment and no values: `IMAGE_TAG`, `MEDIA_ROOT`, `TMDB_API_KEY`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, `PROWLARR_API_KEY`, `ADMIN_TOKEN`, `NTFY_TOPIC`.
+- **As built:** Jellyfin pinned `10.11.11` (last 10.x; newer 12.x exists, not adopted), Prowlarr `version-2.6.5.5623`. `user:` is `${APP_USER:-1000:1000}`; under rootless Docker (M2) container root is the unprivileged `deploy` user, so `bootstrap.sh` must set `APP_USER=0:0` there, otherwise the bind-mounted dirs owned by `deploy` aren't writable by uid 1000. Rootless also needs checking for Jellyfin's `/dev/dri` + `group_add` (M2). Disk guard is `services/disk_guard.py`, checked once the torrent's size is known (`torrent.max_media_gb` 100 in `deploy/config.server.yaml`; `0` = no cap in the Mac `config.yaml`).
 - **Done when:** on the Mac, with a local image tag and `MEDIA_ROOT=./sample_library`, `docker compose -f deploy/compose.yaml up` serves the app on :8000 and Jellyfin on :8096, and `/healthz` is ok.
 
 ## Phase 3: CI (checks on every change)
