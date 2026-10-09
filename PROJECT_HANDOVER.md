@@ -1,6 +1,13 @@
 # 🤖 MASTER AI HANDOVER & ARCHITECTURE SPECIFICATION
 > **Document Purpose:** Hand this document to any AI model or engineer to instantly onboard them on the codebase, architecture, conventions, and status so they can seamlessly pick up development without losing context.
 
+## Branches and open PRs (keep this current)
+The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
+- `main`: what runs. Recommender v2 Phases 1–3 merged 2026-10-08 (PR #2).
+- `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR #3 open (see §10.6).
+- `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
+- Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
+
 ---
 
 ## 1. PROJECT ESSENCE & HARDWARE BUDGET
@@ -358,7 +365,7 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 
 ## 10. RECOMMENDER V2 BUILD LOG (from 2026-10-08)
 
-Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The light redesign on `main` is the chosen UI (2026-10-08); ignore the `ui-polish-dark` branch. Of its two looks, the user keeps "ticket" (2026-10-08); "clean" is being removed in another thread, so build new UI in the ticket look.
+The light redesign with the "ticket" look is the UI (the "clean" look was removed 2026-10-08). Build new UI in the ticket look.
 
 ### 10.1 Mood tags (LLM) + TMDB vibe backfill
 - **Schema v6** (`_migrate_v6_vibe`): `media_items.tagline`, `tier2_checked` (0 / 1 / -1 = 404), `vibe_tags` (JSON), `vibe_tagged_at`, `facets` (JSON), `vibe_cluster_id`; new table `mood_tag_batches` (batch id, item ids, status, usage, real cost).
@@ -397,3 +404,13 @@ Work happens on branch `claude/project-thread-ig7qqo` (PR into `main`). The ligh
 - **Parser fixes:** origin phrases match whole words only (+ plural), so "indiana jones", "polished" and "animated" no longer trigger Indian / Polish / anime. Negation looks back up to 3 words and stops at but/and/or ("no really scary" excludes Horror; "not scary but funny" keeps Comedy). "not complicated" / "not simple" keep their exclusions instead of adding Horror/Thriller/Crime/War. Open bugs 7 and 8 above are fixed apart from the duplicate dict keys, Kollywood/Tollywood and Nigerian notes.
 - **Not done yet (later phases):** facet_fit (needs pop-up answers, Phase 4), cluster affinity and learned weights (Phase 5), MMR on vibe vectors.
 - **Verified:** `tests/test_vibe_index.py` (fake index, no model). The build script ran end to end in the sandbox on `catalogue.db` with a tiny random BERT standing in for bge-small (Hugging Face is blocked here), and the live server loaded the result, routed a typed request to the vibe ranking and logged the vibe parts. **Not yet run with the real model**: that's the Mac command above.
+
+### 10.6 Questions pop-up, "guess the vibe" (Phase 4)
+- **Bank as data:** `services/vibe_questions.py` encodes 31 of the 33 questions in docs/VIBE_QUESTION_BANK.md, each option's changes as an `fx` dict (dial targets, caps, tag/keyword/genre boosts and excludes, runtime/year/language/quality filters, profile). Not yet: C4 (country options from the pool) and H4 (recent-cluster fatigue), and C1's "usual place, new dish" / "tiny place" only partly work until cluster affinity exists (Phase 5). C1 "my usual" is always hidden because Discover's pool excludes seen films.
+- **Engine:** `services/vibe_popup.py`. `PopupSession` keeps the scored pool from `RecommenderService.recommend(..., return_pool=True)` and a belief (target + confidence per dial, filters, boosts). Score = pool score + 2.0 × Σ conf·(1 − |facet − target|) + tag/keyword boosts; hard filters drop films unless fewer than 30 would survive, then they become penalties. Facets come from `media_items.facets` (the Mac build) with the LLM tag dials as fallback; a film with no facet scores neutral on that dial.
+- **Picking questions:** eligible = not asked, no alt sibling asked, its "ask when" holds, not answered by the text (`implied_answers`: "friends" answers D1, a duration filter skips A4, etc.). Options with fewer than 10 fitting films are hidden (avoid options must remove ≥ 5 % of the top 50); a question needs 3 live options. Value = average over options of (1 − top-10 overlap), dropped below 0.3, × fun 1.2 for A3/D1/F1/F4/B1/E2, × 0.5 if the group was asked. Q1 must be about you; one avoid question by Q4; closers I1/I2 only after Q4. Stops at 6 answers, when the top 5 hasn't changed for two answers, or on a ≥ 1.5 score gap between #5 and #6.
+- **When it appears:** fewer than 6 meaningful words in the text, or the top 20 spread over ≥ 6 vibe clusters, and some question is worth asking. A "Ask me a few questions first" switch in More filters turns it off (localStorage `askQuestions`).
+- **API:** `POST /api/discover/start` (the recommend request + `ask`) → page 1 + `question`; `POST /api/discover/answer {session_id, question_id, option_id | "skip"}`; `POST /api/discover/finish {session_id}` ("Just show me"). D1 changing the profile rebuilds the pool. `/api/recommend` with a pop-up `session_id` pages through the answered pool. Sessions live in memory for 3 h; answers, asked order and belief are written to `discover_sessions`, and impressions (with `popup_boost`) are logged when the pop-up ends.
+- **UI:** `#vibeModal` bottom sheet (centred on desktop): "Question n of up to 6", the question, options with emoji + label + two example films from the pool, "Skip this one", "Just show me" (Esc and backdrop do the same). Results behind it re-render after every answer.
+- **Verified:** `tests/test_vibe_popup.py` (synthetic pool), the live server on a synthetic 250-film DB driven by Playwright at 390 px and 1280 px (six questions asked, results re-ranked, no JS errors). Not yet tried on the real catalogue with real facets: that needs the Mac build deployed.
+- **Learning (Phase 5):** `p(option)` is uniform and `usefulness(q)` is 1.0; both are meant to come from the logged sessions later.
