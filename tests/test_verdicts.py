@@ -56,7 +56,15 @@ def test_maths():
         check("unknown verdict rejected", True)
     check("chips: unknown dropped, dupes dropped", vd.clean_chips(["story", "nope", "story", "ending"]) == ["story", "ending"])
     vc = vd.clean_vibe_check({"leaves": "lifted", "darker": "sideways", "felt": ["cozy", "dreamy", "extra"], "bogus": "x"})
-    check("vibe check: valid kept, invalid dropped", vc == {"leaves": "lifted", "felt": ["cozy", "dreamy"]}, vc)
+    check("vibe check: valid kept, invalid dropped", vc == {"leaves": ["lifted"], "felt": ["cozy", "dreamy"]}, vc)
+    multi = vd.clean_vibe_check({"leaves": ["lifted", "warm", "wrecked", "haunted"], "darker": ["darker", "funnier", "nope"]})
+    check("first two questions take several answers, up to 3", multi == {"leaves": ["lifted", "warm", "wrecked"], "darker": ["darker", "funnier"]}, multi)
+    check("'Nothing much' on its own drops the others",
+          vd.clean_vibe_check({"leaves": ["lifted", "nothing"]}) == {"leaves": ["nothing"]})
+    check("an exclusive option picked first is dropped when another follows",
+          vd.clean_vibe_check({"darker": ["expected", "darker"]}) == {"darker": ["darker"]})
+    check("an answer saved as a single string still reads (old data)",
+          vd.clean_vibe_check({"darker": "lighter"}) == {"darker": ["lighter"]})
 
 
 def test_inference():
@@ -112,7 +120,7 @@ def test_rate_item(tmp):
     check("verdict stored, not inferred", d["verdict"] == "loved" and d["inferred"] is False, d)
     check("taste_score stored", d["taste_score"] == 0.6, d["taste_score"])
     check("chips stored; a chip can't be on both sides", d["worked"] == ["story", "ending"] and d["didnt"] == ["pace"], d)
-    check("vibe check stored", d["vibe_check"] == {"leaves": "lifted"}, d["vibe_check"])
+    check("vibe check stored", d["vibe_check"] == {"leaves": ["lifted"]}, d["vibe_check"])
     check("legacy rating written", [v for v in s["verdicts"] if v["profile_id"] == 1][0]["user_rating"] == 9.0, s["verdicts"])
     check("summary carries the verdict", s["verdicts"][0]["verdict"] == "loved", s["verdicts"])
 
@@ -127,6 +135,13 @@ def test_rate_item(tmp):
     check("chips are kept when the new verdict sends none", d["worked"] == ["story", "ending"], d["worked"])
     db.rate_item(1, 1, verdict="meh", worked=[])
     check("an empty list clears them", db.get_rating_details(1, 1)["worked"] == [])
+
+    db.rate_item(1, 1, verdict="meh", worked=["story"])
+    db.rate_item(1, 1, verdict="meh", worked=["story", "vibe"], vibe_check={"leaves": ["warm", "lifted"]})
+    with db.get_connection() as conn:
+        n_hist = conn.execute("SELECT COUNT(*) FROM rating_history WHERE media_item_id = 1").fetchone()[0]
+    check("saving only extras doesn't add history rows", n_hist == 1, n_hist)
+    check("extras were saved", db.get_rating_details(1, 1)["worked"] == ["story", "vibe"])
 
     db.rate_item(2, 1, verdict="liked", did_not_finish=True)
     d = db.get_rating_details(2, 1)
@@ -180,7 +195,11 @@ def test_questions_and_queue(tmp):
     check("'felt like' options are the film's own tags", [o["id"] for o in felt["options"]] == ["tense", "eerie", "gritty"], felt)
     bare = vd.pick_vibe_questions(None, None)
     check("works with no tags at all", len(bare["shown"]) == 3 and all(x["options"] for x in bare["shown"] + bare["more"]))
-    check("every question has 2-4 options", all(2 <= len(x["options"]) <= 4 for x in bare["shown"] + bare["more"]))
+    check("every question has 2-12 options", all(2 <= len(x["options"]) <= 12 for x in bare["shown"] + bare["more"]))
+    first_two = {x["id"]: x for x in bare["shown"] + bare["more"] if x["id"] in ("leaves", "darker")}
+    check("the first two questions have more options and allow several picks",
+          all(len(x["options"]) >= 8 and x["multi"] and x["max"] == 3 for x in first_two.values()), first_two)
+    check("the rendered question names its exclusive option", first_two["leaves"]["exclusive"] == "nothing" and first_two["darker"]["exclusive"] == "expected")
 
     db = make_db(tmp, "q.db", films=12)
     with db.get_connection() as conn:

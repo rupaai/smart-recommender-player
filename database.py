@@ -1427,18 +1427,31 @@ class DatabaseManager:
             if not cursor.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
                 raise ValueError(f"unknown profile_id: {profile_id}")
 
-            # Keep what is being replaced.
-            cursor.execute(
+            # Keep what is being replaced, unless this save only adds chips,
+            # answers or a note (the Rate card autosaves those while it is open).
+            prev = cursor.execute(
                 """
-                INSERT INTO rating_history (profile_id, media_item_id, user_rating, verdict, taste_score, inferred, notes)
-                SELECT wh.profile_id, wh.media_item_id, wh.user_rating, rd.verdict, rd.taste_score, rd.inferred, wh.notes
+                SELECT wh.user_rating, rd.verdict, rd.did_not_finish, rd.taste_score, rd.inferred, wh.notes
                 FROM watch_history wh
                 LEFT JOIN rating_details rd
                        ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
                 WHERE wh.profile_id = ? AND wh.media_item_id = ? AND wh.status = 'seen';
                 """,
                 (profile_id, media_item_id),
+            ).fetchone()
+            unchanged = (
+                prev is not None and verdict is not None and prev["verdict"] == verdict
+                and bool(prev["did_not_finish"]) == bool(did_not_finish) and not prev["inferred"]
             )
+            if prev is not None and not unchanged:
+                cursor.execute(
+                    """
+                    INSERT INTO rating_history (profile_id, media_item_id, user_rating, verdict, taste_score, inferred, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?);
+                    """,
+                    (profile_id, media_item_id, prev["user_rating"], prev["verdict"],
+                     prev["taste_score"], prev["inferred"], prev["notes"]),
+                )
 
             cursor.execute(
                 """
