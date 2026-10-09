@@ -40,6 +40,9 @@ services:
       - ${MEDIA_ROOT}:/media
     devices:
       - /dev/dri:/dev/dri       # Intel Quick Sync
+    # Plain Docker: the host's render group id. Rootless Docker: 0 (bootstrap.sh grants the
+    # deploy user access to the render node with an ACL instead, because a host gid that
+    # isn't mapped into the rootless user namespace can't be added to the container).
     group_add:
       - "${RENDER_GID}"
     ports:
@@ -51,8 +54,9 @@ services:
     image: lscr.io/linuxserver/prowlarr:version-2.6.5.5623
     restart: unless-stopped
     environment:
-      PUID: "1000"
-      PGID: "1000"
+      # 1000 on plain Docker; bootstrap.sh sets 0 under rootless Docker (see APP_USER above).
+      PUID: "${SVC_PUID:-1000}"
+      PGID: "${SVC_PGID:-1000}"
     volumes:
       - ./prowlarr/config:/config
     ports:
