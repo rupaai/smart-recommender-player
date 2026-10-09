@@ -27,7 +27,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
-DEFAULT_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "vibe")
+from services.paths import models_dir
+
+DEFAULT_ROOT = os.path.join(models_dir(), "vibe")
 
 # "something like Arrival but funnier": the words after "like" up to a clause
 # break. Phrases that start with a filler word are ordinary English ("I'd like

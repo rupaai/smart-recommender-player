@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple, Set
 
 import requests
 import numpy as np
+
+from services.paths import models_dir
 from database import DatabaseManager
 
 
@@ -359,9 +361,7 @@ TV_GENRE_ALIASES: Dict[str, List[str]] = {
 # ===========================================================================
 def get_vector_embeddings(text: str) -> Optional[List[float]]:
     """Encodes text using ONNX Runtime if available."""
-    model_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "models", "model.onnx"
-    )
+    model_path = os.path.join(models_dir(), "model.onnx")
     if not os.path.exists(model_path) or not text.strip():
         return None
 

@@ -38,6 +38,11 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def get_schema_version(self) -> int:
+        """Current schema version, as tracked by PRAGMA user_version (see the _migrate_* steps)."""
+        with self.get_connection() as conn:
+            return int(conn.execute("PRAGMA user_version;").fetchone()[0])
+
     def init_db(self) -> None:
         """Creates the normalized tables and indexes if they do not exist."""
         with self.get_connection() as conn:
