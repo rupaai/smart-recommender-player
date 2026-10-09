@@ -3,11 +3,8 @@
 
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
-- `main`: what runs. Recommender v2 Phases 1–3 merged 2026-10-08 (PR #2).
-- `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR #3 open (see §10.6).
-- `claude/project-thread-gl1in5`: taste model (facet_fit + cluster_affinity), PR open, **off by default** (see §10.8).
-- `claude/project-thread-niiyny`: "This or that" pair round on the Rate tab (§10.8), PR open.
-- `claude/project-thread-f1jvyn`: per-season TV verdicts (§10.9), PR open. Stacked on #7 (This or that); merge that first (#6 is already merged).
+- `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
+- Open PRs: none known as of 2026-10-09.
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
