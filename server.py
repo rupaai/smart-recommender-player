@@ -33,6 +33,7 @@ from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import paths as model_paths
 from services import verdicts as vd
 from services.taste_runtime import TasteRuntime
+from services.admin_api import build_router as build_admin_router
 from services.vibe_index import VibeIndex
 from services.vibe_popup import PopupSession, SessionStore, should_auto_ask
 from services.torrent_service import (
@@ -68,13 +69,14 @@ print(
 recommender_cfg = config.get("recommender", {})
 enable_tier2 = recommender_cfg.get("enable_tier2_profiling", True)
 taste_runtime = TasteRuntime(db, recommender_cfg.get("taste_model"))
+vibe_index = VibeIndex()
 recommender_service = RecommenderService(
     db_manager=db,
     api_key=api_key,
     enable_tier2=enable_tier2,
     shortlist_size=recommender_cfg.get("shortlist_size", 250),
     final_pool=recommender_cfg.get("final_pool", 50),
-    vibe_index=VibeIndex(),
+    vibe_index=vibe_index,
     taste_runtime=taste_runtime,
 )
 
@@ -82,6 +84,17 @@ recommender_service = RecommenderService(
 # Artifacts are loaded lazily from models/tiger/; if absent the router
 # automatically serves the existing recommender instead.
 generative_retriever = GenerativeRetriever(db_manager=db, config=config, taste_runtime=taste_runtime)
+
+def reload_models() -> None:
+    """Loads the model files again after the Mac publishes a new bundle (or one is rolled back)."""
+    tiger_ok = generative_retriever.reload()
+    vibe_ok = vibe_index.reload()
+    root = model_paths.models_dir()
+    if os.path.isdir(os.path.join(root, "tiger")) and not tiger_ok:
+        raise RuntimeError("the TIGER model did not load")
+    if os.path.isdir(os.path.join(root, "vibe")) and not vibe_ok:
+        raise RuntimeError(f"the vibe index did not load: {vibe_index.status().get('error')}")
+
 
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
@@ -100,6 +113,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Mac -> server admin routes (export, catalogue patch, model bundles); 404 unless ADMIN_TOKEN is set.
+app.include_router(build_admin_router(lambda: db.db_path, reload_models))
 
 
 @app.on_event("startup")

@@ -254,15 +254,16 @@ Security notes: keep the repo **private** (a self-hosted runner on a public repo
 
 ## Phase 6: Mac ↔ server data flow
 
-### [ ] P6.1 Admin API (Sonnet)
+### [x] P6.1 Admin API (Sonnet)
 All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 404 when `ADMIN_TOKEN` is unset.
 - `GET /admin/export`: streams a consistent copy of the DB made with SQLite's online backup API (`sqlite3.Connection.backup`) into a temp file. Include `X-Media-Items-Max-Id`.
 - `POST /admin/catalogue-patch`: body is JSONL, one row per item `{media_type, tmdb_id, fields:{...}}` plus optional `{table:"vibe_clusters", rows:[...]}` replace blocks. Inserts unknown `(media_type, tmdb_id)` rows (the server assigns ids), updates listed columns on known ones, never deletes. Runs in one transaction. Returns counts.
 - Allow-list the columns a patch may set (catalogue and enrichment columns of `media_items` only). Reject anything touching user tables.
 - Tests: patch inserts, updates, rejects user-table columns, and is idempotent when applied twice.
 - **Done when:** tests pass.
+- **As built:** `services/admin_api.py` (router, mounted in `server.py`), `services/catalogue_patch.py`. Also `GET /admin/model-status` (current bundle, releases, manifest; the Mac reads it to compare metrics). Patch details: an unknown item without a `title` is skipped (counted, not an error); one bad line rejects the whole patch before anything is written; a `vibe_clusters` block replaces that table. `updated_at` is bumped only when a value really changed, which is also what makes a second run report `updated: 0`.
 
-### [ ] P6.2 Model bundles (Sonnet)
+### [x] P6.2 Model bundles (Sonnet)
 - A bundle is `bundle-<UTC timestamp>.tar.gz` containing `tiger/…`, `vibe/…`, an optional `db_patch.jsonl` (columns training writes, e.g. `facets`, `vibe_cluster_id`, plus `vibe_clusters`), and `manifest.json`: `{bundle_id, created_at, git_sha, source_db_max_id, files:{path: sha256}, metrics:{...}, gate:"passed"}`.
 - `POST /admin/model-bundle` (multipart upload):
   1. Verify every sha256 and that `gate == "passed"`.
@@ -273,10 +274,12 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
   6. Keep the newest 3 releases.
 - `POST /admin/model-rollback`: repoint to the previous release and reload.
 - **Done when:** tests cover a good bundle, a bad checksum, a missing id, and rollback.
+- **As built:** `services/model_bundle.py`. The upload is the raw `.tar.gz` as the request body (not multipart: avoids a new dependency, and the file is streamed to disk either way). Also checked: no unlisted files, no path escapes, plain files only, size cap 2GB. The smoke test loads the TIGER model and asks it one question, and loads the vibe index and encodes one query. Release folders are ordered by age; a `models/current` that is a plain folder is kept as `releases/legacy-<time>` the first time a bundle is installed. If the reload fails, `current` goes back and the old model is reloaded (`BundleError` 500). `GenerativeRetriever.reload()` and `VibeIndex.reload()` were added. The DB patch is applied before the switch, so a failed reload leaves the (additive) patch in place; that is harmless because patches only fill columns.
 
-### [ ] P6.3 Mac client (Sonnet)
+### [x] P6.3 Mac client (Sonnet)
 - `ops/mac/cc.py` with subcommands that talk to `http://mars:8000` (the Tailscale name, `mars.tailc3278f.ts.net`; traffic is encrypted by Tailscale) (from `~/.couchcinema/env`): `export <out.db>`, `diff-catalogue <before.db> <after.db> <out.jsonl>` (rows keyed by `(media_type, tmdb_id)`, only allow-listed columns), `push-patch <file>`, `build-bundle <out.tar.gz>`, `push-bundle <file>`.
 - **Done when:** a round trip against a local `docker compose` server works: export, run a catalogue script on the copy, diff, push, and the new rows appear on the server.
+- **As built:** `ops/mac/cc.py`, standard library only. Settings come from `~/.couchcinema/env` (`CC_SERVER`, `ADMIN_TOKEN`; the server URL is a setting because the `mars` name does not resolve on every Mac, so the install step writes the LAN IP). Extra subcommands: `model-status`, `rollback-model`. `build-bundle` takes `--tiger`, `--vibe`, `--db-before/--db-after` (the DB patch is the diff between the snapshot before and after training), `--metrics`, `--gate`, and ships only the files the app reads. Tested against a real local server (`tests/test_mac_client.py`, a running uvicorn on a free port rather than docker compose, which the build sandbox lacks).
 
 ## Phase 7: Mac scheduled jobs
 
