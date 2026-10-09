@@ -133,6 +133,7 @@ class DatabaseManager:
             self._migrate_v7_feedback(cursor)
             self._migrate_v8_verdicts(cursor)
             self._migrate_v9_pairs(cursor)
+            self._migrate_v10_season_ratings(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -591,6 +592,54 @@ class DatabaseManager:
                 cursor.execute(f"ALTER TABLE rating_details ADD COLUMN {col} REAL;")
         cursor.execute("PRAGMA user_version = 9;")
         print("[Database] Migration v9 applied: rating_pairs added, rating_details.pair_score / pair_nudge added.")
+
+    def _migrate_v10_season_ratings(self, cursor: sqlite3.Cursor) -> None:
+        """Optional per-season TV verdicts on top of the show-level verdict.
+
+          media_items.season_count          seasons the show has (TMDB
+                                            number_of_seasons, else the highest
+                                            season_number in media_sources);
+                                            filled by utils/backfill_season_counts.py
+          media_items.season_count_checked  0 = not looked up on TMDB, 1 = done, -1 = 404
+          season_ratings                    one row per profile, show and season:
+                                            verdict (NULL when only "didn't
+                                            finish"), did_not_finish, taste_score
+          rating_details.inferred_source    why a verdict is inferred: 'rating'
+                                            (an old 1-10 number) or 'seasons'
+          rating_details.dropped_at_season  first season marked didn't finish
+
+        Gated on what exists rather than only the version number (v9 is the
+        "This or that" pairs). Additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        item_cols = {r[1] for r in cursor.execute("PRAGMA table_info(media_items);").fetchall()}
+        for name, decl in (("season_count", "INTEGER"), ("season_count_checked", "INTEGER DEFAULT 0")):
+            if name not in item_cols:
+                cursor.execute(f"ALTER TABLE media_items ADD COLUMN {name} {decl};")
+        rd_cols = {r[1] for r in cursor.execute("PRAGMA table_info(rating_details);").fetchall()}
+        if "inferred_source" not in rd_cols:
+            cursor.execute("ALTER TABLE rating_details ADD COLUMN inferred_source TEXT;")
+            cursor.execute("UPDATE rating_details SET inferred_source = 'rating' WHERE inferred = 1;")
+        if "dropped_at_season" not in rd_cols:
+            cursor.execute("ALTER TABLE rating_details ADD COLUMN dropped_at_season INTEGER;")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS season_ratings (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_id      INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                media_item_id   INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                season_number   INTEGER NOT NULL,
+                verdict         TEXT,              -- NULL when only "didn't finish"
+                did_not_finish  INTEGER NOT NULL DEFAULT 0,
+                taste_score     REAL NOT NULL,     -- -1..+1
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(profile_id, media_item_id, season_number)
+            );
+            """
+        )
+        if version < 10:
+            cursor.execute("PRAGMA user_version = 10;")
+            print("[Database] Migration v10 applied: season_ratings, media_items.season_count added.")
 
     def register_source_file(
         self,
@@ -1535,6 +1584,7 @@ class DatabaseManager:
                         vibe_check     = COALESCE(excluded.vibe_check, rating_details.vibe_check),
                         taste_score    = excluded.taste_score,
                         inferred       = 0,
+                        inferred_source = NULL,
                         updated_at     = CURRENT_TIMESTAMP;
                     """,
                     (
@@ -1544,6 +1594,9 @@ class DatabaseManager:
                         score,
                     ),
                 )
+                # A confirmed show verdict always wins; this only records where
+                # the person stopped, if they rated seasons too.
+                self._sync_show_from_seasons(cursor, profile_id, media_item_id)
             else:
                 cursor.execute(
                     "DELETE FROM rating_details WHERE profile_id = ? AND media_item_id = ?;",
@@ -1555,6 +1608,255 @@ class DatabaseManager:
         # uncommitted INSERT — calling it inside the `with` block returns the
         # pre-write state (the new verdict silently missing).
         return self.get_rating_summary(media_item_id)
+
+
+    # --- Per-season TV verdicts (schema v10) -----------------------------------
+
+    def get_season_count(self, media_item_id: int) -> Optional[int]:
+        """Seasons a show has: TMDB's number when backfilled, else the highest
+        season_number among its files. None when neither is known."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT mi.media_type, mi.season_count,
+                       (SELECT MAX(season_number) FROM media_sources WHERE media_item_id = mi.id) AS from_files
+                FROM media_items mi WHERE mi.id = ?;
+                """,
+                (media_item_id,),
+            ).fetchone()
+        if not row or row["media_type"] != "tv":
+            return None
+        for value in (row["season_count"], row["from_files"]):
+            if value and int(value) > 0:
+                return int(value)
+        return None
+
+    def get_season_ratings(self, media_item_id: int, profile_id: int) -> List[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT season_number, verdict, did_not_finish, taste_score, updated_at FROM season_ratings "
+                "WHERE profile_id = ? AND media_item_id = ? ORDER BY season_number;",
+                (profile_id, media_item_id),
+            ).fetchall()
+        out = [dict(r) for r in rows]
+        for r in out:
+            r["did_not_finish"] = bool(r["did_not_finish"])
+        return out
+
+    def get_season_details(self, media_item_id: int, profile_id: int) -> Dict[str, Any]:
+        """What the Rate card's Seasons row needs: how many seasons to show, this
+        person's season verdicts and where they stopped."""
+        from services import verdicts as vd
+
+        ratings = self.get_season_ratings(media_item_id, profile_id)
+        count = self.get_season_count(media_item_id)
+        rated_max = max((r["season_number"] for r in ratings), default=0)
+        if rated_max and (count is None or rated_max > count):
+            count = rated_max
+        return {"count": count, "ratings": ratings, "dropped_at_season": vd.dropped_at_season(ratings)}
+
+    def rate_season(
+        self,
+        media_item_id: int,
+        profile_id: int,
+        season_number: int,
+        verdict: Optional[str] = None,
+        did_not_finish: bool = False,
+    ) -> Dict[str, Any]:
+        """Upserts one season verdict; no verdict and no didn't-finish clears it.
+
+        The show-level row is then brought in line: a confirmed show verdict is
+        never touched (only `dropped_at_season` is updated); otherwise the show
+        gets a verdict derived from its seasons, marked inferred with
+        inferred_source = 'seasons', exactly where the readers already look.
+        """
+        from services import verdicts as vd
+
+        verdict = vd.validate_verdict(verdict)
+        season_number = int(season_number)
+        if season_number < 1:
+            raise ValueError(f"invalid season_number: {season_number}")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            item = cursor.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not item:
+                raise ValueError(f"unknown media_item_id: {media_item_id}")
+            if item["media_type"] != "tv":
+                raise ValueError("season verdicts are for TV shows only")
+            if not cursor.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
+                raise ValueError(f"unknown profile_id: {profile_id}")
+
+            score = vd.season_score(verdict, bool(did_not_finish))
+            if score is None:
+                cursor.execute(
+                    "DELETE FROM season_ratings WHERE profile_id = ? AND media_item_id = ? AND season_number = ?;",
+                    (profile_id, media_item_id, season_number),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO season_ratings
+                        (profile_id, media_item_id, season_number, verdict, did_not_finish, taste_score, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(profile_id, media_item_id, season_number) DO UPDATE SET
+                        verdict        = excluded.verdict,
+                        did_not_finish = excluded.did_not_finish,
+                        taste_score    = excluded.taste_score,
+                        updated_at     = CURRENT_TIMESTAMP;
+                    """,
+                    (profile_id, media_item_id, season_number, verdict, 1 if did_not_finish else 0, score),
+                )
+            self._sync_show_from_seasons(cursor, profile_id, media_item_id)
+
+        return {
+            "media_item_id": media_item_id,
+            "profile_id": profile_id,
+            "seasons": self.get_season_details(media_item_id, profile_id),
+            "details": self.get_rating_details(media_item_id, profile_id),
+            "summary": self.get_rating_summary(media_item_id),
+        }
+
+    def _sync_show_from_seasons(self, cursor: sqlite3.Cursor, profile_id: int, media_item_id: int) -> None:
+        """Keeps the show-level row consistent with its season verdicts."""
+        from services import verdicts as vd
+
+        seasons = [
+            dict(r) for r in cursor.execute(
+                "SELECT season_number, verdict, did_not_finish, taste_score FROM season_ratings "
+                "WHERE profile_id = ? AND media_item_id = ?;",
+                (profile_id, media_item_id),
+            ).fetchall()
+        ]
+        derived = vd.derive_show_score(seasons)
+        dropped = vd.dropped_at_season(seasons)
+        current = cursor.execute(
+            "SELECT inferred, inferred_source FROM rating_details WHERE profile_id = ? AND media_item_id = ?;",
+            (profile_id, media_item_id),
+        ).fetchone()
+
+        if current is not None and not current["inferred"]:
+            # A confirmed show verdict always wins.
+            cursor.execute(
+                "UPDATE rating_details SET dropped_at_season = ? WHERE profile_id = ? AND media_item_id = ?;",
+                (dropped, profile_id, media_item_id),
+            )
+            return
+
+        if derived is None:
+            # No season verdicts left. Remove a show verdict that came only
+            # from them; the earlier state is in rating_history.
+            if current is not None and current["inferred_source"] == "seasons":
+                self._copy_to_rating_history(cursor, profile_id, media_item_id)
+                cursor.execute(
+                    "DELETE FROM rating_details WHERE profile_id = ? AND media_item_id = ?;",
+                    (profile_id, media_item_id),
+                )
+                cursor.execute(
+                    "DELETE FROM watch_history WHERE profile_id = ? AND media_item_id = ? AND status = 'seen';",
+                    (profile_id, media_item_id),
+                )
+            return
+
+        # Seasons replace a verdict guessed from an old 1-10 number: they are
+        # what the person actually said. The old state goes to rating_history.
+        if current is not None and current["inferred_source"] != "seasons":
+            self._copy_to_rating_history(cursor, profile_id, media_item_id)
+        legacy = vd.legacy_rating(derived["verdict"])
+        cursor.execute(
+            """
+            INSERT INTO watch_history (media_item_id, profile_id, user_rating, status)
+            VALUES (?, ?, ?, 'seen')
+            ON CONFLICT(profile_id, media_item_id) DO UPDATE SET
+                user_rating = excluded.user_rating,
+                status      = 'seen';
+            """,
+            (media_item_id, profile_id, legacy),
+        )
+        cursor.execute(
+            """
+            INSERT INTO rating_details
+                (profile_id, media_item_id, verdict, did_not_finish, taste_score, inferred,
+                 inferred_source, dropped_at_season, updated_at)
+            VALUES (?, ?, ?, 0, ?, 1, 'seasons', ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(profile_id, media_item_id) DO UPDATE SET
+                verdict           = excluded.verdict,
+                did_not_finish    = 0,
+                taste_score       = excluded.taste_score,
+                inferred          = 1,
+                inferred_source   = 'seasons',
+                dropped_at_season = excluded.dropped_at_season,
+                updated_at        = CURRENT_TIMESTAMP;
+            """,
+            (profile_id, media_item_id, derived["verdict"], derived["taste_score"], dropped),
+        )
+
+    def _copy_to_rating_history(self, cursor: sqlite3.Cursor, profile_id: int, media_item_id: int) -> None:
+        cursor.execute(
+            """
+            INSERT INTO rating_history (profile_id, media_item_id, user_rating, verdict, taste_score, inferred, notes)
+            SELECT wh.profile_id, wh.media_item_id, wh.user_rating, rd.verdict, rd.taste_score, rd.inferred, wh.notes
+            FROM watch_history wh
+            LEFT JOIN rating_details rd
+                   ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+            WHERE wh.profile_id = ? AND wh.media_item_id = ? AND wh.status = 'seen';
+            """,
+            (profile_id, media_item_id),
+        )
+
+    def get_dropped_shows(self, profile_id: int) -> List[Dict[str, Any]]:
+        """Shows this person stopped partway: the season they dropped and the
+        show's score. Recorded for later use in ranking; nothing reads it yet."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.id AS media_item_id, mi.title, MIN(sr.season_number) AS dropped_at_season,
+                       rd.taste_score, rd.inferred
+                FROM season_ratings sr
+                JOIN media_items mi ON mi.id = sr.media_item_id
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = sr.profile_id AND rd.media_item_id = sr.media_item_id
+                WHERE sr.profile_id = ? AND sr.did_not_finish = 1
+                GROUP BY mi.id
+                ORDER BY mi.title;
+                """,
+                (profile_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_tv_missing_season_count(self) -> List[Dict[str, Any]]:
+        """TV shows not yet looked up on TMDB for their season count, most-voted first."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, tmdb_id, title FROM media_items "
+                "WHERE media_type = 'tv' AND tmdb_id IS NOT NULL "
+                "AND COALESCE(season_count_checked, 0) = 0 "
+                "ORDER BY COALESCE(vote_count, 0) DESC;"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_season_count(self, media_item_id: int, count: Optional[int], checked: int = 1) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE media_items SET season_count = COALESCE(?, season_count), season_count_checked = ? "
+                "WHERE id = ?;",
+                (count if count and count > 0 else None, checked, media_item_id),
+            )
+
+    def fill_season_counts_from_files(self) -> int:
+        """Shows with no season count yet get the highest season_number among
+        their files. Doesn't mark them checked, so TMDB still gets asked."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                """
+                UPDATE media_items SET season_count = (
+                    SELECT MAX(season_number) FROM media_sources WHERE media_item_id = media_items.id
+                )
+                WHERE media_type = 'tv' AND season_count IS NULL
+                  AND EXISTS (SELECT 1 FROM media_sources
+                              WHERE media_item_id = media_items.id AND season_number > 0);
+                """
+            )
+            return cur.rowcount
 
     def get_rating_details(self, media_item_id: int, profile_id: int) -> Optional[Dict[str, Any]]:
         """One person's verdict, chips and vibe-check answers for a title, or None."""
@@ -1716,7 +2018,8 @@ class DatabaseManager:
                 FROM rating_details rd
                 JOIN watch_history wh ON wh.profile_id = rd.profile_id AND wh.media_item_id = rd.media_item_id
                 JOIN media_items mi ON mi.id = rd.media_item_id
-                WHERE rd.profile_id = ? AND rd.inferred = 1 AND wh.status = 'seen' AND mi.media_type = ?
+                WHERE rd.profile_id = ? AND rd.inferred = 1 AND COALESCE(rd.inferred_source, 'rating') = 'rating'
+                  AND wh.status = 'seen' AND mi.media_type = ?
                 ORDER BY CASE CAST(wh.user_rating AS INTEGER) WHEN 7 THEN 0 WHEN 8 THEN 1 ELSE 2 END,
                          mi.title
                 LIMIT ?;
@@ -1740,7 +2043,8 @@ class DatabaseManager:
                 for r in cursor.execute(
                     """
                     SELECT wh.profile_id, p.name, wh.user_rating, wh.status, wh.notes, wh.watched_at,
-                           rd.verdict, rd.taste_score, rd.inferred, rd.did_not_finish
+                           rd.verdict, rd.taste_score, rd.inferred, rd.did_not_finish,
+                           rd.inferred_source, rd.dropped_at_season
                     FROM watch_history wh
                     JOIN profiles p ON p.id = wh.profile_id
                     LEFT JOIN rating_details rd
