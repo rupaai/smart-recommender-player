@@ -1,4 +1,6 @@
-FROM python:3.12-slim
+# CI passes a mirror of the same image (Docker Hub rate-limits shared runners).
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
 
 # Pinned so builds are repeatable; Dependabot bumps it.
 RUN pip install --no-cache-dir uv==0.11.32

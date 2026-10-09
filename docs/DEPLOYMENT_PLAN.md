@@ -190,13 +190,14 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 ## Phase 3: CI (checks on every change)
 
-### [ ] P3.1 CI workflow (Sonnet)
+### [x] P3.1 CI workflow (Sonnet)
 - `.github/workflows/ci.yml`, on `pull_request` and `push` to `main`:
   - job `check` (`ubuntu-latest`): checkout, `astral-sh/setup-uv`, `uv sync --frozen --group dev`, `make check`.
   - job `image` (needs `check`): `docker/setup-buildx-action`, `docker/build-push-action` for `linux/amd64` with `GIT_SHA` build arg and GHA layer cache. On PRs build only; on `main` push to `ghcr.io/rupaai/smart-recommender-player:sha-<full sha>` and `:main`, using `GITHUB_TOKEN` with `packages: write`.
 - **Done when:** a PR shows both jobs green, and after merge the image appears under the repo's Packages.
+- **As built:** `check` also runs on a clean clone (verified locally). The workflow only appears on PRs opened after it lands; PRs #14 and #16 have no CI run because the workflow is added in Phase 3. Dependabot uses the `uv` ecosystem for Python.
 
-### [ ] P3.2 Dependency updates (Haiku)
+### [x] P3.2 Dependency updates (Haiku)
 - `.github/dependabot.yml` for `pip`/uv (`/`), `docker` (`/` and `/deploy`), and `github-actions`, weekly, grouped into one PR per ecosystem.
 - **Done when:** the file validates (Dependabot shows it under Insights → Dependency graph).
 
