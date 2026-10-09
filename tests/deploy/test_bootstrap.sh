@@ -63,11 +63,20 @@ rm -rf "$T"
 
 echo "== bootstrap: missing prerequisite stops before changing anything"
 new_sandbox
+# The real machine running this test may have newuidmap, so hide it: a PATH of the stubs
+# plus a copy of every real command except that one.
+mkdir "$T/realbin"
+for f in /usr/bin/* /bin/* /usr/local/bin/*; do
+  [ "$(basename "$f")" = newuidmap ] || ln -sf "$f" "$T/realbin/$(basename "$f")" 2>/dev/null
+done
 rm "$STUBS/newuidmap"
+SAVED_PATH="$PATH"
+PATH="$STUBS:$T/realbin"
 export TMDB_API_KEY=k MEDIA_ROOT="$T/media"
 "$BOOT" </dev/null >"$T/run4.log" 2>&1 && fail "should stop" || pass "stopped"
 assert_grep 'apt-get install -y uidmap' "$T/run4.log" "prints the exact apt command"
 assert_calls '^useradd ' 0 "nothing was changed"
+PATH="$SAVED_PATH"
 rm -rf "$T"
 
 echo "== bootstrap: --set"
