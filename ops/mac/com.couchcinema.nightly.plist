@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE - not meant to be loaded as-is.
+
+  The placeholders __REPO__ and __HOME__ are literal text. ops/mac/install.sh
+  replaces them with real absolute paths before copying this file into
+  ~/Library/LaunchAgents/. Loading this file unmodified will fail.
+
+  Schedule: runs every day at 03:30 local time. launchd runs a missed
+  StartCalendarInterval job once the Mac wakes, so a job that was due while
+  the Mac was asleep or powered off runs at the next wake/boot instead of
+  being skipped.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.couchcinema.nightly</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>__REPO__/ops/mac/nightly.sh</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>__REPO__</string>
+
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<false/>
+
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/CouchCinema/launchd.log</string>
+
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/CouchCinema/launchd.log</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<!-- uv lives in ~/.local/bin or Homebrew -->
+		<key>PATH</key>
+		<string>__HOME__/.local/bin:__HOME__/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+
+	<key>ProcessType</key>
+	<string>Background</string>
+
+	<key>LowPriorityIO</key>
+	<true/>
+
+	<key>Nice</key>
+	<integer>5</integer>
+</dict>
+</plist>

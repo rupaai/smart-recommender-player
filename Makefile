@@ -17,9 +17,10 @@ test:
 
 # Server scripts (deploy/, tests/deploy/). CI's runner has shellcheck; locally it is optional.
 shellcheck:
-	@if command -v shellcheck >/dev/null 2>&1; then find deploy tests/deploy -name '*.sh' | xargs shellcheck -x -P SCRIPTDIR -e SC2015; else echo "shellcheck not installed; skipped (CI runs it)"; fi
+	@if command -v shellcheck >/dev/null 2>&1; then find deploy tests/deploy ops/mac tests/mac -name '*.sh' | xargs shellcheck -x -P SCRIPTDIR -e SC2015; else echo "shellcheck not installed; skipped (CI runs it)"; fi
 
 # The deploy scripts run against stand-ins for useradd, docker, systemd and friends, in a
 # temp dir; nothing touches the machine (tests/deploy/harness.sh).
 test-deploy:
+	@set -e; for f in tests/mac/test_*.sh; do echo "== $$f"; bash $$f; done
 	@set -e; for f in tests/deploy/test_*.sh; do echo "== $$f"; bash $$f; done

@@ -113,3 +113,17 @@ torrent:
     enable_lsd: true           # Enable local service discovery
     enable_natpmp: true        # Enable NAT-PMP port mapping
     enable_upnp: true          # Enable UPnP port mapping
+
+# Nightly job on the Mac (ops/mac/nightly.sh). Not read by the server.
+nightly:
+  # Quality floor for NEW catalogue items found by the weekly refresh: anything below it is
+  # never added, so garbage titles stay out. Items already in the catalogue are never removed.
+  min_vote_count: 200
+  min_rating: 6.0
+  # A new model is published only if no metric is more than this many percent worse than the
+  # one the server runs now (tiger_hit_rate, taste_spearman, taste_auc).
+  gate_max_drop_pct: 1.0
+  # Number of titles to mood-tag per weekly refresh with the Anthropic API. 0 = off. Each tag
+  # costs API credit, so this ships off.
+  mood_tag_limit: 0
+  keep_backup_days: 30

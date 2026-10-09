@@ -5,7 +5,7 @@ Standard library only, so it runs with plain `python3`. Reads ~/.couchcinema/env
 (KEY=value lines): CC_SERVER (e.g. http://192.168.1.183:8000) and ADMIN_TOKEN.
 
     cc.py export <out.db>                         download a consistent copy of the server's database
-    cc.py diff-catalogue <before.db> <after.db> <out.jsonl>
+    cc.py diff-catalogue <before.db> <after.db> <out.jsonl> [--min-votes N --min-rating R]
                                                   what changed between two copies, keyed by (media_type, tmdb_id)
     cc.py push-patch <file.jsonl>                 apply a patch on the server
     cc.py build-bundle <out.tar.gz> --metrics <metrics.json> [--tiger DIR] [--vibe DIR]
@@ -125,11 +125,18 @@ def _table(path: str, table: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
-def diff_lines(before: str, after: str) -> Iterator[str]:
-    """Patch lines turning `before` into `after`: new items in full, changed items only their changed columns."""
+def diff_lines(before: str, after: str, min_votes: int = 0, min_rating: float = 0.0) -> Iterator[str]:
+    """Patch lines turning `before` into `after`: new items in full, changed items only their changed columns.
+
+    The quality floor (min_votes, min_rating) applies to NEW items only; changes to items the
+    server already has always go through.
+    """
     old, new = _items(before), _items(after)
     for key in sorted(new):
         fields = new[key]
+        if key not in old and (not fields.get("title") or (fields.get("vote_count") or 0) < min_votes
+                               or (fields.get("rating") or 0.0) < min_rating):
+            continue
         if key in old:
             fields = {c: v for c, v in fields.items() if old[key].get(c) != v}
             if not fields:
@@ -143,10 +150,10 @@ def diff_lines(before: str, after: str) -> Iterator[str]:
             yield json.dumps({"table": table, "rows": rows}, separators=(",", ":"))
 
 
-def diff_catalogue(before: str, after: str, out: str) -> int:
+def diff_catalogue(before: str, after: str, out: str, min_votes: int = 0, min_rating: float = 0.0) -> int:
     n = 0
     with open(out, "w", encoding="utf-8") as f:
-        for line in diff_lines(before, after):
+        for line in diff_lines(before, after, min_votes, min_rating):
             f.write(line + "\n")
             n += 1
     print(f"{n} change(s) written to {out}")
@@ -250,6 +257,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sub.add_parser("export").add_argument("out")
     d = sub.add_parser("diff-catalogue")
     d.add_argument("before"); d.add_argument("after"); d.add_argument("out")  # noqa: E702
+    d.add_argument("--min-votes", type=int, default=0, help="quality floor for NEW items")
+    d.add_argument("--min-rating", type=float, default=0.0, help="quality floor for NEW items")
     sub.add_parser("push-patch").add_argument("file")
     b = sub.add_parser("build-bundle")
     b.add_argument("out")
@@ -265,7 +274,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if a.cmd == "export":
             export_db(a.out)
         elif a.cmd == "diff-catalogue":
-            diff_catalogue(a.before, a.after, a.out)
+            diff_catalogue(a.before, a.after, a.out, a.min_votes, a.min_rating)
         elif a.cmd == "push-patch":
             push_patch(a.file)
         elif a.cmd == "build-bundle":

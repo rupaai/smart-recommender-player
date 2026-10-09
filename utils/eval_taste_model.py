@@ -181,6 +181,17 @@ def summarize_loo(res: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def headline(res: Dict[str, Any]) -> Dict[str, float]:
+    """The numbers the nightly gate compares (higher is better): the full ordering's rank
+    correlation and AUC against the real taste_score, over films the model could score."""
+    rows = [r for r in res["rows"] if r["active"]]
+    ts = [r["taste_score"] for r in rows]
+    liked = [r["both"] for r in rows if r["taste_score"] > 0]
+    not_liked = [r["both"] for r in rows if r["taste_score"] <= 0]
+    out = {"taste_spearman": spearman([r["both"] for r in rows], ts), "taste_auc": auc(liked, not_liked)}
+    return {k: round(v, 4) for k, v in out.items() if v == v}   # drop NaN
+
+
 def discover(db_path: str, vibe_dir: str, profile_ids: Sequence[int], cfg: Dict[str, Any]) -> str:
     from services.vibe_index import VibeIndex
 
@@ -221,6 +232,7 @@ def main() -> None:
     ap.add_argument("--distractors", type=int, default=300)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--skip-discover", action="store_true")
+    ap.add_argument("--json", help="also write the headline numbers to this file (used by the nightly job)")
     args = ap.parse_args()
 
     import yaml
@@ -230,7 +242,11 @@ def main() -> None:
 
     db = DatabaseManager(args.db)
     print("## Leave-one-out over rated films\n")
-    print(summarize_loo(loo(db, args.profile_id, cfg, args.distractors, args.seed)))
+    res = loo(db, args.profile_id, cfg, args.distractors, args.seed)
+    print(summarize_loo(res))
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(headline(res), f)
     if not args.skip_discover:
         print("\n## Discover requests, taste terms off vs on\n")
         print(discover(args.db, args.vibe_dir, [args.profile_id], cfg))
