@@ -299,11 +299,12 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 
 ## Phase 8: Know when something breaks
 
-### [ ] P8.1 Alerts (Haiku)
+### [x] P8.1 Alerts (Haiku)
 - Server cron, installed by `bootstrap.sh` (add it to P4.1 if Phase 8 lands later): every 5 minutes, `curl -fsS localhost:8000/healthz && curl -fsS <healthchecks.io ping url>`. If the pings stop, healthchecks.io emails/pushes you, even when the whole box is down.
 - Daily disk check: send an ntfy message if media is above 85GB of its 100GB cap, or `/` is above 85% full.
 - Install the ntfy app on both phones and subscribe to the private topic name from `.env`.
 - **Done when:** stopping the app container triggers an alert within 15 minutes.
+- **As built:** `deploy/bin/healthcheck.sh` checks the app, Jellyfin and Prowlarr every 5 minutes; a service that fails 2 checks in a row (about 10 minutes) sends one ntfy alert, and a "back" message when it recovers; it pings healthchecks.io only while the app is healthy (so a dead machine is noticed by the missing pings); it stays silent while a deploy holds the lock. `deploy/bin/diskcheck.sh` runs daily: alert at 85% of the media cap or 85% of `/`. Cron lives in `/etc/cron.d/couchcinema`, written by `bootstrap.sh`, which also sends a test notification. Written by a Haiku helper, reviewed, tested with fake endpoints (`tests/deploy/test_alerts.sh`). P8.2 (optional disk housekeeping) is not built. The ntfy phone setup and healthchecks.io account are Labiba's (runbook step 8).
 
 ### [ ] P8.2 Disk housekeeping (Sonnet, optional)
 - Setting `cleanup.delete_watched_after_days` (default off). A daily server job lists downloads both of you have marked watched more than N days ago and deletes them, logging what it removed. Ships off; Labiba turns it on.

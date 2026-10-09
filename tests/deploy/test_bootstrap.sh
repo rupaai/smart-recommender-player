@@ -40,7 +40,10 @@ assert_eq "$(grep -E '^docker .* up ' "$STUB_STATE/calls.log" | grep -vc 'up -d 
 # Every docker call after the daemon exists is addressed to the deploy user's own socket.
 assert_eq "$(grep -E '^docker (info|compose -p|ps)' "$STUB_STATE/calls.log" | grep -vc 'DOCKER_HOST=unix://.*/1001/docker.sock')" 0 "every docker call uses the rootless socket"
 assert_no_grep '^docker .*(prune|rm |stop|kill)' "$STUB_STATE/calls.log" "never prunes, removes or stops anything"
-assert_no_file "$CRON_FILE" "cron skipped while alert scripts are absent"
+assert_grep '^\*/5 \* \* \* \* deploy .*/bin/healthcheck.sh$' "$CRON_FILE" "health check every 5 minutes"
+assert_grep '^17 6 \* \* \* deploy .*/bin/diskcheck.sh$' "$CRON_FILE" "disk check daily"
+assert_file "$CC_ROOT/bin/healthcheck.sh" "alert scripts copied to the server folder"
+assert_calls '^curl .*Title: couchcinema is set up.*ntfy.sh/couchcinema-' 1 "test notification sent to the generated topic"
 grep -q 'ADMIN_TOKEN' "$T/run1.log" && pass "summary prints the admin token" || fail "summary should print the admin token"
 
 echo "== bootstrap: second run changes nothing"

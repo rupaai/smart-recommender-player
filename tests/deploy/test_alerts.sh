@@ -30,7 +30,8 @@ PY
   SVC_PID=$!
   local i=0
   while [ ! -s "$T/port" ] && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
-  local base="http://127.0.0.1:$(cat "$T/port")"
+  local base
+  base="http://127.0.0.1:$(cat "$T/port")"
   export APP_HEALTH_URL="$base/healthz" JELLYFIN_HEALTH_URL="$base/health" PROWLARR_HEALTH_URL="$base/ping"
 }
 teardown() { kill "$SVC_PID" 2>/dev/null; wait "$SVC_PID" 2>/dev/null; rm -rf "$T"; }
