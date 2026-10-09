@@ -490,3 +490,9 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
   - `mark_watch_later_done(media_item_id, reason)` and `undo_watch_later_done(media_item_id)` return rows changed.
 - **Test:** `uv run python tests/test_watch_later.py` (migration, names, list behaviour). `tests/test_ratings.py`, `test_pairs.py` and `test_tv_verdicts.py` were adjusted for the new default name and for `user_version >= 10`.
 - **Catalogue check:** a copy of `catalogue.db` (was v4) migrates to v11 with `media_items`, `watch_history` and `rating_details` row counts unchanged; profiles become Labiba / Gabriele.
+
+### Task 2: API - done
+- **Endpoints (`server.py`):** `GET /api/watch-later?include_done=&media_type=&added_by=` -> `{items, count}`; `POST /api/watch-later {media_item_id, profile_id}` -> grouped entry (400 on unknown ids); `DELETE /api/watch-later/{media_item_id}?profile_id=` -> `{removed}`; `POST /api/watch-later/{media_item_id}/undo` -> `{reopened}`.
+- **`on_list`:** `[profile_id, ...]` (empty when not on the list) added by `_with_on_list(items)` (one `get_watch_later_ids` query) to `/api/recommend`, the pop-up responses (`_popup_response`, so `/api/discover/start|answer|finish`), `/api/ratings/queue`, `/api/ratings/inferred-queue` and `/api/catalogue/search`. No other field changed.
+- **Auto-done:** `DatabaseManager.rate_item` marks the title done (`'rated'`) after commit when status is `seen`; `not_seen` does not. `rate_season` does the same when it saved a season verdict (clearing one does not). `POST /api/watch/finish` marks `'watched'`. All wrapped in try/except and print a `[WatchLater]` line on failure.
+- **Test:** `uv run python tests/test_watch_later.py` now also covers the hooks and the API round trip (skipped if `server` cannot import).

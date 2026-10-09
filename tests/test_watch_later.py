@@ -167,12 +167,99 @@ def test_list(tmp):
         check(f"ValueError on {label}", raised)
 
 
+def test_hooks(tmp):
+    print("Auto-done hooks (database)")
+    db = make_db(tmp, "hooks.db")
+    db.add_to_watch_later(FILM, LAB)
+    db.rate_item(FILM, GAB, status="not_seen")
+    check("not_seen does not mark done", len(db.get_watch_later()) == 1)
+    db.rate_item(FILM, GAB, verdict="liked")
+    check("seen rating marks done", db.get_watch_later() == [])
+    done = db.get_watch_later(include_done=True)
+    check("done_reason is rated", done and done[0]["done_reason"] == "rated", done)
+    db.add_to_watch_later(SHOW, LAB)
+    db.rate_season(SHOW, LAB, 1, verdict="loved")
+    check("season verdict marks done", db.get_watch_later(media_type="tv") == [])
+
+
+def test_api(tmp):
+    print("API")
+    path = os.path.join(tmp, "api.db")
+    make_db(tmp, "api.db")
+    os.environ["DATABASE_PATH"] = path
+    try:
+        from fastapi.testclient import TestClient
+        import server
+    except Exception as e:  # pragma: no cover - deps missing
+        print(f"  (skipped: {e})")
+        return
+    server.db = DatabaseManager(path)
+    server.catalogue_search.db = server.db
+    try:
+        server.catalogue_search.invalidate()
+    except Exception:
+        pass
+    client = TestClient(server.app)
+
+    r = client.get("/api/watch-later")
+    check("GET empty list", r.status_code == 200 and r.json() == {"items": [], "count": 0}, r.text)
+    r = client.post("/api/watch-later", json={"media_item_id": FILM, "profile_id": LAB})
+    check("POST adds", r.status_code == 200 and r.json()["media_item_id"] == FILM, r.text)
+    r = client.post("/api/watch-later", json={"media_item_id": FILM, "profile_id": GAB})
+    check("both people -> both", r.json()["both"] is True, r.text)
+    r = client.post("/api/watch-later", json={"media_item_id": 9999, "profile_id": LAB})
+    check("unknown title is 400", r.status_code == 400, r.status_code)
+    r = client.post("/api/watch-later", json={"media_item_id": FILM, "profile_id": 9999})
+    check("unknown profile is 400", r.status_code == 400, r.status_code)
+    r = client.get("/api/watch-later", params={"media_type": "tv"})
+    check("media_type filter", r.json()["count"] == 0, r.text)
+    r = client.get("/api/watch-later", params={"added_by": GAB})
+    check("added_by filter", r.json()["count"] == 1, r.text)
+
+    r = client.get("/api/catalogue/search", params={"q": "Film One"})
+    items = r.json().get("items", [])
+    check("catalogue search carries on_list",
+          r.status_code == 200 and items and sorted(items[0].get("on_list", [])) == [LAB, GAB], r.text[:300])
+    r = client.get("/api/ratings/queue", params={"profile_id": 1, "media_type": "movie"})
+    qi = r.json().get("items", [])
+    check("ratings queue items have on_list", r.status_code == 200 and all("on_list" in i for i in qi), r.text[:300])
+    r = client.post("/api/recommend", json={"media_type": "movie", "include_watched": True})
+    ri = r.json().get("items", [])
+    check("recommend items have on_list", r.status_code == 200 and all("on_list" in i for i in ri), r.text[:300])
+
+    r = client.delete(f"/api/watch-later/{FILM}", params={"profile_id": GAB})
+    check("DELETE removes", r.json() == {"removed": True}, r.text)
+    r = client.delete(f"/api/watch-later/{FILM}", params={"profile_id": GAB})
+    check("DELETE again is false", r.json() == {"removed": False}, r.text)
+
+    r = client.post("/api/ratings", json={"media_item_id": FILM, "profile_id": GAB, "status": "not_seen"})
+    check("not_seen via API keeps it open", client.get("/api/watch-later").json()["count"] == 1, r.text)
+    r = client.post("/api/ratings", json={"media_item_id": FILM, "profile_id": GAB, "verdict": "liked"})
+    check("seen via API marks done", r.status_code == 200 and client.get("/api/watch-later").json()["count"] == 0, r.text)
+    r = client.get("/api/watch-later", params={"include_done": "true"})
+    check("include_done shows it", r.json()["count"] == 1 and r.json()["items"][0]["done_reason"] == "rated", r.text)
+    r = client.post(f"/api/watch-later/{FILM}/undo")
+    check("undo reopens", r.json() == {"reopened": 1} and client.get("/api/watch-later").json()["count"] == 1, r.text)
+
+    # finishing a watch session marks 'watched'
+    client.post("/api/watch-later", json={"media_item_id": FILM2, "profile_id": LAB})
+    with server.db.get_connection() as conn:
+        conn.execute("INSERT INTO active_watch_sessions (media_item_id) VALUES (?)", (FILM2,))
+        sid = conn.execute("SELECT MAX(id) FROM active_watch_sessions").fetchone()[0]
+    r = client.post("/api/watch/finish", json={"session_id": sid})
+    done = [i for i in client.get("/api/watch-later", params={"include_done": "true"}).json()["items"]
+            if i["media_item_id"] == FILM2]
+    check("watch finish marks watched", r.status_code == 200 and done and done[0]["done_reason"] == "watched", r.text)
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="wl_test_")
     try:
         test_migration(tmp)
         test_names(tmp)
         test_list(tmp)
+        test_hooks(tmp)
+        test_api(tmp)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if failures:

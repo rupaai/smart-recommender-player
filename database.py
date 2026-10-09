@@ -1678,6 +1678,13 @@ class DatabaseManager:
             )
             return cur.rowcount
 
+    def _watch_later_done_safe(self, media_item_id: int, reason: str) -> None:
+        """Marks a title done on the Watch later list; never lets a failure break rating or watching."""
+        try:
+            self.mark_watch_later_done(media_item_id, reason)
+        except Exception as e:  # noqa: BLE001
+            print(f"[WatchLater] could not mark {media_item_id} done: {e}", flush=True)
+
     def rate_item(
         self,
         media_item_id: int,
@@ -1809,6 +1816,9 @@ class DatabaseManager:
                     (profile_id, media_item_id),
                 )
 
+        if status == "seen":
+            self._watch_later_done_safe(media_item_id, "rated")
+
         # Read the summary AFTER the write commits. get_rating_summary() opens
         # its own connection, and SQLite won't show it this connection's
         # uncommitted INSERT — calling it inside the `with` block returns the
@@ -1913,6 +1923,9 @@ class DatabaseManager:
                     (profile_id, media_item_id, season_number, verdict, 1 if did_not_finish else 0, score),
                 )
             self._sync_show_from_seasons(cursor, profile_id, media_item_id)
+
+        if score is not None:
+            self._watch_later_done_safe(media_item_id, "rated")
 
         return {
             "media_item_id": media_item_id,
