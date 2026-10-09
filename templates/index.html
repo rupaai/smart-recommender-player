@@ -328,6 +328,8 @@
           </div>
           <button class="btn-ghost" id="rateSortBtn" aria-pressed="false" onclick="toggleRateSortMode()"
                   title="Pick a verdict for films you rated before verdicts existed">Sort out my 7s</button>
+          <button class="btn-ghost" id="pairBtn" aria-pressed="false" onclick="togglePairMode()"
+                  title="Two films you've seen: which is more your thing?">This or that</button>
           <button class="btn-ghost" onclick="shuffleRatingQueue()" title="Show a different set">
             <svg class="icon" aria-hidden="true"><use href="#i-shuffle"/></svg>Shuffle
           </button>
@@ -348,6 +350,9 @@
         <p class="rate-sub">Nothing left to rate with these filters.</p>
         <button class="btn-secondary" onclick="resetRatingQueue()">Load a fresh batch</button>
       </div>
+
+      <!-- "This or that": optional pair round, never mixed into the cards above. -->
+      <div id="pairView" class="pair-view is-hidden"></div>
 
       <div class="rate-coview-summary" id="rateCoviewSummary"></div>
     </section>

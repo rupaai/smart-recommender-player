@@ -866,6 +866,34 @@ async def get_rating_details(item_id: int, profile_id: int = 1) -> Dict[str, Any
     return {"media_item_id": item_id, "profile_id": profile_id, "details": details, "questions": questions}
 
 
+@app.get("/api/ratings/pairs")
+async def get_rating_pairs(
+    profile_id: int = 1,
+    media_type: str = "movie",
+    limit: int = Query(default=10, ge=1, le=30),
+    seed: Optional[int] = Query(default=None),
+) -> Dict[str, Any]:
+    """A "This or that" round: pairs of films this person has seen, same genre."""
+    seed_value = seed if isinstance(seed, int) else None
+    return await asyncio.to_thread(db.get_pair_round, profile_id, media_type, limit, seed_value)
+
+
+class PairAnswer(BaseModel):
+    profile_id: int = 1
+    a_id: int
+    b_id: int
+    choice: str  # a | b | same
+
+
+@app.post("/api/ratings/pairs")
+async def answer_rating_pair(req: PairAnswer) -> Dict[str, Any]:
+    """One "This or that" answer. Skip is client-side: nothing is stored."""
+    try:
+        return await asyncio.to_thread(db.record_pair_answer, req.profile_id, req.a_id, req.b_id, req.choice)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/ratings/inferred-queue")
 async def get_inferred_rating_queue(
     profile_id: int = 1,
