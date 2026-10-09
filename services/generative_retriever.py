@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from services.paths import models_dir
+
 from database import DatabaseManager
 from services.recommender_service import (  # noqa: E402  (shared scoring helpers)
     _split_lower,
@@ -51,7 +53,7 @@ from services.recommender_service import (  # noqa: E402  (shared scoring helper
 # Constants & paths
 # ===========================================================================
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_ARTIFACT_DIR = os.path.join(_PROJECT_ROOT, "models", "tiger")
+DEFAULT_ARTIFACT_DIR = os.path.join(models_dir(), "tiger")
 
 NUM_LEVELS = 3          # predicted codebook levels (the collision leaf is metadata)
 CODEBOOK_SIZE = 256     # K per level

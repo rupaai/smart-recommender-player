@@ -44,7 +44,7 @@ load_dotenv()
 api_key = os.getenv("TMDB_API_KEY", "").strip()
 
 # Configuration
-CONFIG_PATH = "config.yaml"
+CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
 config: Dict[str, Any] = {}
 if os.path.exists(CONFIG_PATH):
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:

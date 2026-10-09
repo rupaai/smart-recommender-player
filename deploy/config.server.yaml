@@ -1,0 +1,111 @@
+# Server version of config.yaml (paths are inside the containers; see docs/DEPLOYMENT_PLAN.md).
+# Smart Movie Streamer & Recommender Configuration
+
+# Folders to scan for media files (can be multiple paths)
+media_folders:                      # scanner scans both roots
+  - /media/Movies
+  - /media/Shows
+
+# Jellyfin dedicated library configuration
+jellyfin_library:
+  movie_dir: /media/Movies
+  tv_dir: /media/Shows
+  movies_library_name: Movies
+  tv_library_name: TV Shows
+  realtime_monitor: true
+
+# TMDB region for release info (e.g., GB, US)
+region: GB
+
+# Supported video file extensions
+supported_extensions:
+  - .mkv
+  - .mp4
+  - .avi
+  - .mov
+  - .m4v
+  - .webm
+
+# Database file location (DATABASE_PATH env var overrides this at launch)
+database_path: /data/catalogue_full.db
+
+# Recommender preferences
+recommender:
+  default_top_n: 5
+  exclude_watched: true
+  enable_tier2_profiling: true
+
+  # Candidate funnel sizes (quality cut → diverse pool):
+  shortlist_size: 250     # top-rated items kept after the Bayesian quality cut
+  final_pool: 50          # diverse pool served for pagination
+
+  # Recommendation engine router for the TIGER generative retrieval engine
+  # (parallel engine — the legacy SQL/taste recommender is never modified):
+  #   "fallback"        generative first; legacy on missing artifacts/history
+  #   "legacy_only"     legacy engine always (kill-switch)
+  #   "generative_only" generative primary; legacy only on unexpected failure
+  engine_mode: fallback
+  generative:
+    history_threshold: 5    # cold-start gate: legacy engine until 5+ liked items, then generative
+    history_min_rating: 6.0 # only films rated >= this (or seen, unrated) feed the model's history
+    top_k: 40               # semantic ID tuples beam-decoded per request
+    max_seq_len: 10         # sequence length fed to the ONNX predictor
+    candidate_pool: 60      # trie-resolved candidates re-ranked per request
+
+  # Learned taste from verdicts, "what worked / didn't" chips and vibe-check answers
+  # (services/taste_model.py). Adds weight x facet_fit and weight x cluster_affinity
+  # (each -1..+1) to the score in both engines. Below min_verdicts nothing changes.
+  taste_model:
+    enabled: false          # off until the offline check shows it beats the current ordering
+    weights:
+      facet_fit: 1.0        # design doc 2.6
+      cluster_affinity: 0.8
+    min_verdicts: 10        # confirmed + inferred verdicts needed per profile
+    inferred_weight: 0.5    # an inferred verdict counts this much of a confirmed one
+    min_dial_evidence: 4.0  # weighted films that need a value for a dial before it counts
+    overall_k: 10.0         # thin-history damping: effect x n / (n + overall_k)
+    cluster_k: 5.0          # cluster shrink: n / (n + cluster_k)
+
+# "Best match" sort for download copies: score = quality x seeder health x size fit
+# (x scope match for TV). Every number is optional; defaults live in
+# services/torrent_ranking.py. Tweak here, restart the server.
+torrent_ranking:
+  quality_points: {2160p: 100, 1080p: 80, 720p: 55, HD: 45, 480p: 25}
+  seeders:
+    base: 5               # seeders needed to finish = base + per_gb * size_gb
+    per_gb: 2             # health = sqrt(seeders / needed), capped at 1
+  size_fit_penalty: 0.75  # x this when far smaller/bigger than normal for its quality
+  movie_size_bands_gb:    # normal [min, max] GB per film
+    2160p: [4, 30]
+    1080p: [1.4, 15]
+    720p: [0.6, 4]
+    HD: [0.6, 6]
+    480p: [0.3, 2]
+  episode_size_bands_gb:  # normal [min, max] GB per episode (packs are divided by episode count)
+    2160p: [1.5, 10]
+    1080p: [0.5, 4]
+    720p: [0.2, 1.5]
+    HD: [0.2, 2]
+    480p: [0.1, 0.8]
+  scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
+  episodes_per_season: 10         # assumed when a pack's name doesn't say
+
+# libtorrent configuration
+torrent:
+  # Port range for incoming connections
+  min_port: 6881
+  max_port: 6891
+  
+  # Where to save downloaded files
+  download_dir: /media/downloads
+  
+  # Additional libtorrent settings
+  settings:
+    upload_rate_limit: 0      # 0 = unlimited
+    download_rate_limit: 0    # 0 = unlimited
+    active_downloads: 3      # Max simultaneous downloads
+    active_seeds: 3           # Max simultaneous uploads
+    enable_dht: true          # Enable distributed hash table
+    enable_lsd: true           # Enable local service discovery
+    enable_natpmp: false       # Enable NAT-PMP port mapping
+    enable_upnp: false         # Enable UPnP port mapping
