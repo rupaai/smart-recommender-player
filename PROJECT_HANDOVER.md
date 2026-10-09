@@ -4,7 +4,7 @@
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
 - `main`: what runs. Recommender v2 Phases 1–3 merged 2026-10-08 (PR #2).
-- `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR open (see §10.6).
+- `claude/project-thread-ig7qqo`: questions pop-up (Phase 4), PR #3 open (see §10.6).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
