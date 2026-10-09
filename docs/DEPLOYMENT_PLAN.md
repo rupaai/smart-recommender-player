@@ -230,7 +230,7 @@ Security notes: keep the repo **private** (a self-hosted runner on a public repo
 
 ## Phase 5: Deploy with one button
 
-### [ ] P5.1 Deploy script (Sonnet)
+### [x] P5.1 Deploy script (Sonnet)
 - `deploy/deploy.sh <image_tag>`, run on the server by the runner from a checkout of the deployed commit:
   1. Copy `deploy/compose.yaml` to `/srv/couchcinema/`.
   2. Snapshot the DB with `sqlite3 data/catalogue_full.db ".backup backups/pre-deploy/<timestamp>.db"`; keep the newest 7.
@@ -240,14 +240,16 @@ Security notes: keep the repo **private** (a self-hosted runner on a public repo
   6. On success write the new tag to `deployed_tag`. On failure bring the old tag back up, print the app's last 100 log lines, and exit non-zero.
 - The schema migration runs when the app starts (`DatabaseManager`), so the pre-deploy snapshot is the way back if a migration goes wrong. The script does **not** restore it automatically; restoring is a runbook step.
 - **Done when:** `shellcheck` passes and a dry run with a deliberately broken tag rolls back.
+- **As built:** `deploy/deploy.sh` also (a) refuses to run unless `DOCKER_HOST` names the deploy user's own daemon (never the system socket), (b) refuses when there is no database in `/srv/couchcinema/data` (a fresh empty one would strand the real data; `ALLOW_NEW_DB=1` overrides), (c) keeps the previous `compose.yaml`/`config.server.yaml` as `.prev` and restores them on rollback, (d) takes the snapshot with Python's `sqlite3` backup API (no `sqlite3` CLI needed on the host), (e) removes app images beyond the newest 3 (current and previous always kept; no `prune` commands), (f) takes a lock so two deploys can't overlap. `config.server.yaml` is overwritten from the repo on every deploy, so config changes go through a PR. `deploy/bin/notify.sh` is the ntfy helper. Tested with stubs and a fake `/healthz` server (`tests/deploy/test_deploy.sh`): good deploy, broken tag rolls back, wrong commit rejected, first-deploy failure stops the app, unpullable image changes nothing, snapshot pruning.
 
-### [ ] P5.2 Deploy workflow (Sonnet)
+### [x] P5.2 Deploy workflow (Sonnet)
 - `.github/workflows/deploy.yml`, `on: workflow_dispatch` with input `ref` (default `main`).
   - job `verify` (`ubuntu-latest`): resolve `ref` to a SHA; fail unless the CI workflow run for that SHA concluded `success` and image `sha-<sha>` exists.
   - job `deploy` (needs `verify`, `runs-on: [self-hosted, mars]`, `environment: production`, `concurrency: deploy`): checkout that SHA, run `deploy/deploy.sh sha-<sha>`, send an ntfy message with the result.
 - **Done when:** pressing Run workflow on `main` deploys and the app's `/healthz` shows the new SHA; running it on a commit with red CI stops at `verify`.
+- **As built:** `verify` also checks the GHCR image exists (`docker manifest inspect`). The `deploy` job logs in to GHCR with the job's own `GITHUB_TOKEN` into a temporary `DOCKER_CONFIG` that is deleted at the end, so no registry token is stored on `mars` (the private image needs a login to pull). `.github/actionlint.yaml` declares the `mars` label. Not run for real yet: it needs the runner from bootstrap (Your turn, step 5).
 
-### [ ] P5.3 Runbook additions (Haiku)
+### [x] P5.3 Runbook additions (Haiku)
 - In `deploy/RUNBOOK.md`: how to roll back (re-run Deploy on the older commit), how to restore a pre-deploy DB snapshot, how to read logs (`docker compose logs app`).
 
 ## Phase 6: Mac ↔ server data flow

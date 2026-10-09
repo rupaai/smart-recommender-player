@@ -118,3 +118,119 @@ $MEDIA_ROOT (/srv/media)/Movies, Shows, downloads
 ```
 
 Looking around as `deploy`: `sudo -iu deploy`, then `docker ps` shows only our containers.
+
+## Deploying
+
+**[Labiba]** GitHub → Actions → **Deploy** → Run workflow. Leave `ref` as `main` and run it.
+
+What happens next, so you know what to expect:
+
+1. The `verify` job checks that the commit has a green CI run and a built image. Only commits
+   that reached `main` get an image. If either is missing, the job stops there and nothing on
+   `mars` changes.
+2. The `deploy` job runs on `mars`. It:
+   - copies `compose.yaml`, `config.server.yaml` and the helper scripts to `/srv/couchcinema`;
+   - snapshots the database into `/srv/couchcinema/backups/pre-deploy/` (the newest 7 are kept);
+   - pulls the new image and starts it;
+   - waits up to 90 seconds for `http://localhost:8000/healthz` to report the new commit.
+3. On success, a "Deployed" notification goes to your phones (ntfy).
+
+A deploy refuses to run if there is no database in `/srv/couchcinema/data` yet. Copy it across
+first (see "Copy your data across").
+
+## Rolling back
+
+**Automatic.** If the health check fails, `deploy.sh` puts back the previous image tag and the
+previous `compose.yaml` and `config.server.yaml`. It prints the last 100 log lines from the app.
+The Deploy run goes red and your phones get "Deploy FAILED".
+
+**Manual** (for example, a bug found later):
+
+**[Labiba]** GitHub → Actions → **Deploy** → Run workflow. In `ref`, type the full commit SHA of
+the older version. Copy it from the commits list. That commit must have been on `main`, so it
+has an image.
+
+To see which tag is running now, read `/srv/couchcinema/deployed_tag` (as `deploy`).
+
+Rolling back the code does not roll back the database. If the database is the problem, see the
+next section.
+
+## Restoring a database snapshot
+
+Only do this if a migration or a bug damaged data. Restoring a snapshot loses everything rated
+or watched since that snapshot was taken.
+
+Each snapshot is named `<UTC timestamp>-before-<tag>.db` and lives in
+`/srv/couchcinema/backups/pre-deploy/`. It is the database as it was just before that tag was
+deployed.
+
+**[Labiba]** Open a shell on the server as `deploy`:
+
+```
+ssh gabstevens@mars
+sudo -iu deploy
+```
+
+Then, as `deploy`:
+
+1. Stop the app:
+   ```
+   docker compose -p couchcinema --project-directory /srv/couchcinema -f /srv/couchcinema/compose.yaml stop app
+   ```
+2. Keep the current database by moving it aside:
+   ```
+   mv /srv/couchcinema/data/catalogue_full.db /srv/couchcinema/data/catalogue_full.db.broken
+   ```
+   If `catalogue_full.db-wal` or `catalogue_full.db-shm` exist next to it, move them aside the
+   same way.
+3. Copy the snapshot you chose into place and lock down its permissions:
+   ```
+   cp /srv/couchcinema/backups/pre-deploy/<chosen file> /srv/couchcinema/data/catalogue_full.db
+   chmod 600 /srv/couchcinema/data/catalogue_full.db
+   ```
+4. Start the app on the version that matches the snapshot. You have two options:
+   - If the running version is a problem too, run the deploy workflow for the older commit first
+     (see "Rolling back").
+   - If the running version is fine, start the app on the current tag:
+     ```
+     IMAGE_TAG=$(cat /srv/couchcinema/deployed_tag) docker compose -p couchcinema --project-directory /srv/couchcinema -f /srv/couchcinema/compose.yaml up -d app
+     ```
+5. Check that `http://mars:8000/healthz` says `"ok": true`.
+
+The nightly Mac backup, once it exists, is a second place to restore from.
+
+## Reading logs and checking on things
+
+Open a shell as `deploy` first (`ssh gabstevens@mars`, then `sudo -iu deploy`).
+
+- **Which containers are running:** `docker ps` shows only our containers.
+- **App logs** (follow them live):
+  ```
+  docker compose -p couchcinema --project-directory /srv/couchcinema -f /srv/couchcinema/compose.yaml logs --tail 200 -f app
+  ```
+  Use `jellyfin` or `prowlarr` in place of `app` for their logs.
+- **Health:**
+  ```
+  curl -s http://localhost:8000/healthz
+  ```
+  It shows `ok`, `git_sha`, `model_bundle` and `db_schema`.
+
+The GitHub runner runs as a service on `mars`. From `gabstevens`:
+
+```
+sudo journalctl -u actions.runner.rupaai-smart-recommender-player.mars -n 100
+sudo systemctl restart actions.runner.rupaai-smart-recommender-player.mars
+```
+
+**Changing a secret.** **[Labiba]** Run this on `mars` as `gabstevens`. It restarts only the app:
+
+```
+sudo bash ~/couchcinema-deploy/bootstrap.sh --set KEY=value
+```
+
+**Changing `config.server.yaml`** (for example, the 100GB media cap, `torrent.max_media_gb`):
+
+1. **[Labiba]** Edit `deploy/config.server.yaml` in the repo and open a PR.
+2. **[Labiba]** Merge the PR, then run **Deploy** (see "Deploying").
+
+Do not edit `config.server.yaml` on the server. The next deploy overwrites it.
