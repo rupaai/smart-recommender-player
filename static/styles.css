@@ -1120,6 +1120,36 @@ button:disabled { cursor: default; }
 .verdict-not_for_me:hover, .verdict-not_for_me.active { background: var(--danger-bg); }
 .rate-dnf { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); margin: 0 0 12px; }
 
+/* Folded "Seasons" row on TV cards: one compact verdict control per season */
+.rate-seasons { border-top: 1px solid var(--line); margin: 4px 0 0; }
+.rate-seasons > summary {
+  cursor: pointer; padding: 10px 0; font-size: 13px; font-weight: 700; list-style: none;
+}
+.rate-seasons > summary::-webkit-details-marker { display: none; }
+.rate-seasons > summary::before { content: "▸ "; color: var(--text-3); }
+.rate-seasons[open] > summary::before { content: "▾ "; }
+.rate-seasons-body { padding-bottom: 8px; }
+.rate-seasons-hint { font-size: 12px; color: var(--text-3); margin: 0 0 8px; }
+.season-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.season-label {
+  flex: 0 0 auto; min-width: 30px; font-family: var(--font-display); font-stretch: var(--display-stretch);
+  font-weight: var(--display-weight); font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums;
+}
+.season-opts { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; min-width: 0; }
+.season-opt {
+  min-height: 34px; padding: 4px 2px; border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--line-strong);
+  color: var(--text-2); font-size: 12px; font-weight: 600; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.season-opt:hover { color: var(--text); border-color: var(--text-3); }
+.season-opt.active { background: var(--select-bg); color: var(--select-text); border-color: var(--select-line); font-weight: 700; }
+.season-opt.season-rewatch.active { background: var(--ready-bg); }
+.season-opt.season-not_for_me.active, .season-opt.season-did_not_finish.active { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-text); }
+.season-opt:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.rate-seasons + .rate-why, #rateSeasonsSlot:empty + .rate-why { margin-top: 0; }
+
 /* Folded "Why?" section */
 .rate-why { border-top: 1px solid var(--line); margin: 4px 0 14px; }
 .rate-why > summary {
@@ -1247,6 +1277,10 @@ kbd {
   .rate-controls { padding: 0 14px 14px; }
   .rate-stub { padding: 10px 14px; }
   .verdict-btn { font-size: 11.5px; min-height: 54px; }
+  .season-row { gap: 6px; }
+  .season-label { min-width: 24px; font-size: 13px; }
+  .season-opts { gap: 3px; }
+  .season-opt { font-size: 11px; min-height: 36px; padding: 4px 1px; }
   .rate-poster { width: 86px; min-width: 86px; }
   .rate-title { font-size: 21px; }
   .movie-card-main { padding: 14px; gap: 14px; }
