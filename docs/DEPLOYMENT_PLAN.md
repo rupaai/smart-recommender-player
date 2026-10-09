@@ -29,7 +29,7 @@ flowchart LR
   NIGHTLY -- Tailscale: export, patch, model bundle --> APP
 ```
 
-- **Server (Dell OptiPlex 3060, 16GB, Intel 8th gen, x86_64):** runs only what the two of you use: the web app (which also does the torrent downloads), Jellyfin and Prowlarr, each in its own Docker container, always restarting. No torch, no training.
+- **Server (`mars`: Dell OptiPlex 3060, i5-9500T, 16GB, x86_64, Ubuntu 24.04):** runs only what the two of you use: the web app (which also does the torrent downloads), Jellyfin and Prowlarr, each in its own Docker container, always restarting. No torch, no training.
 - **Mac:** does the heavy and occasional work as scheduled jobs: backup pull, catalogue refresh, enrichment, training, evaluation, publishing models.
 - **GitHub:** checks every change. Deploys happen only when Labiba presses "Run workflow" on the Deploy workflow, and only for a commit whose checks passed.
 - **Network:** everything between Mac and server goes over Tailscale. The server needs no open ports and no Tailscale rule changes, because the Actions runner connects *out* to GitHub.
@@ -38,10 +38,11 @@ flowchart LR
 
 | Topic | Decision |
 |---|---|
-| Server hardware | Dell OptiPlex 3060, 16GB RAM, x86_64. Images are `linux/amd64`. Jellyfin uses Intel Quick Sync via `/dev/dri`. |
-| Server OS | Ubuntu Server 24.04 LTS. |
+| Server hardware | Dell OptiPlex 3060 `mars`: i5-9500T (6 cores), 16GB RAM, one 238GB SSD (~166GB free), Intel UHD 630. Images are `linux/amd64`. Jellyfin uses Quick Sync via `/dev/dri/renderD128`. |
+| Server OS | Already installed: Ubuntu 24.04.4 LTS, Docker 29 + Compose v2, Tailscale (`mars.tailc3278f.ts.net`), unattended-upgrades. |
+| Shared machine | `mars` also runs Home Assistant, Matter bridges, cloudflared and a tplink proxy in Docker. Our stack must never touch them (see section 4a). |
 | Isolation | Docker Compose, one container per service, `restart: unless-stopped`. |
-| Media storage | Internal drive now (`/srv/media`), external HDD later (`/mnt/media`). Only the `MEDIA_ROOT` value changes. |
+| Media storage | Internal SSD now (`/srv/media`, ~166GB free), external HDD later (`/mnt/media`). Only the `MEDIA_ROOT` value changes. |
 | User data | Lives on the server, on the internal drive, always. Never on the external drive. |
 | Backups | User data only (the SQLite DB). Never media. |
 | Downloads | Run on the server, files land on the server. |
@@ -86,6 +87,20 @@ So:
 
 ---
 
+## 4a. What's already on `mars` (surveyed 2026-10-09, read-only)
+
+- **Other services we must not disturb:** containers `homeassistant`, `matter-server`, `matterbridge`, `cloudflared`, `tplink-proxy`; Ollama installed on the host. Ports in use: 22, 8123, 8088, 5580, 5540, 8283, 21064-21066, 18555, 20241.
+- **Ports we need are free:** 8000, 8096, 9696, 6881-6891.
+- **No existing media stack:** no Jellyfin, Plex, qBittorrent or *arr anywhere. `/srv`, `/mnt`, `/media` are empty.
+- **Storage is the limit:** one 238GB SSD with ~166GB free, shared with the OS and Home Assistant. Media starts on it, so the disk guard (P8.1) and an external drive (Phase 9) matter early.
+- **GPU:** `/dev/dri/renderD128` exists. Give the Jellyfin container access with `devices` + `group_add` of the host's `render` group id; no host user changes needed.
+
+Rules that follow from this:
+1. Our stack is its own compose project (`name: couchcinema`) on its own Docker network. Deploy scripts only ever address that project (`docker compose -p couchcinema ...`); never `docker system prune`, never stop or restart containers outside it.
+2. Set memory limits so a busy download or transcode can't starve Home Assistant: app 2GB, Jellyfin 4GB, Prowlarr 512MB.
+3. The app refuses to start a new download when free space on `MEDIA_ROOT` would drop below 20GB, and shows why.
+4. Don't expose anything through the existing cloudflared tunnel. Access is over Tailscale only.
+
 ## How to run this plan
 
 Four milestones. Each one is a single instruction to a single Sonnet session, which plans the work, gives the tasks marked (Haiku) to Haiku helpers, runs the checks, and opens **one PR per phase**. You review and merge PRs at the end of each milestone; you don't supervise individual tasks.
@@ -93,7 +108,7 @@ Four milestones. Each one is a single instruction to a single Sonnet session, wh
 | Milestone | Phases | Needs you for | Result |
 |---|---|---|---|
 | M1 Package | 1, 2, 3 | Merging 3 PRs, protecting `main` (P3.3) | App runs in Docker, CI checks every PR |
-| M2 Go live | 4, 5, 8 | Installing the OS and running one setup command | App on the OptiPlex, one-click deploys, alerts |
+| M2 Go live | 4, 5, 8 | Running one setup command over SSH | App on the OptiPlex, one-click deploys, alerts |
 | M3 Learning loop | 6, 7 | Merging 2 PRs, running one install command on the Mac | Nightly training publishes models to the server |
 | M4 Polish | 9, 10 | Plugging in the drive and running one command | External drive, README story |
 
@@ -162,6 +177,8 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
   - `jellyfin`: `jellyfin/jellyfin:<pinned version>`, mounts `./jellyfin/config`, `./jellyfin/cache`, `${MEDIA_ROOT}:/media`, `devices: [/dev/dri:/dev/dri]`, port `8096:8096`.
   - `prowlarr`: `lscr.io/linuxserver/prowlarr:<pinned version>`, mounts `./prowlarr/config`, port `9696:9696`.
 - On startup the app creates `/media/Movies`, `/media/Shows` and `/media/downloads` if they don't exist and leaves them alone if they do (`os.makedirs(..., exist_ok=True)`). Same for `/data` and `/models/releases`.
+- Follow section 4a: top-level `name: couchcinema`, its own network, memory limits (app 2GB, Jellyfin 4GB, Prowlarr 512MB), Jellyfin `group_add: ["${RENDER_GID}"]`.
+- Disk guard in the app: refuse to start a download when free space on `/media` would fall below 20GB (setting `torrent.min_free_gb`), with a clear message in the Download tab.
 - Pin every third-party image to an exact version (no `latest`).
 - `deploy/.env.example` listing every variable with a comment and no values: `IMAGE_TAG`, `MEDIA_ROOT`, `TMDB_API_KEY`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, `PROWLARR_API_KEY`, `ADMIN_TOKEN`, `NTFY_TOPIC`.
 - **Done when:** on the Mac, with a local image tag and `MEDIA_ROOT=./sample_library`, `docker compose -f deploy/compose.yaml up` serves the app on :8000 and Jellyfin on :8096, and `/healthz` is ok.
@@ -183,27 +200,26 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 ## Phase 4: Set up the server once
 
-**Why an operating system at all:** Docker runs containers, but it needs an operating system on the machine underneath it, the same way an app needs macOS on your Mac. Containers share that system's kernel; they don't bring their own. So the OptiPlex needs one OS install, and after that everything else is Docker. Ubuntu Server is the usual pick: free, light, runs Docker natively, and gives Jellyfin direct access to the Intel graphics. (If the OptiPlex already runs Linux, skip step 1. Windows also runs Docker, but through a virtual machine that makes GPU transcoding and auto-restart after reboot unreliable.)
-
-**Where:** step 1 happens at the OptiPlex with a keyboard and screen plugged in. Everything after that you can do from your Mac's Terminal over Tailscale (`ssh you@optiplex`), and after Phase 5 you never log in to it again.
+`mars` already has Ubuntu, Docker, Tailscale and automatic security updates, so there's nothing to install by hand. What's left is one script run over SSH from your Mac (`ssh gabstevens@mars`, which already works with your key).
 
 ### [ ] P4.1 One-command setup script (Sonnet)
-`deploy/bootstrap.sh`, safe to run again (it skips anything already done):
-1. Installs Docker Engine + compose plugin, Tailscale, `sqlite3`, `unattended-upgrades` (security patches install themselves).
-2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing.
-3. Copies `config.server.yaml` and `compose.yaml` from the repo into place.
-4. Asks for each secret once (TMDB key, etc.), generates `ADMIN_TOKEN` itself, writes `.env`, and prints the token to copy to the Mac.
-5. Installs the GitHub Actions runner as a service under a `deploy` user with label `optiplex`, using a registration token you paste in.
-6. Runs `docker compose up -d` and waits for `/healthz`.
-- **Done when:** running it on a fresh Ubuntu VM gets to a healthy app, and running it a second time changes nothing.
+`deploy/bootstrap.sh`, safe to run again (skips anything already done; checks rather than installs Docker/Tailscale/unattended-upgrades and stops with a clear message if one is missing):
+1. Creates a `deploy` system user in the `docker` group only (no sudo). The runner and deploys run as this user, not as `gabstevens`, so CI never has his sudo rights.
+2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing, owned by `deploy`.
+3. Copies `config.server.yaml` and `compose.yaml` into place and writes the host's `render` group id into `.env` for Jellyfin.
+4. Asks for each secret once (TMDB key etc.), generates `ADMIN_TOKEN`, writes `.env` (mode 600), and prints the token to copy to the Mac.
+5. Installs the GitHub Actions runner as a service under `deploy` with label `mars`, using a registration token you paste in.
+6. Installs the healthcheck and disk-check cron entries (P8.1).
+7. Runs `docker compose -p couchcinema up -d` and waits for `/healthz`.
+- **Done when:** on a fresh Ubuntu 24.04 VM with Docker and a dummy container running, it reaches a healthy app, leaves the dummy container untouched, and a second run changes nothing.
 
 ### [ ] P4.2 Your part [Labiba]
-1. At the OptiPlex: install Ubuntu Server 24.04 LTS from a USB stick (tick "Install OpenSSH server" during setup).
-2. Run `git clone https://github.com/rupaai/smart-recommender-player && sudo ./smart-recommender-player/deploy/bootstrap.sh`. Git asks for your GitHub username and a token because the repo is private; the runbook says where to make the token. Paste the secrets and the runner token when asked; approve the device in Tailscale when it prints a link (your boyfriend does this once).
-3. Copy your data across once: stop the app on the Mac, then `scp catalogue_full.db optiplex:/srv/couchcinema/data/` and copy existing films into `/srv/media`. From now on you both rate and watch through the server; the Mac's copy is only for development.
-4. Open Jellyfin at `http://optiplex:8096`, finish its first-run wizard (libraries are `/media/Movies` and `/media/Shows`) and turn on Intel Quick Sync under Playback.
+1. Check with your boyfriend that it's fine to add a `deploy` user and the media stack next to Home Assistant.
+2. From your Mac: `ssh gabstevens@mars`, then `git clone https://github.com/rupaai/smart-recommender-player && sudo ./smart-recommender-player/deploy/bootstrap.sh`. Git asks for your GitHub username and a token because the repo is private; the runbook says where to make the token. Paste the secrets and the runner token when asked.
+3. Copy your data across once: stop the app on the Mac, then `scp catalogue_full.db gabstevens@mars:/tmp/` and let the runbook's one-line command move it into `/srv/couchcinema/data/`. Copy existing films into `/srv/media` the same way. From now on you both rate and watch through the server; the Mac's copy is only for development.
+4. Open Jellyfin at `http://mars:8096`, finish its first-run wizard (libraries are `/media/Movies` and `/media/Shows`) and turn on Intel Quick Sync under Playback.
 
-Security notes: keep the repo **private** (a self-hosted runner on a public repo can run code from forks). Only the deploy workflow uses the `optiplex` label.
+Security notes: keep the repo **private** (a self-hosted runner on a public repo can run code from forks). Only the deploy workflow uses the `mars` label.
 
 ## Phase 5: Deploy with one button
 
@@ -212,7 +228,7 @@ Security notes: keep the repo **private** (a self-hosted runner on a public repo
   1. Copy `deploy/compose.yaml` to `/srv/couchcinema/`.
   2. Snapshot the DB with `sqlite3 data/catalogue_full.db ".backup backups/pre-deploy/<timestamp>.db"`; keep the newest 7.
   3. Remember the old tag from `deployed_tag`.
-  4. `IMAGE_TAG=<new> docker compose pull app && docker compose up -d`.
+  4. `IMAGE_TAG=<new> docker compose -p couchcinema pull app && docker compose -p couchcinema up -d`.
   5. Poll `http://localhost:8000/healthz` for up to 90s and check its `git_sha` matches.
   6. On success write the new tag to `deployed_tag`. On failure bring the old tag back up, print the app's last 100 log lines, and exit non-zero.
 - The schema migration runs when the app starts (`DatabaseManager`), so the pre-deploy snapshot is the way back if a migration goes wrong. The script does **not** restore it automatically; restoring is a runbook step.
@@ -221,7 +237,7 @@ Security notes: keep the repo **private** (a self-hosted runner on a public repo
 ### [ ] P5.2 Deploy workflow (Sonnet)
 - `.github/workflows/deploy.yml`, `on: workflow_dispatch` with input `ref` (default `main`).
   - job `verify` (`ubuntu-latest`): resolve `ref` to a SHA; fail unless the CI workflow run for that SHA concluded `success` and image `sha-<sha>` exists.
-  - job `deploy` (needs `verify`, `runs-on: [self-hosted, optiplex]`, `environment: production`, `concurrency: deploy`): checkout that SHA, run `deploy/deploy.sh sha-<sha>`, send an ntfy message with the result.
+  - job `deploy` (needs `verify`, `runs-on: [self-hosted, mars]`, `environment: production`, `concurrency: deploy`): checkout that SHA, run `deploy/deploy.sh sha-<sha>`, send an ntfy message with the result.
 - **Done when:** pressing Run workflow on `main` deploys and the app's `/healthz` shows the new SHA; running it on a commit with red CI stops at `verify`.
 
 ### [ ] P5.3 Runbook additions (Haiku)
@@ -250,7 +266,7 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 - **Done when:** tests cover a good bundle, a bad checksum, a missing id, and rollback.
 
 ### [ ] P6.3 Mac client (Sonnet)
-- `ops/mac/cc.py` with subcommands that talk to `http://optiplex:8000` (the MagicDNS name; traffic is encrypted by Tailscale) (from `~/.couchcinema/env`): `export <out.db>`, `diff-catalogue <before.db> <after.db> <out.jsonl>` (rows keyed by `(media_type, tmdb_id)`, only allow-listed columns), `push-patch <file>`, `build-bundle <out.tar.gz>`, `push-bundle <file>`.
+- `ops/mac/cc.py` with subcommands that talk to `http://mars:8000` (the Tailscale name, `mars.tailc3278f.ts.net`; traffic is encrypted by Tailscale) (from `~/.couchcinema/env`): `export <out.db>`, `diff-catalogue <before.db> <after.db> <out.jsonl>` (rows keyed by `(media_type, tmdb_id)`, only allow-listed columns), `push-patch <file>`, `build-bundle <out.tar.gz>`, `push-bundle <file>`.
 - **Done when:** a round trip against a local `docker compose` server works: export, run a catalogue script on the copy, diff, push, and the new rows appear on the server.
 
 ## Phase 7: Mac scheduled jobs

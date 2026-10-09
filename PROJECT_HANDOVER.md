@@ -541,7 +541,7 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 
 Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`. Build only when Labiba says go. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
 
-- Server is a **Dell OptiPlex 3060** (16GB, x86_64), not a Pi. Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
+- Server is **`mars`**, a Dell OptiPlex 3060 (i5-9500T, 16GB, one 238GB SSD with ~166GB free), not a Pi. Already has Ubuntu 24.04, Docker, Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183, SSH as `gabstevens`). It also runs Home Assistant and Matter containers that our stack must never touch (plan §4a). Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
 - Mac runs launchd jobs: backup pull, catalogue refresh + enrichment, training, eval gate, publish model bundle.
 - CI on GitHub; deploys only via the manual Deploy workflow on a self-hosted runner on the server (outbound, no Tailscale ACL changes), with health check and automatic rollback.
 - Key rule: the server alone assigns `media_items.id` and never deletes items; the Mac sends patches keyed by `(media_type, tmdb_id)` and trains on a fresh export so model ids match (plan §3).
