@@ -25,7 +25,8 @@ const state = {
   recognition: null,
   modalRecognition: null,
   jellyfinUrl: '',
-  directSortBySize: true,
+  directSort: 'best',      // 'best' | 'smallest' | 'quality'
+  directLinked: null,      // {movieId, title, mediaType, query} when opened from a Discover card
   lastDirectResults: [],
   activeDownloads: {},     // movieId -> status dict
   pollingIntervals: {},    // movieId -> intervalId
@@ -805,7 +806,7 @@ function watchButtonHtml(m) {
   const type = m.media_type || state.recMediaType;
   return `<button id="watch-btn-${m.id}" class="btn-watch"
             onclick="startDownload(${m.id}, ${jsArg(m.title)}, ${jsArg(type)})">
-            ${icon('download')}<span>Get it for tonight</span>
+            ${icon('download')}<span>Choose a copy</span>
           </button>`;
 }
 
@@ -893,25 +894,36 @@ function setDirectMediaType(type) {
   }
 }
 
-function setDirectSort(sortBySize) {
-  state.directSortBySize = sortBySize;
-  setPressed(document.getElementById('sortSmallestBtn'), sortBySize);
-  setPressed(document.getElementById('sortQualityBtn'), !sortBySize);
+function sortDirectResults(results, mode) {
+  const sorted = [...results];
+  if (mode === 'smallest') {
+    sorted.sort((a, b) => a.size_bytes - b.size_bytes);
+  } else if (mode === 'quality') {
+    const qualityTier = { '2160p': 0, '4K': 0, '1080p': 1, '720p': 2, 'HD': 3 };
+    sorted.sort((a, b) => {
+      const qA = qualityTier[a.quality] ?? 4;
+      const qB = qualityTier[b.quality] ?? 4;
+      if (qA !== qB) return qA - qB;
+      return b.seeds - a.seeds;
+    });
+  } else {
+    // Best match: the server's combined score (quality x seeders x size fit).
+    sorted.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.seeds - a.seeds);
+  }
+  return sorted;
+}
+
+function setDirectSort(mode) {
+  state.directSort = mode;
+  setPressed(document.getElementById('sortBestBtn'), mode === 'best');
+  setPressed(document.getElementById('sortSmallestBtn'), mode === 'smallest');
+  setPressed(document.getElementById('sortQualityBtn'), mode === 'quality');
 
   if (state.lastDirectResults && state.lastDirectResults.length > 0) {
-    const sorted = [...state.lastDirectResults];
-    if (sortBySize) {
-      sorted.sort((a, b) => a.size_bytes - b.size_bytes);
-    } else {
-      const qualityTier = { '2160p': 0, '4K': 0, '1080p': 1, '720p': 2, 'HD': 3 };
-      sorted.sort((a, b) => {
-        const qA = qualityTier[a.quality] ?? 4;
-        const qB = qualityTier[b.quality] ?? 4;
-        if (qA !== qB) return qA - qB;
-        return b.seeds - a.seeds;
-      });
-    }
-    renderDirectResults(sorted, document.getElementById('directQueryInput').value.trim());
+    renderDirectResults(
+      sortDirectResults(state.lastDirectResults, mode),
+      document.getElementById('directQueryInput').value.trim()
+    );
   }
 }
 
@@ -924,6 +936,12 @@ async function executeDirectSearch() {
   if (!query) {
     queryInput.focus();
     return;
+  }
+
+  // The catalogue link only survives for the search it was opened with.
+  const linked = state.directLinked;
+  if (linked && (linked.query !== query || linked.mediaType !== state.directMediaType)) {
+    state.directLinked = null;
   }
 
   btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>Searching';
@@ -942,7 +960,7 @@ async function executeDirectSearch() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         query: query,
-        sort_by_size: state.directSortBySize,
+        sort: state.directSort,
         media_type: state.directMediaType
       })
     });
@@ -982,6 +1000,14 @@ function renderDirectResults(results, query) {
     return;
   }
 
+  const linked = state.directLinked;
+  if (linked) {
+    const note = document.createElement('p');
+    note.className = 'direct-linked-note';
+    note.innerHTML = `${icon('film')}<span>Pick a copy for <b>${escapeHtml(linked.title)}</b>. It will be filed under that title.</span>`;
+    container.appendChild(note);
+  }
+
   const header = document.createElement('p');
   header.className = 'results-count-banner';
   header.innerHTML = `${results.length} result${results.length === 1 ? '' : 's'} for “${escapeHtml(query)}”`;
@@ -1003,21 +1029,42 @@ function renderDirectResults(results, query) {
 
     const containerId = `direct-dl-slot-${idx}`;
     const mediaType = item.media_type || state.directMediaType;
+    const quality = item.quality || 'HD';
+    const sizeText = item.size_display || formatSize(item.size_bytes);
+
+    // Seeder health: how comfortably the swarm can finish a file this size.
+    const health = item.seed_health ?? 1;
+    const seedClass = health >= 0.9 ? 'ok' : health >= 0.6 ? 'mid' : 'low';
+    const seedHint = seedClass === 'ok' ? 'Plenty sharing for a file this size'
+      : seedClass === 'mid' ? 'Enough sharing, may be slower' : 'Few sharing for a file this size, may stall';
+
+    const packNote = item.is_pack && item.per_episode_bytes
+      ? `<span class="stat-sub">≈ ${escapeHtml(formatSize(item.per_episode_bytes))} per episode</span>` : '';
+    const tags = [
+      sortKeyIsBest() && idx === 0 ? '<span class="badge badge-best">Best match</span>' : '',
+      item.is_pack ? '<span class="badge badge-pack">Season pack</span>' : '',
+      mediaType === 'tv' && !item.is_pack ? '<span class="badge badge-media-type">Episode</span>' : '',
+    ].join('');
+
+    // Title shown/filed: the catalogue title when this search came from a Discover card.
+    const fileTitle = linked ? linked.title : (item.name || query);
+    const movieId = linked ? linked.movieId : 0;
 
     card.innerHTML = `
       <div class="torrent-card-main">
         <div class="torrent-header">
           <div class="torrent-name">${escapeHtml(item.name)}</div>
+          ${tags ? `<div class="torrent-tags">${tags}</div>` : ''}
         </div>
-        <div class="torrent-meta-row">
-          <span class="badge ${badgeClass}">${escapeHtml(item.quality || 'HD')}</span>
-          <span class="badge badge-size">${escapeHtml(item.size_display || formatSize(item.size_bytes))}</span>
-          <span class="badge badge-seeds" title="People sharing the full file — more means faster">${escapeHtml(item.seeds)} sharing</span>
-          ${item.peers ? `<span class="badge badge-peers" title="People still downloading it">${escapeHtml(item.peers)} downloading</span>` : ''}
-          <span class="badge badge-media-type">${mediaType === 'tv' ? 'TV' : 'Movie'}</span>
-        </div>
+        <dl class="torrent-stats">
+          <div class="stat"><dt>Quality</dt><dd><span class="badge ${badgeClass}">${escapeHtml(quality)}</span></dd></div>
+          <div class="stat"><dt>Size</dt><dd>${escapeHtml(sizeText)}</dd>${packNote}</div>
+          <div class="stat seeds-${seedClass}" title="${seedHint}"><dt>Seeders</dt><dd>${escapeHtml(item.seeds)}</dd><span class="stat-sub">${seedClass === 'ok' ? 'healthy' : seedClass === 'mid' ? 'okay' : 'thin'}</span></div>
+        </dl>
+      </div>
+      <div class="torrent-stub">
         <div class="torrent-action-row" id="${containerId}">
-          ${directDownloadButton(encodeURIComponent(item.magnet), item.name || query, containerId, mediaType)}
+          ${directDownloadButton(encodeURIComponent(item.magnet), fileTitle, containerId, mediaType, 'Download', movieId)}
         </div>
       </div>
     `;
@@ -1026,10 +1073,14 @@ function renderDirectResults(results, query) {
   });
 }
 
+function sortKeyIsBest() {
+  return state.directSort === 'best';
+}
+
 // ---------------------------------------------------------------------------
 // 6. Non-blocking Download & Cancellation
 // ---------------------------------------------------------------------------
-async function startDirectDownload(encodedMagnet, movieTitle, containerId, mediaType = 'movie') {
+async function startDirectDownload(encodedMagnet, movieTitle, containerId, mediaType = 'movie', linkedMovieId = 0) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -1046,7 +1097,7 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         magnet_link: magnet,
-        movie_id: 0,
+        movie_id: linkedMovieId || 0,
         movie_title: movieTitle,
         media_type: mediaType
       })
@@ -1064,7 +1115,8 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
       progress: 0,
       status: 'connecting',
       containerId,
-      encodedMagnet
+      encodedMagnet,
+      linkedMovieId
     };
 
     renderActiveDownloadsMonitor();
@@ -1075,15 +1127,15 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
     container.innerHTML = `
       <div class="progress-box error-box" role="alert">
         <span>Couldn't start: ${escapeHtml(err.message)}</span>
-        <button class="btn-retry-mini" onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(movieTitle)}, ${jsArg(containerId)}, ${jsArg(mediaType)})">${icon('refresh')}Retry</button>
+        <button class="btn-retry-mini" onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(movieTitle)}, ${jsArg(containerId)}, ${jsArg(mediaType)}, ${Number(linkedMovieId) || 0})">${icon('refresh')}Retry</button>
       </div>
     `;
   }
 }
 
-function directDownloadButton(encodedMagnet, title, containerId, mediaType, label = 'Download') {
+function directDownloadButton(encodedMagnet, title, containerId, mediaType, label = 'Download', linkedMovieId = 0) {
   return `<button class="btn-download-direct"
-            onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(title)}, ${jsArg(containerId)}, ${jsArg(mediaType)})">
+            onclick="startDirectDownload(${jsArg(encodedMagnet)}, ${jsArg(title)}, ${jsArg(containerId)}, ${jsArg(mediaType)}, ${Number(linkedMovieId) || 0})">
             ${icon('download')}<span>${label}</span>
           </button>`;
 }
@@ -1110,7 +1162,7 @@ async function cancelDownload(movieId, containerId) {
     if (container && downloadInfo) {
       // Recommender cards re-run their own search; direct results reuse the magnet.
       container.innerHTML = downloadInfo.encodedMagnet
-        ? directDownloadButton(downloadInfo.encodedMagnet, downloadInfo.title, containerId, downloadInfo.mediaType || 'movie', 'Download again')
+        ? directDownloadButton(downloadInfo.encodedMagnet, downloadInfo.title, containerId, downloadInfo.mediaType || 'movie', 'Download again', downloadInfo.linkedMovieId || 0)
         : watchButtonHtml({ id: movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
     }
     showToast('Download cancelled');
@@ -1290,66 +1342,17 @@ function updateActiveDownloadTracker(data) {
 // ---------------------------------------------------------------------------
 // 8. Download for Recommender Movie Cards
 // ---------------------------------------------------------------------------
-async function startDownload(movieId, movieTitle, mediaType = 'movie') {
-  const container = document.getElementById(`watch-container-${movieId}`);
-  if (!container) return;
-
-  container.innerHTML = `
-    <button class="btn-watch" disabled>
-      <span class="spinner" aria-hidden="true"></span><span>Finding a copy…</span>
-    </button>
-  `;
-
-  try {
-    const searchRes = await fetch('/api/torrent/search', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: movieTitle, sort_by_size: true, media_type: mediaType })
-    });
-
-    if (!searchRes.ok) throw new Error('Search failed');
-    const { results } = await searchRes.json();
-    if (!results || results.length === 0) throw new Error('No copy available right now');
-
-    const magnetLink = results[0].magnet;
-
-    const downloadRes = await fetch('/api/torrent/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        magnet_link: magnetLink,
-        movie_id: movieId,
-        movie_title: movieTitle,
-        media_type: mediaType
-      })
-    });
-
-    const downloadData = await downloadRes.json();
-    if (downloadData.error) throw new Error(downloadData.error);
-
-    state.activeDownloads[movieId] = {
-      movieId,
-      title: movieTitle,
-      mediaType,
-      progress: 0,
-      status: 'connecting',
-      containerId: `watch-container-${movieId}`
-    };
-    renderActiveDownloadsMonitor();
-
-    pollDownloadProgress(movieId, `watch-container-${movieId}`, movieTitle, mediaType);
-
-  } catch (err) {
-    console.error('Recommender download error:', err);
-    // Stays put until the user acts — the old version vanished after 3s,
-    // often before anyone had read it.
-    container.innerHTML = `
-      <div class="progress-box error-box" role="alert">
-        <span>${escapeHtml(err.message)}</span>
-        <button class="btn-retry-mini" onclick="startDownload(${movieId}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Retry</button>
-      </div>
-    `;
-  }
+// Downloads only start from the Download tab: this opens it with the title
+// already searched, so the copy is picked there. The pick stays linked to the
+// catalogue film (movie_id) so it is logged as "downloaded" and filed right.
+function startDownload(movieId, movieTitle, mediaType = 'movie') {
+  const type = mediaType === 'tv' ? 'tv' : 'movie';
+  setDirectMediaType(type);
+  state.directLinked = { movieId, title: movieTitle, mediaType: type, query: String(movieTitle).trim() };
+  const input = document.getElementById('directQueryInput');
+  if (input) input.value = movieTitle;
+  switchTab('direct');
+  executeDirectSearch();
 }
 
 // ---------------------------------------------------------------------------
