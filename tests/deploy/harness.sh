@@ -142,7 +142,7 @@ EOF
   # Docker's rootless tools download: only used by tests that remove the setuptool stub.
   mkdir -p "$T/extras-src/docker-rootless-extras"
   # shellcheck disable=SC2016  # the $* and $STUB_STATE are meant to expand later, in the generated script
-  printf '#!/usr/bin/env bash\necho "dockerd-rootless-setuptool.sh $*" >>"$STUB_STATE/calls.log"\ntouch "$STUB_STATE/daemon_up"\n' >"$T/extras-src/docker-rootless-extras/dockerd-rootless-setuptool.sh"
+  printf '#!/usr/bin/env bash\n[ -x "$(dirname "$0")/docker" ] || { echo "$(dirname "$0")/docker: not found" >&2; exit 127; }  # like the real script\necho "dockerd-rootless-setuptool.sh $*" >>"$STUB_STATE/calls.log"\ntouch "$STUB_STATE/daemon_up"\n' >"$T/extras-src/docker-rootless-extras/dockerd-rootless-setuptool.sh"
   printf '#!/bin/sh\n' >"$T/extras-src/docker-rootless-extras/rootlesskit"
   chmod +x "$T/extras-src/docker-rootless-extras/"*
   tar -czf "$STUB_STATE/extras.tgz" -C "$T/extras-src" docker-rootless-extras
