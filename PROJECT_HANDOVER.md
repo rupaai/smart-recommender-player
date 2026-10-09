@@ -7,8 +7,8 @@ The user finds branches hard to track, so every chat updates this list when it o
 - `watch-later`: merged into `main` as PR #12 (shared Watch later list, schema v11, §12).
 - `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
 - `deploy/phase-1` (PR "Deploy phase 1: portable app", M1): `make check`, `CONFIG_PATH`/`MODELS_DIR`, `deploy/config.server.yaml`, `/healthz`. Then `deploy/phase-2` (PR "Deploy phase 2: containers"; Docker, builds on 1) and `deploy/phase-3` (PR "Deploy phase 3: CI"; CI, builds on 2); merge in that order. The "Deployment plan" PR (#13) is merged.
-- M1 (phases 1, 2, 3) is merged. M2 (stacked, merge in order): `deploy/phase-4` (PR "Deploy phase 4: server setup script"), then `deploy/phase-5` (PR "Deploy phase 5: one-button deploy") and `deploy/phase-8` (alerts).
-- Open PRs: Deploy phase 4 (#20), Deploy phase 5 (#21), Deploy phase 8 (M2; "Deploy phase 8: alerts").
+- M1 (phases 1, 2, 3) and M2 (phases 4, 5, 8: PRs #20, #21, #22) are merged. Nothing has been run on `mars` yet: Labiba's steps are in `deploy/RUNBOOK.md`.
+- Open PRs: none.
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
