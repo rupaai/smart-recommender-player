@@ -30,6 +30,7 @@ from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import verdicts as vd
+from services.taste_runtime import TasteRuntime
 from services.vibe_index import VibeIndex
 from services.vibe_popup import PopupSession, SessionStore, should_auto_ask
 from services.torrent_service import (
@@ -59,6 +60,7 @@ print(
 
 recommender_cfg = config.get("recommender", {})
 enable_tier2 = recommender_cfg.get("enable_tier2_profiling", True)
+taste_runtime = TasteRuntime(db, recommender_cfg.get("taste_model"))
 recommender_service = RecommenderService(
     db_manager=db,
     api_key=api_key,
@@ -66,12 +68,13 @@ recommender_service = RecommenderService(
     shortlist_size=recommender_cfg.get("shortlist_size", 250),
     final_pool=recommender_cfg.get("final_pool", 50),
     vibe_index=VibeIndex(),
+    taste_runtime=taste_runtime,
 )
 
 # TIGER generative retrieval engine (parallel — legacy recommender untouched).
 # Artifacts are loaded lazily from models/tiger/; if absent the router
 # automatically serves the existing recommender instead.
-generative_retriever = GenerativeRetriever(db_manager=db, config=config)
+generative_retriever = GenerativeRetriever(db_manager=db, config=config, taste_runtime=taste_runtime)
 
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)

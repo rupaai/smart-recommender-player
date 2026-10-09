@@ -190,3 +190,9 @@ As of 2026-10-08 the database holds 71 *seen* ratings and 220 *not seen* answers
 12. **Era/runtime filters silently ignored** when empty. Duration "medium" not handled in Python.
 13. **Variety:** generative always shuffles (even targeted requests). Legacy shuffles after MMR, so the same 50 films just reorder.
 14. **Minor:** `vote_count` 0 treated as 100 votes; rating 0 treated as 6.0; SQL funnel runs the full query twice; `get_vector_embeddings` / ONNX branch is dead code; Scary maps to Mystery.
+
+---
+
+## 8. Learned taste terms (2026-10-09, off by default)
+
+Legacy and generative scoring can add `1.0 * facet_fit + 0.8 * cluster_affinity` (each -1..+1) from `services/taste_model.py` when `recommender.taste_model.enabled` is true. See PROJECT_HANDOVER.md §10.8 for how they are learned, the gates, and the offline check.
