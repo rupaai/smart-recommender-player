@@ -552,7 +552,7 @@ button:disabled { cursor: default; }
 .badge-coview-a { background: var(--together-bg); color: var(--together-text); font-weight: 700; }
 .badge-coview-b { background: var(--together-bg); color: var(--together-text); }
 .badge-coview-score { background: var(--ready-bg); color: var(--ready-text); }
-.badge-bonus, .badge-query { background: var(--taste-bg); color: var(--taste-text); }
+.badge-bonus, .badge-query, .badge-taste { background: var(--taste-bg); color: var(--taste-text); }
 .badge-theme { background: var(--theme-bg); color: var(--theme-text); }
 .badge-series { background: var(--series-bg); color: var(--series-text); }
 .badge-tmdb { background: var(--series-bg); color: var(--series-text); }

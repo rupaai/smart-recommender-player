@@ -42,6 +42,8 @@ DEFAULTS: Dict[str, Any] = {
     "limit_strength": 0.5,       # penalty beyond a tolerance limit
     "limit_margin": 0.1,
     "reason_min_share": 0.2,     # a contribution must be this share of the biggest to earn a badge
+    "reason_min_fit": 0.33,      # a dial earns a badge only when the film is within ~1 tolerance of my level
+    "selectivity_ref": 0.5,      # a dial whose preferred level is this many population std from the usual gets full weight
 }
 
 # Chip -> catalogue features. Chips with no feature are ignored in the maths
@@ -75,7 +77,8 @@ ANSWER_EFFECTS: Dict[str, Dict[str, Tuple[str, float, Optional[str]]]] = {
     "weird": {"tooweird": ("strangeness", +1, "max"), "ordinary": ("strangeness", -1, None)},
 }
 
-# Reason badge text per feature. Dials read "matches how you like <x>".
+# Reason badge text per feature. Cringe and gore have none: nearly every film sits
+# at the low end, so "about as awkward as you like" would explain nothing.
 DIAL_PHRASE: Dict[str, str] = {
     "energy": "matches the energy you like",
     "attention": "asks for about the focus you like to give",
@@ -86,8 +89,6 @@ DIAL_PHRASE: Dict[str, str] = {
     "ending_valence": "ends the way you like",
     "humour": "funny the way you like",
     "strangeness": "as strange as you like",
-    "cringe": "about as awkward as you like",
-    "gore": "about as bloody as you like",
     "fantasy": "has the fantasy you like",
     "talkiness": "as talky as you like",
     "spectacle": "has the scale you like",
@@ -196,8 +197,41 @@ def _confidence(record: Dict[str, Any], inferred_weight: float) -> float:
     return inferred_weight if record.get("inferred") else 1.0
 
 
+def population_stats(dial_dicts: Iterable[Dict[str, float]]) -> Dict[str, Tuple[float, float]]:
+    """{dial: (mean, std)} over a reference set of films (the acclaimed pool the
+    recommender actually ranks), used to tell which dials really separate what I
+    like from what is usually on offer."""
+    sums: Dict[str, List[float]] = {}
+    for dials in dial_dicts:
+        for k, v in dials.items():
+            s = sums.setdefault(k, [0.0, 0.0, 0.0])
+            s[0] += 1
+            s[1] += v
+            s[2] += v * v
+    out: Dict[str, Tuple[float, float]] = {}
+    for k, (n, t, sq) in sums.items():
+        if n >= 30:
+            mean = t / n
+            out[k] = (mean, math.sqrt(max(sq / n - mean * mean, 0.0)))
+    return out
+
+
+def selectivity(pref: float, tolerance: float, pop: Optional[Tuple[float, float]], ref: float = 0.5) -> float:
+    """0..1: how much a dial separates my taste from the usual. A dial where
+    everything I like sits at the usual level with the usual spread tells the
+    ranking nothing and gets little weight."""
+    if not pop:
+        return 1.0
+    mean, std = pop
+    std = max(std, 0.05)
+    shifted = _clip(abs(pref - mean) / (ref * std))
+    tight = _clip(1.0 - tolerance / std)
+    return max(shifted, tight, 0.05)
+
+
 # --- Building the model ---------------------------------------------------------
-def build_taste_model(rated: Sequence[Dict[str, Any]], cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def build_taste_model(rated: Sequence[Dict[str, Any]], cfg: Optional[Dict[str, Any]] = None,
+                      population: Optional[Dict[str, Tuple[float, float]]] = None) -> Dict[str, Any]:
     """The learned taste of one profile. `active` is False below the evidence
     gate, and an inactive model scores nothing."""
     c = config_with_defaults(cfg)
@@ -270,10 +304,12 @@ def build_taste_model(rated: Sequence[Dict[str, Any]], cfg: Optional[Dict[str, A
             bw = sum(w for _, w in blamed[dial])
             avoid = {"level": sum(v * w for v, w in blamed[dial]) / bw,
                      "strength": c["avoid_strength"] * bw / (bw + c["chip_k"])}
+        tol = max(math.sqrt(var), c["min_tolerance"])
+        sel = selectivity(pref, tol, (population or {}).get(dial), c["selectivity_ref"])
         model["dials"][dial] = {
-            "pref": round(pref, 4), "tolerance": round(max(math.sqrt(var), c["min_tolerance"]), 4),
-            "evidence": round(evidence, 3),
-            "weight": round(chip_weight * evidence / (evidence + c["evidence_k"]), 4),
+            "pref": round(pref, 4), "tolerance": round(tol, 4),
+            "evidence": round(evidence, 3), "selectivity": round(sel, 3),
+            "weight": round(chip_weight * sel * evidence / (evidence + c["evidence_k"]), 4),
             "avoid": avoid,
         }
 
@@ -334,6 +370,7 @@ def facet_fit(model: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     feats = item.get("features") or item_features(item)
     c = model["config"]
     parts: Dict[str, float] = {}
+    fits: Dict[str, float] = {}
     total_w = 0.0
     for dial, spec in model["dials"].items():
         level = feats["dials"].get(dial)
@@ -350,6 +387,7 @@ def facet_fit(model: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
         if "min" in lim and level < lim["min"] - c["limit_margin"]:
             fit -= c["limit_strength"] * min(1.0, (lim["min"] - c["limit_margin"] - level) / 0.2)
         parts[dial] = spec["weight"] * fit
+        fits[dial] = fit
         total_w += spec["weight"]
     for feature, spec in model["sets"].items():
         tags = feats.get(feature) or set()
@@ -357,12 +395,13 @@ def facet_fit(model: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
         if not known:
             continue
         parts[feature] = spec["weight"] * (sum(known) / len(known))
+        fits[feature] = sum(known) / len(known)
         total_w += spec["weight"]
     if total_w <= 0:
         return empty
     scale = model["confidence"] / total_w
     parts = {k: v * scale for k, v in parts.items()}
-    return {"value": _clip(sum(parts.values()), -1.0, 1.0), "parts": parts}
+    return {"value": _clip(sum(parts.values()), -1.0, 1.0), "parts": parts, "fits": fits}
 
 
 def cluster_affinity(model: Dict[str, Any], item: Dict[str, Any]) -> float:
@@ -373,33 +412,40 @@ def cluster_affinity(model: Dict[str, Any], item: Dict[str, Any]) -> float:
 
 
 def blend(models: Sequence[Tuple[float, Dict[str, Any]]], item: Dict[str, Any]) -> Dict[str, Any]:
-    """Score one film for one or two people. `models` is [(mix weight, model)];
-    inactive models drop out and the rest are renormalised, so a partner with no
-    history doesn't dilute the other person's taste."""
+    """Score one film for one or two people. `models` is [(mix weight, model)].
+    An inactive model contributes nothing and the weights are NOT renormalised,
+    the same as the genre taste bonus: a view that leans on someone with no
+    history simply gets a smaller effect, never a stronger one."""
     live = [(w, m) for w, m in models if m.get("active") and w > 0]
     if not live:
         return {"facet_fit": 0.0, "cluster_affinity": 0.0, "parts": {}, "cluster_id": item.get("vibe_cluster_id")}
-    total = sum(w for w, _ in live)
+    total = 1.0
     ff = 0.0
     ca = 0.0
     parts: Dict[str, float] = {}
+    fits: Dict[str, float] = {}
     for w, m in live:
         f = facet_fit(m, item)
+        for k, v in (f.get("fits") or {}).items():
+            fits[k] = max(fits.get(k, -9.0), v)
         ff += (w / total) * f["value"]
         ca += (w / total) * cluster_affinity(m, item)
         for k, v in f["parts"].items():
             parts[k] = parts.get(k, 0.0) + (w / total) * v
     return {"facet_fit": round(ff, 4), "cluster_affinity": round(ca, 4),
-            "parts": {k: round(v, 4) for k, v in parts.items()}, "cluster_id": item.get("vibe_cluster_id")}
+            "parts": {k: round(v, 4) for k, v in parts.items()},
+            "fits": {k: round(v, 3) for k, v in fits.items()}, "cluster_id": item.get("vibe_cluster_id")}
 
 
 def reasons(scored: Dict[str, Any], weights: Dict[str, float],
-            cluster_label: Optional[str] = None, limit: int = 2, min_share: float = 0.2) -> List[str]:
+            cluster_label: Optional[str] = None, limit: int = 2, min_share: float = 0.2,
+            min_fit: float = 0.33) -> List[str]:
     """Badge texts from the real largest positive contributors (weighted, so a
     dial and the cluster compete on the points they actually added)."""
     cands: List[Tuple[float, str]] = []
     for feature, part in (scored.get("parts") or {}).items():
-        if part > 0 and feature in DIAL_PHRASE:
+        fit = (scored.get("fits") or {}).get(feature, 1.0)
+        if part > 0 and fit >= min_fit and feature in DIAL_PHRASE:
             cands.append((weights.get("facet_fit", 1.0) * part, DIAL_PHRASE[feature]))
     ca = scored.get("cluster_affinity") or 0.0
     if ca > 0 and cluster_label:

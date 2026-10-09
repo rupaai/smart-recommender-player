@@ -185,7 +185,9 @@ class GenerativeRetriever:
     serves the legacy recommender instead.
     """
 
-    def __init__(self, db_manager: DatabaseManager, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, db_manager: DatabaseManager, config: Optional[Dict[str, Any]] = None,
+                 taste_runtime: Optional[Any] = None):
+        self.taste_runtime = taste_runtime   # services.taste_runtime.TasteRuntime, optional
         self.db = db_manager
         cfg = (config or {}).get("recommender", {}) or {}
         gen_cfg = cfg.get("generative", {}) or {}
@@ -543,6 +545,10 @@ class GenerativeRetriever:
             backfill.sort(key=lambda x: x[0], reverse=True)
             ranked_items = ranked_items + [item for _, item in backfill[: self.candidate_pool]]
             ranked_items.sort(key=lambda it: it.get("recommendation_score", 0.0), reverse=True)
+
+        # Learned taste (facet_fit, cluster_affinity); a no-op when off or too thin.
+        if self.taste_runtime is not None:
+            ranked_items = self.taste_runtime.apply(ranked_items, profile)
 
         # Genre hard-filter when the filtered pool stays useful.
         if request_genres:

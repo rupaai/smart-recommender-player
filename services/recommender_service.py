@@ -645,6 +645,7 @@ _SERIES_INHERITED_KEYS = (
     "recommendation_score", "base_weighted_rating", "taste_bonus",
     "taste_bonus_own", "taste_bonus_other", "relevance_boost", "query_boost",
     "co_view_tier", "tier_boost", "matched_themes", "vibe_similarity", "vibe_boost",
+    "facet_fit", "cluster_affinity", "taste_reasons",
 )
 _SERIES_INTERNAL_KEYS = ("seen", "series_position")
 
@@ -735,8 +736,10 @@ class RecommenderService:
         shortlist_size: int = 250,
         final_pool: int = 50,
         vibe_index: Optional[Any] = None,
+        taste_runtime: Optional[Any] = None,
     ):
         self.db = db_manager
+        self.taste_runtime = taste_runtime     # services.taste_runtime.TasteRuntime, optional
         self.vibe_index = vibe_index           # services.vibe_index.VibeIndex, optional
         self._title_search = None
         self.api_key = api_key
@@ -1344,6 +1347,8 @@ class RecommenderService:
 
         if vibe:
             ranked = self._apply_vibe(ranked, vibe)
+        if self.taste_runtime is not None:
+            ranked = self.taste_runtime.apply(ranked, profile)
         if pool_hook is not None:
             ranked = pool_hook(ranked)
 

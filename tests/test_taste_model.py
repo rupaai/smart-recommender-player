@@ -197,7 +197,8 @@ def test_gate():
     # blending: a partner with no history doesn't dilute
     solo = tm.blend([(0.75, big), (0.25, m)], {"facets": {"pace": 0.2}})
     alone = tm.blend([(1.0, big)], {"facets": {"pace": 0.2}})
-    check("an inactive partner drops out of the blend", abs(solo["facet_fit"] - alone["facet_fit"]) < 1e-9)
+    check("an inactive partner adds nothing and the weights are not renormalised",
+          abs(solo["facet_fit"] - 0.75 * alone["facet_fit"]) < 1e-3, (solo["facet_fit"], alone["facet_fit"]))
 
 
 def test_reasons():

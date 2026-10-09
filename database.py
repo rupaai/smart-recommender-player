@@ -912,7 +912,8 @@ class DatabaseManager:
         import json as _json
         score_keys = ("recommendation_score", "score", "taste_bonus", "query_boost", "tier_boost",
                       "relevance_boost", "generative_rank", "co_view_tier", "combined_score",
-                      "vibe_similarity", "vibe_boost", "vibe_cluster_id", "popup_boost")
+                      "vibe_similarity", "vibe_boost", "vibe_cluster_id", "popup_boost",
+                      "facet_fit", "cluster_affinity")
         added = 0
         with self.get_connection() as conn:
             for offset, it in enumerate(items):
