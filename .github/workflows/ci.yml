@@ -34,7 +34,11 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+      # Docker Hub rate-limits anonymous pulls from shared runners (429s, timeouts), so
+      # the base image and BuildKit come from the AWS public mirror of the same images.
       - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
       # Only main publishes; pull requests just prove the image builds.
       - name: Log in to GHCR
         if: github.event_name == 'push'
@@ -50,6 +54,7 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           build-args: |
             GIT_SHA=${{ github.sha }}
+            BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
           tags: |
             ${{ env.IMAGE }}:sha-${{ github.sha }}
             ${{ env.IMAGE }}:main
