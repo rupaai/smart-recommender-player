@@ -1161,6 +1161,12 @@ async function watchedFromLater(id, title) {
     return;
   }
   refreshLaterCount();
+  // Rate under the person holding the phone ("I'm ..."), not whichever
+  // profile the Rate tab last had selected.
+  const want = state.activeProfileId;
+  const queueLoaded = state.rateProfiles.length > 0 && state.rateCursor > 0;
+  const switchProfile = want !== state.rateProfileId;
+  if (switchProfile) state.rateProfileId = want;
   let item = null;
   try {
     const params = new URLSearchParams({ q: title, media_type: 'all', limit: 10, profile_id: state.rateProfileId });
@@ -1174,6 +1180,13 @@ async function watchedFromLater(id, title) {
   // the title is not wiped by that load.
   for (let i = 0; i < 40 && !(state.rateProfiles.length && state.rateCursor > 0); i++) {
     await new Promise(r => setTimeout(r, 100));
+  }
+  if (switchProfile && queueLoaded) {
+    // The queue on screen belonged to the other profile; reload it for this one.
+    state.rateQueue = [];
+    state.rateIndex = 0;
+    renderRateProfiles();
+    await loadRatingQueue(true);
   }
   openSearchedTitle(item);
   showToast('Marked as watched. Rate it?', { label: 'Undo', run: () => undoLaterDone(id).then(refreshLaterCount) });

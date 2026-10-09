@@ -4,8 +4,8 @@
 ## Branches and open PRs (keep this current)
 The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
 - `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
-- `watch-later` (draft PR "Watch later list", opened 2026-10-09): shared Watch later list in 7 tasks, one branch and one PR. Tasks 1 (schema v11 + database methods), 2 (API), 3 (header switch + Discover button) and 4 (Rate card + Rate search) done. Also renames the seeded profiles to Labiba / Gabriele.
-- Open PRs: "Watch later list" (draft).
+- `watch-later` (draft PR "Watch later list", opened 2026-10-09): shared Watch later list in 7 tasks, one branch and one PR. Tasks 1-6 done (schema v11 + methods, API, header switch + Discover button, Rate card + Rate search, Later tab, polish); optional Task 7 not built. Also renames the seeded profiles to Labiba / Gabriele.
+- Open PRs: "Watch later list" (ready to merge).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -475,7 +475,7 @@ The light redesign with the "ticket" look is the UI (the "clean" look was remove
 - Sample ranking and rationale: `/mnt/project-files/download-sort/scoring-proposal.md`.
   
 
-## 12. WATCH LATER (in progress, branch `watch-later`)
+## 12. WATCH LATER (done, PR "Watch later list" ready to merge)
 
 Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who added it" is `profile_id`. Built in 7 tasks on one branch / one PR. Task 7 (using the list in ranking) is optional and skipped for now.
 
@@ -522,3 +522,14 @@ Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who adde
 - **States:** empty ("Nothing saved yet" / "Tap the bookmark on any pick to save it for later."), "Nothing matches" when filters hide everything, loading, error with Try again.
 - **Verified:** Playwright on a copy of `catalogue.db` at 1280 and 390 px: add on Discover as Labiba -> Later shows "Added by Labiba"; Gabriele presses the bookmark there -> "You both want this"; Both / Labiba / TV filters; reload on `#later`; Watched it -> Rate card on that title; rating it seen -> count clears and it sits in "Watched from your list"; Undo brings it back; both unpress -> empty state; blocked request -> error state. No horizontal scroll at 390 px; tabs fit. No console errors except the known missing font and the request I blocked on purpose.
 
+### Task 6: polish and check - done
+- Merged `origin/main` (PR #10, only a handover edit; main is still schema v10, so the migration stays v11). `CACHE_NAME` in `static/sw.js` is now `movie-companion-v2`.
+- **"Watched it" uses the active person:** `watchedFromLater` sets `state.rateProfileId = state.activeProfileId` before opening the Rate tab (and reloads the Rate queue if it was loaded for the other profile), so the rating is under the "I'm ..." person.
+
+### Verified
+- All `tests/*.py` and `node --check static/app.js`.
+- Playwright on a copy of `catalogue.db` at 1280 and 390 px: switch person (survives reload), add from Discover, Rate card and Rate search row, both people on one title ("You both want this"), All/Movies/TV and Added by filters, Watched it (Rate opens under the active person), rated seen -> "Watched from your list" -> Undo, remove, reload on `#later`. No horizontal scroll. Console clean apart from the known missing `Archivo-Variable.woff2` and blocked external poster requests in the sandbox.
+
+### Not built
+- Task 7 (recommender signal / "On your list" badge on Discover, 'saved' feedback outcome).
+- TMDB-only search rows, History rows, "This or that" cards and Download results have no Watch later button (by design).
