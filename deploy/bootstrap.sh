@@ -29,6 +29,7 @@ UDEV_RULE_FILE="${UDEV_RULE_FILE:-/etc/udev/rules.d/70-couchcinema-render.rules}
 APPARMOR_FILE="${APPARMOR_FILE:-/etc/apparmor.d/usr.bin.rootlesskit}"
 USERNS_RESTRICT_FILE="${USERNS_RESTRICT_FILE:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}"
 RENDER_NODE="${RENDER_NODE:-/dev/dri/renderD128}"
+SYSTEMD_DIR="${SYSTEMD_DIR:-/etc/systemd/system}"
 WAIT_SECONDS="${WAIT_SECONDS:-120}"
 
 ALLOWED_KEYS="IMAGE_TAG MEDIA_ROOT RENDER_GID APP_USER SVC_PUID SVC_PGID TMDB_API_KEY JELLYFIN_API_KEY JELLYFIN_USER_ID PROWLARR_API_KEY ADMIN_TOKEN NTFY_TOPIC NTFY_SERVER HEALTHCHECKS_URL"
@@ -392,8 +393,8 @@ print(m.group(1) if m else "")')"
   unit="$(runner_unit)"
   if ! systemctl cat "$unit" >/dev/null 2>&1; then
     (cd "$dir" && ./svc.sh install "$DEPLOY_USER")
-    mkdir -p "/etc/systemd/system/$unit.d"
-    printf '[Unit]\nAfter=user@%s.service\nWants=user@%s.service\n' "$(deploy_uid)" "$(deploy_uid)" >"/etc/systemd/system/$unit.d/couchcinema.conf"
+    mkdir -p "$SYSTEMD_DIR/$unit.d"
+    printf '[Unit]\nAfter=user@%s.service\nWants=user@%s.service\n' "$(deploy_uid)" "$(deploy_uid)" >"$SYSTEMD_DIR/$unit.d/couchcinema.conf"
     systemctl daemon-reload
   fi
   systemctl is-active --quiet "$unit" || (cd "$dir" && ./svc.sh start)

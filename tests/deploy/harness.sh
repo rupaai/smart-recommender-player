@@ -41,7 +41,7 @@ fi
 case "$name" in
   id)
     case "$*" in
-      "-u") exec /usr/bin/id -u ;;
+      "-u") echo 0 ;;   # pretend to be root: CI runs these tests unprivileged
       "-u deploy") [ -f "$S/user" ] && echo 1001 || exit 1 ;;
       "deploy") [ -f "$S/user" ] || exit 1 ;;
       "-nG deploy") echo "${STUB_GROUPS:-deploy}" ;;
@@ -129,7 +129,7 @@ EOF
   export PATH="$STUBS:$PATH"
   export CC_ROOT="$T/srv" RUNTIME_ROOT="$T/run" SUBUID_FILE="$T/subuid" SUBGID_FILE="$T/subgid"
   export CRON_FILE="$T/cron.d-couchcinema" UDEV_RULE_FILE="$T/udev.rules" APPARMOR_FILE="$T/apparmor.rootlesskit"
-  export USERNS_RESTRICT_FILE="$T/userns_restrict" RENDER_NODE="$T/renderD128" WAIT_SECONDS=2
+  export SYSTEMD_DIR="$T/systemd" USERNS_RESTRICT_FILE="$T/userns_restrict" RENDER_NODE="$T/renderD128" WAIT_SECONDS=2
   echo 1 >"$USERNS_RESTRICT_FILE"
   : >"$RENDER_NODE"
   unset DOCKER_HOST MEDIA_ROOT TMDB_API_KEY PROWLARR_API_KEY HEALTHCHECKS_URL RUNNER_TOKEN STUB_GROUPS
