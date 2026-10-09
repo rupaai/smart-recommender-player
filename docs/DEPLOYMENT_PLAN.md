@@ -100,6 +100,7 @@ Rules that follow from this:
 2. Set memory limits so a busy download or transcode can't starve Home Assistant: app 2GB, Jellyfin 4GB, Prowlarr 512MB.
 3. Media is capped at **100GB** for now (setting `torrent.max_media_gb: 100`). The app refuses to start a download when the media folder plus that download's size would go over the cap, or when free disk would drop below 20GB, and shows why. Raising the cap is a one-line config change.
 4. Don't expose anything through the existing cloudflared tunnel. Access is over Tailscale only.
+5. The `deploy` user must never be in the `docker` group or `sudo`. Verify after P4.1 with `id deploy` and `docker --context rootless ps` (only our containers appear). Gabriele's containers must still be listed by his own `docker ps`, untouched.
 
 ## How to run this plan
 
@@ -204,7 +205,7 @@ Before starting M1, run the two quick checks in **Phase 0** below. They test the
 
 ### [ ] P4.1 One-command setup script (Sonnet)
 `deploy/bootstrap.sh`, safe to run again (skips anything already done; checks rather than installs Docker/Tailscale/unattended-upgrades and stops with a clear message if one is missing):
-1. Creates a `deploy` system user in the `docker` group only (no sudo). The runner and deploys run as this user, not as `gabstevens`, so CI never has his sudo rights.
+1. Creates a `deploy` system user with **rootless Docker** (its own Docker daemon, owned by `deploy`). It is NOT added to the `docker` group: that group is root-equivalent and would let CI reach Gabriele's Home Assistant and Matter containers. With rootless Docker the `deploy` user can only see its own containers, images and networks. The runner and deploys run as this user, never as `gabstevens`.
 2. Creates `/srv/couchcinema/{data,models/releases,backups/pre-deploy,jellyfin/config,jellyfin/cache,prowlarr/config}` and `$MEDIA_ROOT/{Movies,Shows,downloads}` if missing, owned by `deploy`.
 3. Copies `config.server.yaml` and `compose.yaml` into place and writes the host's `render` group id into `.env` for Jellyfin.
 4. Asks for each secret once (TMDB key etc.), generates `ADMIN_TOKEN`, writes `.env` (mode 600), and prints the token to copy to the Mac. The Jellyfin API key and user id can't exist until Jellyfin's first-run wizard is done, so they're optional here; `bootstrap.sh --set KEY=value` adds one later and restarts only our app container.
