@@ -7,8 +7,9 @@ related_targets: ["static/styles.css","static/app.js"]
 
 Scope: the whole single-page app (Discover, Download, Rate together, History). Mode: Operate.
 Audience/job: a couple choosing tonight's film, phone on the sofa or laptop. Rate quickly so picks improve.
-Constraints: light UI; not cute, not techy/torrent, not Netflix, not template. Standard controls. No build step, Pi-friendly. Name is a placeholder ("Movie Night").
+Constraints: light UI; not cute, not techy/torrent, not Netflix, not template. Standard controls. No build step, Pi-friendly. Name: Northern Lights.
 Decision 2026-10-08: the user chose the ticket look; the clean look and its header switch were deleted. data-look="ticket" stays on <html> to scope the ticket rules.
+Decision 2026-10-09: name is Northern Lights, read as the cinema printing the tickets. Aurora lives only in holographic foil (wordmark, stub numbers, both-rated verdicts; scroll-driven light catch) and one aurora pass over each ticket when picks are issued. Ticket stocks unchanged.
 
 ## Direction contract
 THESIS: The evening's choice is issued, not browsed: picks are admission tickets for two. Refuses the dark poster-wall streaming grid.

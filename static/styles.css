@@ -65,6 +65,15 @@
   --shadow-1: 0 1px 2px rgba(29, 27, 41, 0.08);
   --shadow-2: 0 10px 28px rgba(29, 27, 41, 0.14);
   --focus: #1d1b29;
+
+  /* Aurora foil: the only place the Northern Lights show. Deep inks so foil
+     text keeps its contrast on white paper and on the rose stub; the bright
+     band is the light catching it. */
+  --aurora-green: #08714d;
+  --aurora-teal: #0a6378;
+  --aurora-violet: #4a30bd;
+  --aurora-magenta: #9c1f6b;
+  --aurora-glint: #2fc495;
 }
 
 :root { --nav-h: 0px; --ease-out: cubic-bezier(0.16, 1, 0.3, 1); }
@@ -1343,6 +1352,11 @@ kbd {
   .btn-tv-link { padding: 10px 12px; }
   .btn-tv-link .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .btn-tv-link .icon { width: 18px; height: 18px; }
+  /* While a pick downloads, its progress takes a row of its own so the
+     percent, time left and speed all fit on a phone. */
+  .movie-footer:has(.download-progress-bar-wrapper) { flex-wrap: wrap; }
+  .movie-footer:has(.download-progress-bar-wrapper) .ticket-no { margin-right: auto; }
+  .watch-slot:has(.download-progress-bar-wrapper) { order: 1; flex-basis: 100%; }
 }
 
 /* ---------- Toast ---------- */
@@ -1448,6 +1462,71 @@ kbd {
 [data-look="ticket"] .watching-banner { background: var(--together-bg); border: none; }
 [data-look="ticket"] .filters-disclosure,
 [data-look="ticket"] .search-voice-bar { border-radius: var(--radius-sm); }
+
+/* ==========================================================================
+   NORTHERN LIGHTS — the cinema's name, printed in holographic foil. Foil
+   appears only on what a real ticket would stamp: the wordmark, each pick's
+   number and the verdicts once you've both rated. As a ticket crosses the
+   screen its foil catches the light (scroll-driven, no JS).
+   ========================================================================== */
+.foil {
+  color: var(--aurora-violet);
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .foil {
+    background-image: linear-gradient(100deg,
+      var(--aurora-green) 0%, var(--aurora-teal) 20%, var(--aurora-violet) 40%,
+      var(--aurora-glint) 50%,
+      var(--aurora-violet) 60%, var(--aurora-magenta) 80%, var(--aurora-green) 100%);
+    background-size: 320% 100%;
+    background-position: 30% 50%;
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }
+  [data-look="ticket"] .ticket-no span.foil { color: transparent; }
+  /* Small foil (12px verdicts): deep inks only, no glint, so it stays readable */
+  [data-look="ticket"] .rate-stub:not(:has(.pending)) .stub-verdict b {
+    background-image: linear-gradient(100deg, var(--aurora-green), var(--aurora-violet) 55%, var(--aurora-magenta));
+    -webkit-background-clip: text; background-clip: text;
+    color: transparent;
+  }
+}
+@supports (animation-timeline: view()) {
+  .foil {
+    animation: foil-catch linear both;
+    animation-timeline: view();
+  }
+}
+@keyframes foil-catch {
+  from { background-position: 0% 50%; }
+  to { background-position: 100% 50%; }
+}
+
+/* Issued: when picks arrive, a band of aurora passes over each ticket once */
+.movie-card.issued { animation-delay: var(--issue-delay, 0ms); }
+.movie-card.issued::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg,
+    transparent 25%,
+    color-mix(in srgb, var(--aurora-glint) 26%, transparent) 40%,
+    color-mix(in srgb, var(--aurora-violet) 18%, transparent) 52%,
+    color-mix(in srgb, var(--aurora-magenta) 12%, transparent) 62%,
+    transparent 78%);
+  mix-blend-mode: multiply;
+  transform: translateX(-100%); opacity: 0;
+  animation: aurora-pass 1.3s var(--ease-out) both;
+  animation-delay: calc(var(--issue-delay, 0ms) + 180ms);
+}
+@keyframes aurora-pass {
+  0% { transform: translateX(-100%); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .foil { animation: none; }
+  .movie-card.issued::after { display: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

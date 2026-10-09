@@ -8,7 +8,8 @@ The user finds branches hard to track, so every chat updates this list when it o
 - `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
 - `deploy/phase-1` (PR "Deploy phase 1: portable app", M1): `make check`, `CONFIG_PATH`/`MODELS_DIR`, `deploy/config.server.yaml`, `/healthz`. Then `deploy/phase-2` (PR "Deploy phase 2: containers"; Docker, builds on 1) and `deploy/phase-3` (PR "Deploy phase 3: CI"; CI, builds on 2); merge in that order. The "Deployment plan" PR (#13) is merged.
 - M1 (phases 1, 2, 3) is merged. M2 (stacked, merge in order): `deploy/phase-4` (PR "Deploy phase 4: server setup script"), then `deploy/phase-5` (PR "Deploy phase 5: one-button deploy") and `deploy/phase-8` (alerts).
-- M2 (phases 4, 5, 8) is merged and live on `mars`. M3: `deploy/phase-6` merged as PR #26; `deploy/phase-7` (PR "Deploy phase 7: nightly Mac jobs") is open.
+- M2 (phases 4, 5, 8) is merged and live on `mars`. M3: `deploy/phase-6` merged as PR #26; `deploy/phase-7` merged as PR #27.
+- `claude/project-thread-eepc0c` (PR "Northern Lights: foil name and download details", opened 2026-10-09): renames the app, adds the aurora foil and puts speed and time left back on downloads (§9).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
@@ -348,7 +349,8 @@ Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, o
 
 - **Look:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
 - **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
-- **Placeholder name "Movie Night"** replaces "CouchCinema" (the user wants a new name; still undecided). The popcorn mark is gone.
+- **Name: Northern Lights** (chosen 2026-10-09; replaces the placeholder "Movie Night", and before it "CouchCinema"). The popcorn mark is gone. Northern Lights is treated as the cinema's name and the tickets as what it prints, so the ticket look stays. The aurora appears only as **holographic foil** (`.foil`, `--aurora-*` tokens in `styles.css`): on the wordmark, each pick's "No. 01" and the Rate stub's verdicts once both people have rated (small text uses deep inks without the glint). As a ticket scrolls through the screen its foil catches the light (CSS `animation-timeline: view()`, no JS; static where unsupported or with reduced motion). When picks appear, an aurora band passes over each ticket once (`.movie-card.issued::after`). Options the user didn't pick: aurora roll colours, an evening night-sky mode.
+- **Download progress** shows percent · time left · speed on the pick's stub and in the active-downloads list (time left is hidden while the speed is 0). On a phone the progress bar takes its own row under the stub so all three fit.
 - **Structure:**
   - Tabs: Discover / Download / Rate / Later / History (Later is the Watch later list, see §12). A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
   - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.

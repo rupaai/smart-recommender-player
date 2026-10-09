@@ -1,6 +1,6 @@
 {
-  "name": "Movie Night",
-  "short_name": "Movie Night",
+  "name": "Northern Lights",
+  "short_name": "Northern Lights",
   "description": "Picks for the two of you, learned from your ratings",
   "start_url": "/",
   "display": "standalone",

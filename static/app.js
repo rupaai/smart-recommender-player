@@ -1059,7 +1059,7 @@ function buildLaterCard(e, rank, animate = true) {
       </div>
     </div>
     <div class="movie-footer">
-      <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
+      <div class="ticket-no" aria-hidden="true"><small>No.</small><span class="foil">${String(rank).padStart(2, '0')}</span></div>
       <div class="watch-slot">${action}</div>
       ${watchLaterButtonHtml(m)}
       <button type="button" class="btn-tv-link btn-watched" aria-label="Watched it: ${escapeHtml(e.title)}"
@@ -1195,8 +1195,8 @@ async function watchedFromLater(id, title) {
 // Extracted so "Show more" and the initial render build identical cards.
 function buildMovieCard(m, engine, index = 0, rank = 1) {
     const card = document.createElement('article');
-    card.className = 'movie-card';
-    card.style.animationDelay = `${Math.min(index, 6) * 40}ms`;
+    card.className = 'movie-card issued';
+    card.style.setProperty('--issue-delay', `${Math.min(index, 6) * 40}ms`);
 
     // Reasons this film is here, in order of how much they mean to you two.
     const reasons = [];
@@ -1243,7 +1243,7 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
       </div>
       ${overview}
       <div class="movie-footer">
-        <div class="ticket-no" aria-hidden="true"><small>No.</small><span>${String(rank).padStart(2, '0')}</span></div>
+        <div class="ticket-no" aria-hidden="true"><small>No.</small><span class="foil">${String(rank).padStart(2, '0')}</span></div>
         <div id="watch-container-${m.id}" class="watch-slot">${actionButtonHtml}</div>
         ${watchLaterButtonHtml(m)}
         <a class="btn-tv-link" href="${escapeHtml(state.jellyfinUrl)}" target="_blank" rel="noopener" title="Open Jellyfin">
@@ -1610,6 +1610,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
         downloadedStr,
         totalStr,
         speedStr,
+        etaStr: (data.download_speed || 0) > 0 ? formatEta(data.eta_seconds) : '',
         containerId
       };
       renderActiveDownloadsMonitor();
@@ -1632,14 +1633,14 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
 
       // In-place progress bar with cancel
       if (container) {
-        // Percent and time left come first so they survive truncation on a
-        // phone; speed shows only when there's no honest ETA (with 0 peers
+        // Percent, time left, then speed: the order they survive truncation
+        // on a phone. Time left is hidden while speed is 0 (with 0 peers
         // libtorrent reports 0 B/s and any ETA would be fiction).
         const etaStr = formatEta(data.eta_seconds);
         const hasEta = etaStr && (data.download_speed || 0) > 0 && pct < 100;
         let statusLabel = stateStr === 'connecting'
           ? 'Connecting…'
-          : `${pct.toFixed(0)}% · ${hasEta ? etaStr : speedStr}`;
+          : [`${pct.toFixed(0)}%`, hasEta ? etaStr : '', speedStr].filter(Boolean).join(' · ');
         if (data.resumed) statusLabel += ' · resumed';
         if (stateStr === 'organizing') {
           statusLabel = `Adding the ${mediaType === 'tv' ? 'episodes' : 'film'} to Jellyfin…`;
@@ -1696,7 +1697,7 @@ function renderActiveDownloadsMonitor() {
       <div class="active-download-main">
         <div class="active-download-title">${escapeHtml(item.title)}</div>
         <div class="active-download-sub">
-          ${isReady ? 'Ready to watch' : `${item.progress.toFixed(0)}% · ${escapeHtml(item.speedStr || '0 B/s')} · ${escapeHtml(statusWord)}`}
+          ${isReady ? 'Ready to watch' : [`${item.progress.toFixed(0)}%`, item.etaStr, item.speedStr || '0 B/s', statusWord].filter(Boolean).map(escapeHtml).join(' · ')}
         </div>
         ${isReady ? '' : `<div class="mini-progress"><span style="transform: scaleX(${item.progress / 100})"></span></div>`}
       </div>
@@ -1719,6 +1720,7 @@ function updateActiveDownloadTracker(data) {
     progress: Math.min(100, data.progress || 0),
     status: data.status || 'downloading',
     speedStr: formatSpeed(data.download_speed || 0),
+    etaStr: (data.download_speed || 0) > 0 ? formatEta(data.eta_seconds) : '',
     downloadedStr: formatSize(data.downloaded || 0),
     totalStr: formatSize(data.total_size || 0)
   };
