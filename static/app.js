@@ -42,7 +42,15 @@ const state = {
   rateGenreList: [],       // catalogue-derived [{name, count}]
   rateSeed: null,          // null = 10-minute rotation bucket
   rateBalanced: true,      // walk the genre wheel (build a profile fast)
-  rateSkipped: new Set()   // item ids skipped this session
+  rateSkipped: new Set(),  // item ids skipped this session
+  rateVocab: null,         // verdicts + chips from /api/ratings/vocab
+  rateDraft: null,         // what's been ticked on the current card
+  rateWhyOpen: false,      // the folded "Why?" section
+  rateWhyData: null,       // vibe-check questions + stored details for the current card
+  rateMoreOpen: false,
+  rateAwaitingWhy: false,  // an extreme verdict is saved; waiting for the optional extras
+  rateSavedVerdict: null,
+  rateSortMode: false      // "Sort out my 7s": confirm verdicts for old ratings
 };
 
 const TABS = ['discover', 'direct', 'rate', 'history'];
@@ -1716,6 +1724,7 @@ function initDiscoverTab() {
 
 function initRateTab() {
   initRateSearch();
+  loadRateVocab();
   renderRateGenres();
   if (!state.rateGenreList.length) loadRateGenres();
   // Profiles may already be cached (loadPartnerName), but the queue still
@@ -1786,6 +1795,18 @@ async function loadRatingQueue(reset) {
   }
   const activeProfile = activeRateProfile();
   try {
+    if (state.rateSortMode) {
+      const sortParams = new URLSearchParams({
+        profile_id: state.rateProfileId, media_type: state.rateMediaType, limit: 100
+      });
+      const sortRes = await fetch(`/api/ratings/inferred-queue?${sortParams}`);
+      const sortData = await sortRes.json();
+      state.rateQueue = (sortData.items || []).filter(it => !state.rateSkipped.has(it.id));
+      state.rateCursor = (sortData.items || []).length;
+      state.rateIndex = 0;
+      renderRateCard();
+      return;
+    }
     const limit = state.rateCursor === 0 ? RATE_PAGE : RATE_PAGE * 2;
     const params = new URLSearchParams({
       profile_id: state.rateProfileId,
@@ -1919,6 +1940,8 @@ function renderRateCard() {
   const total = state.rateQueue.length;
   if (item.fromSearch) {
     setRateProgress('From your search');
+  } else if (state.rateSortMode) {
+    setRateProgress(`Sorting your old ratings · ${done + 1} of ${total}`);
   } else {
     setRateProgress(`${done + 1} of ${total}` + (state.rateGenres.length ? ` · ${state.rateGenres.join(', ')}` : ''));
   }
@@ -1936,12 +1959,29 @@ function renderRateCard() {
   // A title opened from search may already carry this person's verdict:
   // show it, and let them change it.
   const mine = (item.co_view?.verdicts || []).find(v => v.profile_id === state.rateProfileId);
+  const verdictOf = (v) => {
+    if (!v) return '';
+    const label = rateVerdictLabel(v.verdict);
+    return label ? `${label}${v.inferred ? ' (guessed)' : ''}` : '';
+  };
+  const asked = me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? What would you do now?` : 'Seen it? What would you do now?';
   let myVerdict = '<b>not yet</b>';
+  let question = asked;
   if (mine?.status === 'not_seen') myVerdict = "<b>hasn't seen it</b>";
-  else if (mine?.user_rating) myVerdict = `<b>${escapeHtml(mine.user_rating)}/10</b>`;
-  const question = mine?.user_rating
-    ? `You gave it ${escapeHtml(mine.user_rating)}/10. Change it?`
-    : (me.name && me.name !== 'Me' ? `Seen it, ${escapeHtml(me.name)}? How was it?` : 'Seen it? How was it?');
+  else if (mine?.verdict) {
+    myVerdict = `<b>${escapeHtml(verdictOf(mine))}</b>`;
+    question = mine.inferred
+      ? `You gave this ${escapeHtml(mine.user_rating)}/10 before. What's your verdict?`
+      : `You said ${escapeHtml(rateVerdictLabel(mine.verdict))}. Change it?`;
+  } else if (mine?.user_rating) {
+    myVerdict = `<b>${escapeHtml(mine.user_rating)}/10</b>`;
+    question = `You gave it ${escapeHtml(mine.user_rating)}/10. What's your verdict?`;
+  }
+
+  // The "other" person's verdict may now be a verdict word instead of a number.
+  if (other?.verdict) otherVerdict = `<b>${escapeHtml(verdictOf(other))}</b>`;
+
+  if (!state.rateDraft || state.rateDraft.itemId !== item.id) resetRateDraft(item, mine);
 
   const pills = [];
   if (item.in_library) pills.push('<span class="badge badge-coview-score">In your library</span>');
@@ -1970,16 +2010,30 @@ function renderRateCard() {
 
     <div class="rate-controls">
       <p class="rate-question" id="rateQuestion">${question}</p>
-      <div class="rate-stars" role="group" aria-labelledby="rateQuestion">
-        ${Array.from({ length: 10 }, (_, i) => `<button class="star-btn" onclick="submitRating(${i + 1})" aria-label="${i + 1} out of 10 — ${RATING_WORDS[i + 1]}" title="${i + 1} · ${RATING_WORDS[i + 1]}">${icon('star', 'icon star-icon')}</button>`).join('')}
+      ${state.rateVocab ? `
+      <div class="verdict-row" role="group" aria-labelledby="rateQuestion">
+        ${state.rateVocab.verdicts.map((v, i) => `
+          <button class="verdict-btn verdict-${escapeHtml(v.id)} ${state.rateSavedVerdict === v.id ? 'active' : ''}"
+                  onclick="submitVerdict('${escapeHtml(v.id)}')" aria-pressed="${state.rateSavedVerdict === v.id}">
+            <kbd>${i + 1}</kbd>${escapeHtml(v.label)}
+          </button>`).join('')}
       </div>
-      <div class="rate-scale" aria-hidden="true"><span>1 · awful</span><span>10 · all-time favourite</span></div>
+      <label class="rate-dnf"><input type="checkbox" id="rateDnf" ${state.rateDraft.dnf ? 'checked' : ''}
+             onchange="state.rateDraft.dnf = this.checked"> Didn't finish it</label>
+
+      <details class="rate-why" id="rateWhy" ${state.rateWhyOpen ? 'open' : ''} ontoggle="onRateWhyToggle(this)">
+        <summary>Why? <span class="rate-why-sub">optional${state.rateAwaitingWhy ? ' · anything to add?' : ''}</span></summary>
+        <div class="rate-why-body" id="rateWhyBody"></div>
+      </details>
+
+      ${state.rateAwaitingWhy ? `<button class="btn-done" onclick="finishRateWhy()">Saved. Done, next ${icon('skip')}</button>` : ''}
+      ` : '<p class="rate-sub" style="text-align:center">Loading…</p>'}
 
       <div class="rate-actions">
         <button class="btn-not-seen" onclick="submitNotSeen()">${icon('eye-off')}Haven't seen it</button>
         <button class="btn-skip" onclick="skipRateItem()">Skip ${icon('skip')}</button>
       </div>
-      <p class="rate-hint"><kbd>1</kbd>–<kbd>0</kbd> rate · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip</p>
+      <p class="rate-hint"><kbd>1</kbd>–<kbd>5</kbd> verdict · <kbd>D</kbd> didn't finish · <kbd>W</kbd> why · <kbd>N</kbd> haven't seen · <kbd>S</kbd> skip</p>
     </div>
 
     <div class="rate-stub">
@@ -1989,17 +2043,215 @@ function renderRateCard() {
       <span class="stub-verdict ${otherPending ? 'pending' : ''}">${escapeHtml(otherName)}: ${otherVerdict}</span>
     </div>
   `;
+  if (state.rateVocab && state.rateWhyOpen) loadRateWhy(item);
 }
 
 let ratingInFlight = false;
 
-async function submitRating(value) {
+// --- Verdicts, the folded "Why?" section and vibe-check questions ----------
+
+async function loadRateVocab() {
+  if (state.rateVocab || state.rateVocabLoading || state.rateVocabFailed) return;
+  state.rateVocabLoading = true;
+  try {
+    const res = await fetch('/api/ratings/vocab');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    state.rateVocab = await res.json();
+  } catch (err) {
+    console.error('Could not load rating options:', err);
+    state.rateVocabFailed = true;
+    setRateProgress("Couldn't load the rating options. Reload the page to try again.", 'error');
+  } finally {
+    state.rateVocabLoading = false;
+  }
+  renderRateCard();
+}
+
+function rateVerdictLabel(id) {
+  const v = (state.rateVocab?.verdicts || []).find(x => x.id === id);
+  return v ? v.label : '';
+}
+
+function resetRateDraft(item, mine) {
+  state.rateDraft = {
+    itemId: item.id, worked: [], didnt: [], vibe: {},
+    note: '', dnf: false, dirty: false, loaded: false
+  };
+  state.rateWhyData = null;
+  state.rateWhyOpen = false;
+  state.rateMoreOpen = false;
+  state.rateAwaitingWhy = false;
+  state.rateSavedVerdict = null;
+}
+
+function onRateWhyToggle(el) {
+  state.rateWhyOpen = el.open;
+  if (el.open) {
+    const item = currentRateItem();
+    if (item) loadRateWhy(item);
+  }
+}
+
+async function loadRateWhy(item) {
+  const body = document.getElementById('rateWhyBody');
+  if (!body) return;
+  if (state.rateWhyData && state.rateWhyData.media_item_id === item.id) {
+    renderRateWhy();
+    return;
+  }
+  if (state.rateWhyLoadingId === item.id) return;
+  state.rateWhyLoadingId = item.id;
+  body.innerHTML = '<p class="rate-sub">Loading…</p>';
+  try {
+    const res = await fetch(`/api/ratings/details/${item.id}?profile_id=${state.rateProfileId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (currentRateItem()?.id !== item.id) return; // moved on while loading
+    state.rateWhyData = data;
+    const d = state.rateDraft;
+    if (!d.dirty && data.details) {
+      d.worked = data.details.worked || [];
+      d.didnt = data.details.didnt || [];
+      d.vibe = data.details.vibe_check || {};
+      d.dnf = !!data.details.did_not_finish;
+      d.loaded = true;
+      const dnf = document.getElementById('rateDnf');
+      if (dnf) dnf.checked = d.dnf;
+    }
+    renderRateWhy();
+  } catch (err) {
+    console.error('Could not load the vibe-check questions:', err);
+    body.innerHTML = '<p class="rate-sub">Couldn\'t load the questions. The verdict still saves.</p>';
+  } finally {
+    state.rateWhyLoadingId = null;
+  }
+}
+
+function chipRow(side) {
+  const d = state.rateDraft;
+  return state.rateVocab.chips.map(c => {
+    const on = d[side].includes(c.id);
+    return `<button class="chip ${on ? 'active' : ''}" aria-pressed="${on}"
+              onclick="toggleRateChip('${side}', '${escapeHtml(c.id)}')">${escapeHtml(c.label)}</button>`;
+  }).join('');
+}
+
+function vibeQuestionHtml(q) {
+  const picked = state.rateDraft.vibe[q.id];
+  const isOn = (id) => Array.isArray(picked) ? picked.includes(id) : picked === id;
+  return `
+    <div class="vibe-q" role="group" aria-label="${escapeHtml(q.text)}">
+      <p class="vibe-q-text">${escapeHtml(q.text)}</p>
+      <div class="vibe-q-options">
+        ${q.options.map(o => `
+          <button class="chip ${isOn(o.id) ? 'active' : ''}" aria-pressed="${isOn(o.id)}"
+                  onclick="answerVibe('${escapeHtml(q.id)}', '${escapeHtml(o.id).replace(/'/g, "\\'")}', ${q.multi})">${escapeHtml(o.label)}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+function renderRateWhy() {
+  const body = document.getElementById('rateWhyBody');
+  if (!body || !state.rateVocab) return;
+  const qs = state.rateWhyData?.questions || { shown: [], more: [] };
+  body.innerHTML = `
+    <div class="why-group">
+      <p class="why-label">What worked</p>
+      <div class="why-chips">${chipRow('worked')}</div>
+    </div>
+    <div class="why-group">
+      <p class="why-label">What didn't</p>
+      <div class="why-chips">${chipRow('didnt')}</div>
+    </div>
+    <div class="why-group">
+      <p class="why-label">Vibe check</p>
+      ${qs.shown.map(vibeQuestionHtml).join('')}
+      ${qs.more.length ? `
+      <details class="vibe-more" ${state.rateMoreOpen ? 'open' : ''}
+               ontoggle="state.rateMoreOpen = this.open">
+        <summary>More questions (${qs.more.length})</summary>
+        ${qs.more.map(vibeQuestionHtml).join('')}
+      </details>` : ''}
+    </div>
+    <label class="why-label" for="rateNote">Note</label>
+    <input id="rateNote" class="rate-note" type="text" maxlength="200" placeholder="One line, optional"
+           value="${escapeHtml(state.rateDraft.note)}" oninput="state.rateDraft.note = this.value">
+  `;
+}
+
+function toggleRateChip(side, id) {
+  const d = state.rateDraft;
+  const other = side === 'worked' ? 'didnt' : 'worked';
+  d[other] = d[other].filter(x => x !== id);
+  d[side] = d[side].includes(id) ? d[side].filter(x => x !== id) : [...d[side], id];
+  d.dirty = true;
+  renderRateWhy();
+}
+
+function answerVibe(qid, optId, multi) {
+  const d = state.rateDraft;
+  if (multi) {
+    const cur = Array.isArray(d.vibe[qid]) ? d.vibe[qid] : [];
+    const next = cur.includes(optId) ? cur.filter(x => x !== optId) : [...cur, optId].slice(-2);
+    if (next.length) d.vibe[qid] = next; else delete d.vibe[qid];
+  } else if (d.vibe[qid] === optId) {
+    delete d.vibe[qid];
+  } else {
+    d.vibe[qid] = optId;
+  }
+  d.dirty = true;
+  renderRateWhy();
+}
+
+function rateVerdictPayload(verdict) {
+  const d = state.rateDraft;
+  const payload = { verdict, status: 'seen', did_not_finish: !!d.dnf };
+  // Only send the extras once they've been loaded or touched, so a quick tap
+  // never wipes chips saved earlier.
+  if (d.dirty || d.loaded) {
+    payload.worked = d.worked;
+    payload.didnt = d.didnt;
+    payload.vibe_check = d.vibe;
+  }
+  if (d.note.trim()) payload.notes = d.note.trim();
+  return payload;
+}
+
+async function submitVerdict(verdict) {
+  const item = currentRateItem();
+  if (!item || ratingInFlight || !state.rateVocab) return;
+  const d = state.rateDraft;
+  if (!(await postRating(item.id, rateVerdictPayload(verdict)))) return;
+  state.rateSavedVerdict = verdict;
+  const extreme = state.rateVocab.extreme.includes(verdict);
+  // The two extremes are where the reasons matter most: open "Why?" by itself
+  // and wait for a tap on "Done" instead of moving straight on.
+  if (extreme && !state.rateWhyOpen && !d.dirty && !state.rateAwaitingWhy) {
+    state.rateAwaitingWhy = true;
+    state.rateWhyOpen = true;
+    renderRateCard();
+    setRateProgress('Saved. Add anything you like, then tap Done.');
+    return;
+  }
+  if (item.fromSearch) showToast(`Saved: ${item.title}, ${rateVerdictLabel(verdict)}`);
+  advanceQueue();
+}
+
+async function finishRateWhy() {
   const item = currentRateItem();
   if (!item || ratingInFlight) return;
-  if (await postRating(item.id, { user_rating: value, status: 'seen' })) {
-    if (item.fromSearch) showToast(`Saved: ${item.title}, ${value}/10`);
-    advanceQueue();
+  if (state.rateDraft.dirty || state.rateDraft.note.trim()) {
+    if (!(await postRating(item.id, rateVerdictPayload(state.rateSavedVerdict)))) return;
   }
+  if (item.fromSearch) showToast(`Saved: ${item.title}, ${rateVerdictLabel(state.rateSavedVerdict)}`);
+  advanceQueue();
+}
+
+function toggleRateSortMode() {
+  state.rateSortMode = !state.rateSortMode;
+  setPressed(document.getElementById('rateSortBtn'), state.rateSortMode);
+  document.getElementById('rateGenreRow')?.classList.toggle('is-hidden', state.rateSortMode);
+  loadRatingQueue(true);
 }
 
 async function submitNotSeen() {
@@ -2047,6 +2299,7 @@ function flashRateFeedback(summary) {
 
 function advanceQueue() {
   state.rateIndex += 1;
+  state.rateDraft = null;
   // Refresh the profile counters (rating_count) without resetting the queue —
   // reloading the queue here used to snap the card back to the start.
   loadProfiles();
@@ -2059,6 +2312,7 @@ function skipRateItem() {
     state.rateSkipped.add(item.id);
   }
   state.rateIndex += 1;
+  state.rateDraft = null;
   // Near the end, pull a fresh batch so skipping always finds something new.
   if (state.rateIndex >= state.rateQueue.length - 1) {
     loadRatingQueue(false);
@@ -2092,7 +2346,8 @@ async function loadCoViewSummary() {
   }
 }
 
-// Keyboard shortcuts for the rating card (1–0 rate, N = not seen, S = skip).
+// Keyboard shortcuts for the rating card (1-5 verdict, D = didn't finish,
+// W = open/close Why, N = not seen, S = skip).
 document.addEventListener('keydown', (e) => {
   if (state.activeTab !== 'rate') return;
   if (e.target && ['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
@@ -2100,9 +2355,16 @@ document.addEventListener('keydown', (e) => {
   if (document.querySelector('.modal-overlay.active')) return;
   const k = e.key.toLowerCase();
   if (k.length !== 1) return;
-  if (k >= '0' && k <= '9') {
-    submitRating(k === '0' ? 10 : parseInt(k, 10));
+  if (k >= '1' && k <= '5' && state.rateVocab) {
+    const v = state.rateVocab.verdicts[parseInt(k, 10) - 1];
+    if (v) submitVerdict(v.id);
     e.preventDefault();
+  } else if (k === 'd') {
+    const box = document.getElementById('rateDnf');
+    if (box && state.rateDraft) { box.checked = !box.checked; state.rateDraft.dnf = box.checked; }
+  } else if (k === 'w') {
+    const why = document.getElementById('rateWhy');
+    if (why) why.open = !why.open;
   } else if (k === 'n') {
     submitNotSeen();
   } else if (k === 's') {
