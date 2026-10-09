@@ -67,11 +67,21 @@ case "$name" in
       "compose version") echo "Docker Compose version v2.test" ;;
       *"-H unix:///var/run/docker.sock"*) exit 1 ;;
       "info"*) [ -f "$S/daemon_up" ] || exit 1; case "$*" in *--format*) echo "name=seccomp name=rootless" ;; esac ;;
+      "image ls "*) cat "$S/image_tags" 2>/dev/null || true ;;
       "ps -a --format"*) echo "couchcinema-jellyfin-1" ;;
       "compose "*)
         case "$*" in
           *" ps -q"*) [ -f "$S/app_running" ] && echo abc123def || true ;;
-          *" up "*) echo "${IMAGE_TAG:-}" >"$S/last_up_tag"; touch "$S/stack_up" ;;
+          *" pull "*) case "${IMAGE_TAG:-}" in *missing*) echo "manifest unknown" >&2; exit 1 ;; esac ;;
+          *" up "*)
+            echo "${IMAGE_TAG:-}" >"$S/last_up_tag"; touch "$S/stack_up"
+            # Simulated app: a tag containing "broken" never becomes healthy.
+            case "${IMAGE_TAG:-}" in
+              *broken*) touch "$S/health_down" ;;
+              *) rm -f "$S/health_down"; echo "${IMAGE_TAG#sha-}" >"$S/health_sha" ;;
+            esac ;;
+          *" logs "*) echo "app log line: boot failed" ;;
+          *" stop "*) touch "$S/app_stopped" ;;
         esac ;;
     esac ;;
   dockerd-rootless-setuptool.sh) touch "$S/daemon_up" ;;
@@ -81,6 +91,7 @@ case "$name" in
       "is-active "*) [ -f "$S/unit_started" ] || exit 3 ;;
     esac ;;
   curl)
+    case "$*" in *http://127.0.0.1:*) exec /usr/bin/curl "$@" ;; esac
     out=""; url=""
     while [ $# -gt 0 ]; do
       case "$1" in -o) out="$2"; shift ;; -*) ;; *) url="$1" ;; esac
