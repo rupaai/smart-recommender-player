@@ -208,6 +208,15 @@ class RateRequest(BaseModel):
     vibe_check: Optional[Dict[str, Any]] = None
 
 
+class SeasonRateRequest(BaseModel):
+    media_item_id: int
+    profile_id: int = 1
+    season_number: int = Field(ge=1)
+    # Same five verdicts as a show. No verdict and no did_not_finish clears it.
+    verdict: Optional[str] = None
+    did_not_finish: bool = False
+
+
 class TmdbImportRequest(BaseModel):
     media_type: str  # 'movie' | 'tv'
     tmdb_id: int
@@ -851,7 +860,23 @@ async def get_rating_vocab() -> Dict[str, Any]:
         "verdicts": [{"id": k, **{"label": v["label"]}} for k, v in vd.VERDICTS.items()],
         "extreme": list(vd.EXTREME_VERDICTS),
         "chips": vd.CHIPS,
+        "season_extra": vd.SEASON_DID_NOT_FINISH,
     }
+
+
+@app.post("/api/ratings/season")
+async def rate_season(req: SeasonRateRequest) -> Dict[str, Any]:
+    """One optional per-season verdict on a TV show (upsert; empty clears it).
+
+    A confirmed show verdict is never changed by this. Without one, the show
+    gets a verdict derived from its seasons, marked inferred.
+    """
+    try:
+        return await asyncio.to_thread(
+            db.rate_season, req.media_item_id, req.profile_id, req.season_number, req.verdict, req.did_not_finish
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.get("/api/ratings/details/{item_id}")
@@ -860,7 +885,9 @@ async def get_rating_details(item_id: int, profile_id: int = 1) -> Dict[str, Any
     questions to show for it."""
     details = await asyncio.to_thread(db.get_rating_details, item_id, profile_id)
     questions = await asyncio.to_thread(db.get_vibe_check_questions, item_id)
-    return {"media_item_id": item_id, "profile_id": profile_id, "details": details, "questions": questions}
+    seasons = await asyncio.to_thread(db.get_season_details, item_id, profile_id)
+    return {"media_item_id": item_id, "profile_id": profile_id, "details": details, "questions": questions,
+            "seasons": seasons}
 
 
 @app.get("/api/ratings/pairs")
