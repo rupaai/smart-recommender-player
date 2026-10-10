@@ -615,6 +615,26 @@ def should_auto_ask(query: Optional[str], pool: List[Dict[str, Any]]) -> bool:
     return len(clusters) >= 6
 
 
+def has_mood_data(pool: List[Dict[str, Any]]) -> bool:
+    """True when some film in the pool has mood dials or LLM tags. Without them
+    (no Mac build or mood-tag run on this server's catalogue) no dial question can
+    split the pool, so the pop-up never appears."""
+    return any(features(it)["facets"] or features(it)["tagged"] for it in pool[:POOL_TOP])
+
+
+def skip_reason(query: Optional[str], pool: List[Dict[str, Any]], asked: bool) -> Optional[str]:
+    """Why a requested pop-up didn't open, for the UI and the logs; None when it did."""
+    if asked:
+        return None
+    if not pool:
+        return "no_results"
+    if not has_mood_data(pool):
+        return "no_mood_data"
+    if not should_auto_ask(query, pool):
+        return "specific_request"
+    return "nothing_to_ask"
+
+
 class SessionStore:
     def __init__(self):
         self._lock = threading.Lock()
