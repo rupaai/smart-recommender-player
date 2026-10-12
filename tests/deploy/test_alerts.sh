@@ -83,9 +83,11 @@ teardown
 echo "== diskcheck"
 setup
 printf 'torrent:\n  max_media_gb: 1\n' >"$CC_ROOT/config.server.yaml"
-"$DC"; assert_eq "$(alerts)" 0 "empty media folder: quiet"
+# The media checks point the root-filesystem check at a missing path, so a nearly full
+# CI runner disk can't add a second alert to the count.
+ROOT_FS_PATH=/nonexistent "$DC"; assert_eq "$(alerts)" 0 "empty media folder: quiet"
 if fallocate -l 900M "$T/media/film.mkv" 2>/dev/null; then
-  "$DC"
+  ROOT_FS_PATH=/nonexistent "$DC"
   assert_eq "$(alerts)" 1 "media at 85% of its cap: alert"
   assert_grep 'media folder is nearly full' "$STUB_STATE/calls.log" "says what is full"
 fi
