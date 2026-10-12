@@ -15,7 +15,22 @@ android {
         versionName = "1.0"
     }
 
+    // A fixed debug key, committed on purpose: CI otherwise signs each build with a fresh random
+    // key and Android refuses to install an update over the copy on the TV. It is a debug key
+    // with the standard public password, not a secret; a real release key must never go here.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
         }
