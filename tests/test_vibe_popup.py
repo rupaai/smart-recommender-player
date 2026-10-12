@@ -138,6 +138,22 @@ def test_auto():
     check("long text over a scattered pool still asks",
           vp.should_auto_ask("slow korean revenge thriller with a devastating ending please", pool))
 
+    s = vp.PopupSession(5, {"query": "slow korean revenge thriller with a devastating ending please"},
+                        make_pool(), {c: f"cluster {c}" for c in range(1, 8)})
+    q = s.next_question(force=True)
+    check("always asks a first question", q is not None and len(q["options"]) >= 2, q and q["id"])
+
+    s = vp.PopupSession(6, {"query": "x"}, make_pool(), {})
+    vp_min = vp.MIN_VALUE
+    vp.MIN_VALUE = 99.0           # nothing passes: the forced pick falls back to the best below the bar
+    try:
+        check("without force, nothing below the bar is asked", s.next_question() is None)
+        q = s.next_question(force=True)
+        check("with force, the best question below the bar is asked", q is not None and q["id"] in ABOUT_YOU,
+              q and q["id"])
+    finally:
+        vp.MIN_VALUE = vp_min
+
 
 if __name__ == "__main__":
     test_bank()
