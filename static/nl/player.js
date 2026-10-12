@@ -5,6 +5,7 @@
 
   var SKIP_CHOICES = [10, 15, 30, 60];
   var HIDE_AFTER_MS = 3000;
+  var TV_HIDE_AFTER_MS = 5000;
   var PROGRESS_EVERY_MS = 10000;
   var LONG_PRESS_MS = 500;
   var UNREACHABLE = "Can’t reach the movie server. Is mars on?";
@@ -22,6 +23,15 @@
   var urlSource = Number(query.get("source")) || null;   // which episode of a show (media_sources.id)
   var urlResume = query.get("resume");                    // "1" resume, "0" start over: skip the prompt
   var player = NLPlayerCore.create(video);
+  // On a TV (?tv=1, or inside the Android app) everything works with a remote; phones and laptops are untouched.
+  var isNative = NLPlayerCore.isNative();          // the Android app plays through Media3, the page is only the shell
+  var isTv = isNative || query.get("tv") === "1";
+  if (isTv) {
+    document.documentElement.classList.add("tv");
+    root.classList.add("tv");
+  }
+  if (isNative) { root.classList.add("native"); }
+  var TV_ROOT = "/nl/tv/";
 
   var S = {
     stream: null,
@@ -45,7 +55,8 @@
     next: null,           // {source_id, code, name, autoplay} while a next episode exists
     nextCancelled: false, // Cancel pressed for this episode
     advancing: false,     // already switching to the next episode
-    backHref: "/nl/"
+    backHref: isTv ? "/nl/tv/" : "/nl/",
+    nextPromise: null     // the next-episode lookup in flight (the native player wants the label up front)
   };
 
   /* ---------------------------------------------------------- small helpers */
@@ -102,8 +113,12 @@
     clearTimeout(S.hideTimer);
     if (canHide()) {
       S.hideTimer = setTimeout(function () {
-        if (canHide()) { root.classList.remove("controls-visible"); }
-      }, HIDE_AFTER_MS);
+        if (canHide()) {
+          root.classList.remove("controls-visible");
+          // Back to "arrows skip, OK pauses" once the controls are gone.
+          if (isTv && $("nl-controls").contains(document.activeElement)) { document.activeElement.blur(); }
+        }
+      }, isTv ? TV_HIDE_AFTER_MS : HIDE_AFTER_MS);
     }
   }
   function controlsVisible() { return root.classList.contains("controls-visible"); }
@@ -111,13 +126,17 @@
   /* ------------------------------------------------------------------ menus */
 
   var menu = $("nl-menu");
+  var menuOpener = null;
   function closeMenu() {
     menu.hidden = true;
     menu.innerHTML = "";
     S.menuOpen = false;
     showControls();
+    if (isTv && menuOpener && document.activeElement !== menuOpener) { menuOpener.focus(); }   // the remote keeps its place
+    menuOpener = null;
   }
   function openMenu(title, items) {
+    menuOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     menu.innerHTML = "";
     var h = document.createElement("div");
     h.className = "nl-menu-title";
@@ -270,7 +289,8 @@
       S.stopped = false;
       report("start");
     }
-    if (!S.progressTimer) {
+    // The native player reports "progress" itself every 10 s; the web player is polled here.
+    if (!S.progressTimer && !isNative) {
       S.progressTimer = setInterval(function () { if (!player.paused) { report("progress"); } }, PROGRESS_EVERY_MS);
     }
   }
@@ -350,7 +370,8 @@
   }
 
   function fetchPlay(params) {
-    var qs = ["caps=" + encodeURIComponent(capsString())];
+    // The Android app decodes far more than a browser: it asks for the TV profile instead of sending caps.
+    var qs = [isNative ? "client=tv" : "caps=" + encodeURIComponent(capsString())];
     if (params.audio !== undefined && params.audio !== null) { qs.push("audio=" + encodeURIComponent(params.audio)); }
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
@@ -380,8 +401,22 @@
     S.audioIndex = stream.audio_index;
     S.burnIndex = stream.subtitle_index >= 0 ? stream.subtitle_index : -1;
     renderTrackButtons();
-    player.load({ url: stream.url, kind: stream.kind, startAt: startAt });
+    player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined });
     applyTextTracks();
+  }
+  // What the native player needs besides the stream (see the NorthernLightsNative contract in player-core.js).
+  function nativeMeta(stream) {
+    var epEl = $("nl-episode");
+    return {
+      title: stream.title || "",
+      subtitle: epEl.hidden ? "" : epEl.textContent,
+      skipSeconds: S.skip,
+      audioTracks: stream.audio_tracks || [],
+      subtitleTracks: stream.subtitle_tracks || [],
+      audioIndex: stream.audio_index,
+      subtitleIndex: stream.subtitle_index >= 0 ? stream.subtitle_index : -1,
+      nextUp: S.next ? { label: nextLabel(S.next) } : null
+    };
   }
   function renderTrackButtons() {
     $("nl-audio").hidden = ((S.stream.audio_tracks || []).length < 2);
@@ -425,7 +460,7 @@
       document.title = (stream.title ? stream.title + " - " : "") + "Northern Lights";
       $("nl-title").textContent = stream.title || "";
       if (stream.source_id) { S.sourceId = stream.media_type === "tv" ? stream.source_id : null; }
-      S.backHref = (stream.media_type === "tv" ? "/nl/show/" : "/nl/title/") + encodeURIComponent(itemId);
+      S.backHref = (isTv ? TV_ROOT : "/nl/") + (stream.media_type === "tv" ? "show/" : "title/") + encodeURIComponent(itemId);
       $("nl-error-back").setAttribute("href", S.backHref);
       var ep = stream.episode;
       if (ep && (ep.season || ep.episode || ep.name)) {
@@ -466,6 +501,13 @@
     });
   }
   function begin(stream, at) {
+    if (isNative && S.nextPromise) {
+      // The native player shows "Next: ..." from the label we hand it, so wait (briefly) for the lookup.
+      var pending = S.nextPromise;
+      S.nextPromise = null;
+      Promise.race([pending, new Promise(function (resolve) { setTimeout(resolve, 1500); })]).then(function () { begin(stream, at); });
+      return;
+    }
     applyStream(stream, at);
     playNow();
     showControls();
@@ -478,11 +520,16 @@
     S.next = null;
     S.nextCancelled = false;
     hideNextCard();
+    S.nextPromise = null;
     if (stream.media_type !== "tv" || !stream.source_id) { return; }
     var forSource = stream.source_id;
-    fetchNext(forSource).then(function (n) {
+    S.nextPromise = fetchNext(forSource).then(function (n) {
       if (n && n.has_next && S.sourceId === forSource) { S.next = n; }
     }).catch(function () { /* no card without the lookup; the episode still plays */ });
+  }
+  function nextLabel(n) {
+    var label = n.code ? n.code.replace(" · ", "·") : "";
+    return "Next: " + (label ? label + " " : "") + (n.name || "").trim();
   }
   function fetchNext(sourceId) {
     return fetch("/api/nl/next/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(sourceId))
@@ -496,9 +543,9 @@
   function showNextCard() {
     var n = S.next;
     if (!n) { return; }
-    var label = n.code ? n.code.replace(" · ", "·") : "";
-    $("nl-next-title").textContent = "Next: " + (label ? label + " " : "") + (n.name || "").trim();
+    $("nl-next-title").textContent = nextLabel(n);
     $("nl-next").hidden = false;
+    if (isTv) { $("nl-next-play").focus(); }   // the remote needs somewhere to land: OK plays it, Back cancels
   }
   function advanceToNext() {
     var n = S.next;
@@ -508,7 +555,7 @@
     stopReporting(false);
     S.sourceId = n.source_id;
     S.next = null;
-    try { window.history.replaceState(null, "", "/nl/play/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(n.source_id)); } catch (e) { /* ignore */ }
+    try { window.history.replaceState(null, "", "/nl/play/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(n.source_id) + (isTv ? "&tv=1" : "")); } catch (e) { /* ignore */ }
     startFirst({ fromNext: true });
   }
   function cancelNext() {
@@ -518,7 +565,8 @@
   }
   // Called on every time update: card at 30 s before the end, countdown over the last 10 s.
   function checkNext() {
-    if (!S.next || S.nextCancelled || S.advancing || S.switching) { return; }
+    // The native player draws its own "Next" prompt and reports "ended"; the page only advances then.
+    if (isNative || !S.next || S.nextCancelled || S.advancing || S.switching) { return; }
     var d = duration();
     if (!d || d < 2 * NEXT_CARD_SECONDS) { return; }
     var remaining = d - player.currentTime;
@@ -585,6 +633,16 @@
     stopReporting(false);
     if (S.next && S.next.autoplay && !S.nextCancelled) { advanceToNext(); }
   });
+  // Events only the native adapter emits (the Android app's player, see player-core.js).
+  player.on("progress", function () { if (S.started && !S.stopped && !player.paused) { report("progress"); } });
+  player.on("stopped", leave);   // Back in the native player: leave like the web player's back button
+  player.on("audiochange", function (e) {
+    if (e && typeof e.index === "number" && e.index !== S.audioIndex) { reloadStream({ audio: e.index }); }
+  });
+  player.on("subtitlechange", function (e) {
+    var index = e && typeof e.index === "number" ? e.index : -1;
+    if (index !== currentSubtitleIndex()) { chooseSubtitle(index); }
+  });
   player.on("volumechange", function () {
     $("nl-volume").value = player.muted ? 0 : player.volume;
     $("nl-mute-icon").innerHTML = (player.muted || player.volume === 0) ? ICONS.muted : ICONS.vol;
@@ -593,6 +651,17 @@
 
   function leave() {
     stopReporting(true);
+    // On the TV, go back through the history when we came from one of its screens, so Back
+    // from the title page does not land on the player again. Otherwise replace this page.
+    if (isTv) {
+      var cameFromTv = false;
+      try {
+        var ref = document.referrer ? new URL(document.referrer) : null;
+        cameFromTv = !!ref && ref.origin === window.location.origin && ref.pathname.indexOf(TV_ROOT) === 0;
+      } catch (e) { /* no referrer */ }
+      if (cameFromTv && window.history.length > 1) { window.history.back(); } else { window.location.replace(S.backHref); }
+      return;
+    }
     window.location.href = S.backHref;
   }
   window.addEventListener("pagehide", function () { stopReporting(true); });
@@ -602,7 +671,7 @@
     } else if (S.started && S.stopped && !video.ended && !player.paused) {
       S.stopped = false;
       report("start");
-      if (!S.progressTimer) {
+      if (!S.progressTimer && !isNative) {
         S.progressTimer = setInterval(function () { if (!player.paused) { report("progress"); } }, PROGRESS_EVERY_MS);
       }
     }
@@ -682,9 +751,94 @@
   /* --------------------------------------------------------------- keyboard */
 
   function closeHelp() { $("nl-help").hidden = true; showControls(); }
+
+  /* ---- remote control (TV): arrows move focus, OK clicks, Back leaves. Returns true when handled. */
+
+  function visibleIn(container, selector) {
+    return Array.prototype.slice.call(container.querySelectorAll(selector)).filter(function (b) {
+      return !b.hidden && !b.closest("[hidden]") && (b.offsetWidth || b.offsetHeight);
+    });
+  }
+  function stepFocus(list, step) {
+    if (!list.length) { return; }
+    var i = list.indexOf(document.activeElement);
+    var next = i < 0 ? 0 : Math.max(0, Math.min(list.length - 1, i + step));
+    list[next].focus();
+  }
+  function isBackKey(e) {
+    var k = e.key, c = e.keyCode;
+    return k === "Escape" || k === "Backspace" || k === "GoBack" || k === "BrowserBack" || k === "XF86Back" ||
+      c === 4 || c === 27 || c === 8 || c === 461 || c === 10009;
+  }
+  function isOkKey(e) { return e.key === "Enter" || e.keyCode === 23 || e.keyCode === 66 || e.keyCode === 13; }
+
+  function tvKey(e) {
+    var dir = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[e.key];
+    var back = isBackKey(e);
+    var ok = isOkKey(e);
+    if (!dir && !back && !ok) { return false; }
+    e.preventDefault();
+    if (e.repeat && (back || ok)) { return true; }
+    showControls();
+
+    // Back: close what is open, else leave.
+    if (back) {
+      if (S.menuOpen) { closeMenu(); } else if (nextCardVisible()) { cancelNext(); } else { leave(); }
+      return true;
+    }
+
+    // A menu, the resume question, the error card or the next-episode card: arrows move between its buttons.
+    var screen = null;
+    if (S.menuOpen) { screen = menu; }
+    else if (!$("nl-resume").hidden) { screen = $("nl-resume"); }
+    else if (!$("nl-error").hidden) { screen = $("nl-error"); }
+    else if (nextCardVisible()) { screen = $("nl-next"); }
+    if (screen) {
+      var buttons = visibleIn(screen, "button, a[href]");
+      var active = document.activeElement;
+      if (buttons.indexOf(active) < 0) { if (buttons[0]) { buttons[0].focus(); } return true; }
+      if (ok) { active.click(); } else { stepFocus(buttons, (dir === "left" || dir === "up") ? -1 : 1); }
+      return true;
+    }
+
+    var controls = $("nl-controls");
+    var focused = document.activeElement;
+    var inControls = focused !== document.body && controls.contains(focused);
+
+    // Controls hidden or not focused: the picture is the target. Left/right skip, OK pauses, up/down open the controls.
+    if (!inControls) {
+      if (ok) { togglePlay(); }
+      else if (dir === "left") { skipBy(-1); }
+      else if (dir === "right") { skipBy(1); }
+      else { $("nl-play").focus(); }
+      return true;
+    }
+
+    // Focus is on the controls: three rows, back button / seek bar / button row.
+    var rows = [[$("nl-back")], [$("nl-seek")], visibleIn($("nl-controls").querySelector(".nl-button-row"), "button")];
+    var ri = -1;
+    rows.forEach(function (r, i) { if (r.indexOf(focused) >= 0) { ri = i; } });
+    if (ri < 0) { $("nl-play").focus(); return true; }
+    if (ok) {
+      if (focused === $("nl-seek")) { togglePlay(); } else { focused.click(); }
+    } else if (dir === "left" || dir === "right") {
+      if (focused === $("nl-seek")) { skipBy(dir === "left" ? -1 : 1); } else { stepFocus(rows[ri], dir === "left" ? -1 : 1); }
+    } else if (dir === "up") {
+      if (ri > 0) { (ri === 2 ? $("nl-seek") : $("nl-back")).focus(); }
+    } else if (ri === 0) {
+      $("nl-seek").focus();
+    } else if (ri === 1) {
+      $("nl-play").focus();
+    } else {
+      focused.blur();   // down from the buttons: back to the picture
+    }
+    return true;
+  }
+
   document.addEventListener("keydown", function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) { return; }
     if (!$("nl-help").hidden) { e.preventDefault(); closeHelp(); return; }
+    if (isTv && tvKey(e)) { return; }
     var key = e.key;
     if (key === "Escape") {
       if (S.menuOpen) { e.preventDefault(); closeMenu(); } else if (nextCardVisible()) { e.preventDefault(); cancelNext(); }
