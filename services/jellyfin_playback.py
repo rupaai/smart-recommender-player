@@ -19,7 +19,7 @@ import re
 import threading
 import time
 from typing import Any, Dict, Optional
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from services.device_profiles import BROWSER_PROFILE
 from services.jellyfin_service import JellyfinService
@@ -42,6 +42,19 @@ class ItemNotFound(Exception):
 
 class NotPlayable(Exception):
     """Jellyfin has no way to play this item for the browser profile (HTTP 415)."""
+
+
+class SubtitleError(Exception):
+    """A subtitle search or download that Jellyfin could not do, in words for the viewer (M5).
+
+    `code` is one of plugin_missing, plugin_unconfigured, limit, not_found, failed, bad_request;
+    `status` is the HTTP status our API answers with."""
+
+    def __init__(self, code: str, message: str, status: int):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.status = status
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -238,6 +251,103 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str) -> 
     return {"audio_tracks": audio, "subtitle_tracks": subs}
 
 
+# ------------------------------------------------------ remote subtitles (M5)
+
+_SUB_LANGUAGE = re.compile(r"^[a-z]{3}$")
+# Jellyfin's subtitle ids are "<provider>_<id>" (base64url-ish); never a path separator or a leading dot.
+_SUB_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.,:=+~-]{0,511}$")
+MAX_SUBTITLE_RESULTS = 50
+_LIMIT_WORDS = re.compile(r"download limit|rate.?limit|limit (?:reached|exceeded)|quota|too many requests|exceeded|throttl", re.I)
+_SDH_WORDS = re.compile(r"\b(sdh|hearing[ ._-]?impaired)\b", re.I)
+_FORCED_WORDS = re.compile(r"\bforced\b", re.I)
+
+LIMIT_MESSAGE = "The daily subtitle download limit is reached. Try again tomorrow."
+PLUGIN_MISSING_MESSAGE = (
+    "Jellyfin has no subtitle plugin. Install OpenSubtitles in Jellyfin (Dashboard > Plugins) and sign in."
+)
+PLUGIN_UNCONFIGURED_MESSAGE = (
+    "Jellyfin's subtitle plugin isn't signed in. Open Dashboard > Plugins > Open Subtitles and enter your account."
+)
+
+
+def _body_text(resp: Any) -> str:
+    try:
+        return str(resp.text or "")[:500]
+    except Exception:
+        return ""
+
+
+def valid_language(value: Any) -> bool:
+    """A three-letter lowercase ISO 639-2 code, e.g. eng. Anything else never reaches Jellyfin."""
+    return isinstance(value, str) and bool(_SUB_LANGUAGE.match(value))
+
+
+def valid_subtitle_id(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SUB_ID.match(value)) and ".." not in value
+
+
+def language_name(code: str) -> str:
+    return _LANGUAGES.get((code or "").lower(), (code or "").upper() or "Unknown")
+
+
+def _to_float(value: Any) -> Optional[float]:
+    try:
+        return round(float(value), 1) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_int(value: Any) -> Optional[int]:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_subtitle_results(data: Any) -> list:
+    """Jellyfin's RemoteSubtitleInfo list -> what the page shows, best first.
+
+    Hash-matched results (the file's own hash was found at the provider: in sync) come first, then
+    the most downloaded. SDH and forced come from the flags when the plugin sets them, else from the name."""
+    out = []
+    for r in data if isinstance(data, list) else []:
+        if not isinstance(r, dict) or not r.get("Id"):
+            continue
+        name = str(r.get("Name") or "")
+        lang = str(r.get("ThreeLetterISOLanguageName") or "").lower()
+        out.append({
+            "id": str(r["Id"]),
+            "name": name,
+            "language": lang,
+            "language_name": language_name(lang) if lang else "",
+            "format": str(r.get("Format") or ""),
+            "provider": str(r.get("ProviderName") or ""),
+            "rating": _to_float(r.get("CommunityRating")),
+            "downloads": _to_int(r.get("DownloadCount")),
+            "hash_match": bool(r.get("IsHashMatch")),
+            "hearing_impaired": bool(r.get("HearingImpaired")) or bool(_SDH_WORDS.search(name)),
+            "forced": bool(r.get("Forced")) or bool(_FORCED_WORDS.search(name)),
+        })
+    out.sort(key=lambda x: (not x["hash_match"], -(x["downloads"] or 0), -(x["rating"] or 0.0)))
+    return out[:MAX_SUBTITLE_RESULTS]
+
+
+def subtitle_error_for(status: int, body: str, action: str) -> SubtitleError:
+    """Map a Jellyfin failure (`action` is "search" or "download") to a friendly error.
+    Plugin problems cannot always be told apart by status; the service refines a 5xx or a 404
+    with a plugin check (see JellyfinPlayback._refine_subtitle_error)."""
+    if status == 429 or (status >= 400 and _LIMIT_WORDS.search(body or "")):
+        return SubtitleError("limit", LIMIT_MESSAGE, 429)
+    if status in (401, 403):
+        return SubtitleError("plugin_unconfigured", PLUGIN_UNCONFIGURED_MESSAGE, 409)
+    if status == 404 and action == "download":
+        return SubtitleError("not_found", "That subtitle isn't available any more. Search again.", 404)
+    if status == 404:
+        return SubtitleError("plugin_missing", PLUGIN_MISSING_MESSAGE, 409)
+    verb = "search for" if action == "search" else "download"
+    return SubtitleError("failed", f"Jellyfin couldn't {verb} subtitles right now ({status}).", 502)
+
+
 # --------------------------------------------------------------------- service
 
 
@@ -408,6 +518,79 @@ class JellyfinPlayback:
         if not valid_jellyfin_id(jf_id):
             raise ValueError("bad item id")
         self._send("POST" if played else "DELETE", f"/Users/{self._user_id()}/PlayedItems/{jf_id}")
+
+    # ------------------------------------------------------------ subtitles (M5)
+
+    def _subtitle_item_id(self, item: Dict[str, Any]) -> str:
+        sources = item.get("sources") or []
+        if not sources:
+            raise ItemNotFound("This item has no media file.")
+        file_path = sources[0]["file_path"]
+        if not self.file_exists(file_path):
+            raise ItemNotFound("This movie's file isn't on disk any more (moved or deleted). Rescan the library.")
+        jf_id = self.find_item_id(file_path)
+        if not jf_id:
+            raise ItemNotFound("Jellyfin does not know this file yet.")
+        if not valid_jellyfin_id(jf_id):
+            raise ItemNotFound("Jellyfin sent an item id we can't use.")
+        return jf_id
+
+    def _subtitle_call(self, method: str, path: str) -> Any:
+        """One Jellyfin subtitle call; the caller reads the status. A dead connection is JellyfinUnavailable."""
+        self._require()
+        try:
+            return self.jf.session.request(method, f"{self.jf.base_url}{path}", timeout=45)
+        except Exception as e:
+            raise JellyfinUnavailable(f"Jellyfin could not be reached ({type(e).__name__}).") from e
+
+    def subtitle_plugin_active(self) -> Optional[bool]:
+        """Is a subtitle provider plugin installed and active? None when Jellyfin won't say (GET /Plugins is admin only)."""
+        try:
+            resp = self._subtitle_call("GET", "/Plugins")
+            if resp.status_code != 200:
+                return None
+            plugins = resp.json()
+        except Exception:
+            return None
+        if not isinstance(plugins, list):
+            return None
+        for p in plugins:
+            if isinstance(p, dict) and "subtitle" in str(p.get("Name") or "").lower():
+                if str(p.get("Status") or "Active").lower() in ("active", "restart"):
+                    return True
+        return False
+
+    def _refine_subtitle_error(self, err: SubtitleError) -> SubtitleError:
+        """A failed call may just mean there is no subtitle plugin: say so when we can tell."""
+        if err.code in ("failed", "plugin_missing") and self.subtitle_plugin_active() is False:
+            return SubtitleError("plugin_missing", PLUGIN_MISSING_MESSAGE, 409)
+        return err
+
+    def search_subtitles(self, item: Dict[str, Any], language: str) -> Dict[str, Any]:
+        """Remote subtitles for one title: {language, language_name, results}. Raises SubtitleError."""
+        if not valid_language(language):
+            raise SubtitleError("bad_request", "That language isn't valid.", 400)
+        jf_id = self._subtitle_item_id(item)
+        resp = self._subtitle_call("GET", f"/Items/{jf_id}/RemoteSearch/Subtitles/{language}")
+        if resp.status_code >= 400:
+            raise self._refine_subtitle_error(subtitle_error_for(resp.status_code, _body_text(resp), "search"))
+        try:
+            data = resp.json()
+        except ValueError:
+            data = []
+        results = parse_subtitle_results(data)
+        if not results and self.subtitle_plugin_active() is False:
+            raise SubtitleError("plugin_missing", PLUGIN_MISSING_MESSAGE, 409)
+        return {"language": language, "language_name": language_name(language), "results": results}
+
+    def download_subtitle(self, item: Dict[str, Any], subtitle_id: str) -> None:
+        """Ask Jellyfin to fetch one remote subtitle and save it next to the file. Raises SubtitleError."""
+        if not valid_subtitle_id(subtitle_id):
+            raise SubtitleError("bad_request", "That subtitle id isn't valid.", 400)
+        jf_id = self._subtitle_item_id(item)
+        resp = self._subtitle_call("POST", f"/Items/{jf_id}/RemoteSearch/Subtitles/{quote(subtitle_id, safe='')}")
+        if resp.status_code >= 400:
+            raise self._refine_subtitle_error(subtitle_error_for(resp.status_code, _body_text(resp), "download"))
 
     def stream_for(
         self,

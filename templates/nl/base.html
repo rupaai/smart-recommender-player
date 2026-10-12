@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#e8e6e1">
   <title>{% block title %}Northern Lights{% endblock %}</title>
   <link rel="stylesheet" href="/static/nl/nl.css">
+  {% block head %}{% endblock %}
 </head>
 <body class="nl-page-{{ active or 'other' }}">
   <header class="nl-bar">

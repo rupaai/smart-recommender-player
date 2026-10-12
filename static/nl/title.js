@@ -66,7 +66,26 @@
       play.href = t.play_href;
       actions.appendChild(play);
     }
+    var subNote = NL.el("p", "nl-meta nl-note");
+    subNote.setAttribute("role", "status");
+    if (t.media_type !== "tv" && window.NLSubtitles) {
+      // D4: fix a missing or out-of-sync subtitle before pressing play (a show's episodes get it in the player).
+      var find = NL.el("button", "nl-btn-quiet", "Find subtitles");
+      find.type = "button";
+      find.addEventListener("click", function () {
+        window.NLSubtitles.open({
+          container: document.getElementById("nl-subfind"),
+          itemId: t.id,
+          onDownloaded: function () {
+            subNote.textContent = "Subtitles added. Pick them in the player’s Subtitles menu.";
+          },
+          onClose: function () { find.focus(); }
+        });
+      });
+      actions.appendChild(find);
+    }
     info.appendChild(actions);
+    info.appendChild(subNote);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = NL.el("div", "nl-detail-progress");
       p.appendChild(NL.progressBar(t.progress));

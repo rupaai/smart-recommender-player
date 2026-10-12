@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative (bridge v2). Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -18,6 +18,7 @@ class NativeBridge(private val host: Host) {
         fun onResumeRequested()
         fun onSeekRequested(seconds: Double)
         fun onSubtitleRequested(index: Int)
+        fun onSubtitleStyleRequested(json: String)
     }
 
     @JavascriptInterface
@@ -59,6 +60,17 @@ class NativeBridge(private val host: Host) {
         host.onSubtitleRequested(index)
     }
 
+    /**
+     * Bridge v3: how the subtitles Media3 draws look. [json] is {size: S|M|L|XL, background: none|shadow|box,
+     * raise: 0|1|2}. Safe to call before or during playback. There is deliberately no delay call:
+     * Media3 1.5.1 has no subtitle offset, so the page hides its delay control on the TV.
+     */
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "2" else ""
+    fun setSubtitleStyle(json: String?) {
+        if (json == null || !host.isTrusted()) return
+        host.onSubtitleStyleRequested(json)
+    }
+
+    @JavascriptInterface
+    fun version(): String = if (host.isTrusted()) "3" else ""
 }

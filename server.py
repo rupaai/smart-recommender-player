@@ -34,10 +34,12 @@ from services.jellyfin_playback import (
     JellyfinPlayback,
     JellyfinUnavailable,
     NotPlayable,
+    SubtitleError,
     is_image_path,
     rewrite_playlist,
     safe_proxy_path,
     valid_jellyfin_id,
+    valid_subtitle_id,
     strip_api_key,
 )
 from services.jellyfin_service import JellyfinService
@@ -744,6 +746,69 @@ async def nl_play_info(
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
     return info
+
+
+def _nl_subtitle_item(item_id: int, source: Optional[int]) -> Dict[str, Any]:
+    """The title (one episode of a show when `source` is given) the subtitle calls are about."""
+    item = db.get_nl_title(item_id)
+    if not item or not item.get("sources"):
+        raise HTTPException(status_code=404, detail="Media file not found.")
+    chosen = item["sources"][0]
+    if source is not None:
+        chosen = next((s for s in item["sources"] if s["id"] == source), None)
+        if chosen is None:
+            raise HTTPException(status_code=404, detail="That episode isn't in the library.")
+    return {**item, "sources": [chosen]}
+
+
+def _nl_subtitle_failure(e: Exception) -> JSONResponse:
+    """Jellyfin's problems as short messages the page can show: {detail, code}."""
+    if isinstance(e, SubtitleError):
+        return JSONResponse(status_code=e.status, content={"detail": e.message, "code": e.code})
+    if isinstance(e, ItemNotFound):
+        return JSONResponse(status_code=404, content={"detail": str(e), "code": "not_found"})
+    return JSONResponse(status_code=503, content={"detail": str(e), "code": "unavailable"})
+
+
+@app.get("/api/nl/subtitles/{item_id}")
+async def nl_subtitle_search(
+    item_id: int,
+    language: str = Query("eng", pattern="^[a-z]{3}$", description="Three-letter ISO 639-2 code, e.g. eng"),
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show"),
+) -> Any:
+    """Search OpenSubtitles (through Jellyfin's plugin) for subtitles of one title or episode.
+    Results are best first (file-hash matches, then most downloaded). The Jellyfin key stays here."""
+    item = _nl_subtitle_item(item_id, source)
+    try:
+        found = await asyncio.to_thread(jellyfin_playback.search_subtitles, item, language)
+    except (SubtitleError, ItemNotFound, JellyfinUnavailable) as e:
+        return _nl_subtitle_failure(e)
+    found["code"] = "ok" if found["results"] else "no_results"
+    if not found["results"]:
+        found["message"] = f"No subtitles found for {found['language_name']}."
+    return found
+
+
+class NLSubtitleDownload(BaseModel):
+    subtitle_id: str = Field(..., min_length=1, max_length=512)
+
+
+@app.post("/api/nl/subtitles/{item_id}")
+async def nl_subtitle_download(
+    item_id: int,
+    req: NLSubtitleDownload,
+    source: Optional[int] = Query(None, ge=1),
+) -> Any:
+    """Have Jellyfin download one of the searched subtitles and save it with the file. The page then
+    re-reads /api/nl/play for the new track."""
+    if not valid_subtitle_id(req.subtitle_id):
+        return JSONResponse(status_code=400, content={"detail": "That subtitle id isn't valid.", "code": "bad_request"})
+    item = _nl_subtitle_item(item_id, source)
+    try:
+        await asyncio.to_thread(jellyfin_playback.download_subtitle, item, req.subtitle_id)
+    except (SubtitleError, ItemNotFound, JellyfinUnavailable) as e:
+        return _nl_subtitle_failure(e)
+    return {"success": True}
 
 
 @app.get("/nl/jf/{path:path}")

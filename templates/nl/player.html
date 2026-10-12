@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#000000">
   <title>Northern Lights player</title>
   <link rel="stylesheet" href="/static/nl/player.css">
+  <link rel="stylesheet" href="/static/nl/subtitles.css">
 </head>
 <body data-item-id="{{ item_id }}">
   <div id="nl-player" class="nl-player controls-visible">
@@ -80,6 +81,8 @@
       </div>
     </div>
 
+    <div id="nl-subfind" class="nls-host" hidden></div>
+
     <div id="nl-help" class="nl-screen nl-help" hidden>
       <div class="nl-card">
         <p class="nl-card-title">Keyboard</p>
@@ -102,6 +105,7 @@
   <!-- hls.js 1.5.20 is vendored; only player-core.js may touch it. -->
   <script src="/static/nl/vendor/hls.min.js"></script>
   <script src="/static/nl/player-core.js"></script>
+  <script src="/static/nl/subtitles.js"></script>
   <script src="/static/nl/player.js"></script>
 </body>
 </html>
