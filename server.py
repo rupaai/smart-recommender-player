@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 import uvicorn
@@ -18,7 +19,8 @@ import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -26,6 +28,15 @@ from pydantic import BaseModel, Field
 from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
+from services.jellyfin_playback import (
+    ItemNotFound,
+    JellyfinPlayback,
+    JellyfinUnavailable,
+    NotPlayable,
+    rewrite_playlist,
+    safe_proxy_path,
+    strip_api_key,
+)
 from services.jellyfin_service import JellyfinService
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
@@ -102,6 +113,7 @@ torrent_downloader = TorrentDownloader(config, db_manager=db)
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
+jellyfin_playback = JellyfinPlayback(jellyfin_service)  # Northern Lights player (M0)
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -663,6 +675,102 @@ async def stream_media(item_id: int) -> Dict[str, Any]:
     file_name = os.path.basename(file_path)
     jellyfin_url = f"http://{local_ip}:8096/web/index.html#!/details?filename={file_name}"
     return {"jellyfin_url": jellyfin_url}
+
+
+# --- Northern Lights player (M0): playback through our own proxy, never straight from Jellyfin ---
+_PROXY_REQUEST_HEADERS = ("range", "if-range", "if-none-match", "if-modified-since")
+_PROXY_RESPONSE_HEADERS = (
+    "content-type", "content-length", "content-range", "accept-ranges", "etag", "last-modified",
+)
+_MAX_PLAYLIST_BYTES = 5 * 1024 * 1024
+
+
+def _read_limited(resp: requests.Response, limit: int) -> bytes:
+    """Reads at most `limit` bytes of a streamed response."""
+    buf = bytearray()
+    for chunk in resp.iter_content(chunk_size=64 * 1024):
+        buf += chunk
+        if len(buf) >= limit:
+            break
+    return bytes(buf)
+
+
+@app.get("/api/nl/play/{item_id}")
+async def nl_play_info(item_id: int) -> Dict[str, Any]:
+    """How to play one movie or episode: a proxied stream URL and its kind (file or hls)."""
+    item = db.get_item_by_id(item_id)
+    if not item or not item.get("sources"):
+        raise HTTPException(status_code=404, detail="Media file not found.")
+    try:
+        return await asyncio.to_thread(jellyfin_playback.stream_for, item)
+    except ItemNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except JellyfinUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except NotPlayable as e:
+        raise HTTPException(status_code=415, detail=str(e))
+
+
+@app.get("/nl/jf/{path:path}")
+async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
+    """Streams Jellyfin video and HLS through our app. Only videos/ paths; the API key stays here."""
+    clean = safe_proxy_path(path)
+    if clean is None:
+        raise HTTPException(status_code=404, detail="Not found.")
+    jf = jellyfin_service
+    if not jf.configured:
+        raise HTTPException(status_code=503, detail="Jellyfin is not configured.")
+
+    upstream_url = f"{jf.base_url}/{quote(clean, safe='/')}"
+    query = strip_api_key("?" + request.url.query)[1:] if request.url.query else ""
+    if query:
+        upstream_url += "?" + query
+    headers = {k: v for k, v in request.headers.items() if k.lower() in _PROXY_REQUEST_HEADERS}
+    headers["Accept"] = "*/*"
+    headers["Accept-Encoding"] = "identity"
+    try:
+        upstream = await run_in_threadpool(
+            lambda: jf.session.get(
+                upstream_url, headers=headers, stream=True, timeout=(5, 60), allow_redirects=False
+            )
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=502, detail="Jellyfin could not be reached.")
+
+    content_type = upstream.headers.get("content-type", "")
+    if "mpegurl" in content_type.lower() or clean.lower().endswith(".m3u8"):
+        try:
+            body = await run_in_threadpool(_read_limited, upstream, _MAX_PLAYLIST_BYTES + 1)
+        except Exception:
+            raise HTTPException(status_code=502, detail="Jellyfin playlist could not be read.")
+        finally:
+            upstream.close()
+        if len(body) > _MAX_PLAYLIST_BYTES:
+            raise HTTPException(status_code=502, detail="Playlist too large.")
+        text = rewrite_playlist(body.decode("utf-8", errors="replace"))
+        return Response(
+            content=text,
+            status_code=upstream.status_code,
+            media_type="application/vnd.apple.mpegurl",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    out_headers = {k: v for k, v in upstream.headers.items() if k.lower() in _PROXY_RESPONSE_HEADERS}
+
+    async def body_iter():
+        try:
+            async for chunk in iterate_in_threadpool(upstream.iter_content(chunk_size=64 * 1024)):
+                yield chunk
+        finally:
+            upstream.close()  # also runs when the client disconnects and the stream is cancelled
+
+    return StreamingResponse(body_iter(), status_code=upstream.status_code, headers=out_headers)
+
+
+@app.get("/nl/play/{item_id}", response_class=HTMLResponse)
+async def nl_play_page(item_id: int, request: Request) -> Any:
+    """Minimal full-screen player page for one movie or episode."""
+    return templates.TemplateResponse(request=request, name="nl/player.html", context={"item_id": item_id})
 
 
 @app.post("/api/watch/start")
