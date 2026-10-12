@@ -582,6 +582,7 @@ async function fetchRecommendations() {
   try {
     state.recPage = 1;
     state.recSessionId = null; // a new search is a new session
+    state.vibeMoods = null;
     const data = state.askQuestions ? await startVibeSession() : await requestRecommendations(1);
     showRecommendationPage(data);
     if (data.question) openVibeQuestion(data.question);
@@ -624,6 +625,7 @@ async function loadMoreRecommendations() {
 }
 
 function showRecommendationPage(data) {
+  if (Array.isArray(data.moods)) state.vibeMoods = data.moods;
   state.recHasMore = !!data.has_more;
   renderRecommendations(data.items || [], data.engine, data.total_results);
   updateLoadMoreButton();
@@ -824,6 +826,15 @@ function appendRecommendations(movies, engine) {
   updateLoadMoreButton();
 }
 
+// "Tonight: Cosy and comforting · A good cry": the two likeliest moods of the
+// active questions session. Empty when there is no session or no moods.
+function tonightLineHtml() {
+  const moods = state.recSessionId && Array.isArray(state.vibeMoods) ? state.vibeMoods : [];
+  if (!moods.length) return '';
+  const names = moods.slice(0, 2).map(m => escapeHtml(m.label)).join(' · ');
+  return `<p class="mood-tonight" id="moodTonight"><span class="mood-tonight-key">Tonight:</span> ${names}</p>`;
+}
+
 function renderRecommendations(movies, engine, total) {
   const container = document.getElementById('resultsContainer');
   const header = document.getElementById('resultsHeader');
@@ -845,7 +856,7 @@ function renderRecommendations(movies, engine, total) {
   const engineNote = engine === 'generative'
     ? '<span class="engine-note generative" title="Ranked by the model trained on your ratings">Learning your taste</span>'
     : '<span class="engine-note" title="Ranked by rating and your favourite genres — rate a few more to unlock the learning model">Picked by rating &amp; genre</span>';
-  header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}`;
+  header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}${tonightLineHtml()}`;
 
   movies.forEach((m, i) => container.appendChild(buildMovieCard(m, engine, i, i + 1)));
 }
