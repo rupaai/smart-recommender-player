@@ -10,7 +10,7 @@ The user finds branches hard to track, so every chat updates this list when it o
 - M1 (phases 1, 2, 3) is merged. M2 (stacked, merge in order): `deploy/phase-4` (PR "Deploy phase 4: server setup script"), then `deploy/phase-5` (PR "Deploy phase 5: one-button deploy") and `deploy/phase-8` (alerts).
 - M2 (phases 4, 5, 8) is merged and live on `mars`. M3: `deploy/phase-6` merged as PR #26; `deploy/phase-7` merged as PR #27.
 - `claude/project-thread-eepc0c` (PR "Northern Lights: foil name and download details", opened 2026-10-09): renames the app, adds the aurora foil and puts speed and time left back on downloads (§9).
-- `vibe/t0-always-ask` (PR "Vibe questions open on every search", opened 2026-10-12): the questions pop-up opens on every search when asking is on (§10.6, vibe-questions plan T0).
+- `vibe/t0-always-ask` (PR #31 "Vibe questions open on every search", opened 2026-10-12): the questions pop-up opens on every search when asking is on (§10.6, vibe-questions plan T0).
 - `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
 - Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
 
