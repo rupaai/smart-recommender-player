@@ -20,6 +20,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.session.MediaSession
@@ -131,6 +132,17 @@ class PlayerController(
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // Start (and restart after a seek) with 1 s buffered instead of Media3's 2.5 s / 5 s.
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+                        DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                        START_BUFFER_MS,
+                        REBUFFER_MS,
+                    )
+                    .build()
+            )
             // The on-screen rewind / forward buttons use the same step as Left / Right.
             .setSeekBackIncrementMs(req.skipSeconds * 1000L)
             .setSeekForwardIncrementMs(req.skipSeconds * 1000L)
@@ -385,5 +397,7 @@ class PlayerController(
         private const val PROGRESS_MS = 10_000L
         private const val SEEKED_DEBOUNCE_MS = 700L
         private const val SUB_ID_PREFIX = "nlsub"
+        private const val START_BUFFER_MS = 1_000
+        private const val REBUFFER_MS = 2_000
     }
 }
