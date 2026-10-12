@@ -256,10 +256,10 @@ def run(tmp):
 
     print("GET /nl/play/{id}")
     r = client.get("/nl/play/1")
-    check("player page served", r.status_code == 200 and "<video" in r.text and "/static/nl/play.js" in r.text, r.status_code)
+    check("player page served", r.status_code == 200 and "<video" in r.text and "/static/nl/player.js" in r.text, r.status_code)
     check("player page has no key", SECRET not in r.text)
     check("static player files served",
-          client.get("/static/nl/player-core.js").status_code == 200 and client.get("/static/nl/play.js").status_code == 200)
+          client.get("/static/nl/player-core.js").status_code == 200 and client.get("/static/nl/player.js").status_code == 200)
 
 
 if __name__ == "__main__":

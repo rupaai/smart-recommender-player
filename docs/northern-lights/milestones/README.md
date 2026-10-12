@@ -5,7 +5,7 @@ One file per milestone. Each one has the goal, the features (IDs from `../ROADMA
 | File | Milestone | Status |
 |---|---|---|
 | [M00-foundation.md](M00-foundation.md) | M0 Foundation: a movie plays through our code | done |
-| [M01-player-mvp.md](M01-player-mvp.md) | M1 Player MVP | planned |
+| [M01-player-mvp.md](M01-player-mvp.md) | M1 Player MVP | done |
 | [M02-browse.md](M02-browse.md) | M2 Browse like a real app | planned |
 | [M03-tv-app.md](M03-tv-app.md) | M3 On the TV | planned |
 | [M04-whos-watching.md](M04-whos-watching.md) | M4 Who's watching | planned |

@@ -1147,6 +1147,21 @@ class DatabaseManager:
             item["sources"] = [dict(s) for s in cursor.fetchall()]
             return item
 
+    def get_library_items(self, media_type: str = "movie") -> List[Dict[str, Any]]:
+        """Titles that have at least one source file, for the Northern Lights list."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.id, mi.title, mi.release_year AS year, mi.runtime, mi.poster_url
+                FROM media_items mi
+                WHERE mi.media_type = ?
+                  AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id)
+                ORDER BY LOWER(mi.title), mi.release_year;
+                """,
+                (media_type,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def get_candidates(
         self,
         media_type: str = "movie",
