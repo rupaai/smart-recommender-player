@@ -78,6 +78,8 @@ class FakeJellyfin:
         if self.down:
             raise requests.ConnectionError("down")
         path = url.split("jellyfin.test:8096", 1)[1]
+        if path == "/Users" and method == "GET":  # JELLYFIN_USER_ID "user1" is looked up as a name
+            return FakeResponse(json_data=[{"Name": "other", "Id": "x" * 32}, {"Name": "User1", "Id": "user1"}])
         if path == "/Items" and method == "GET":
             return FakeResponse(json_data={"Items": list(self.items)})
         if path.endswith("/PlaybackInfo") and method == "POST":
@@ -313,6 +315,37 @@ def run(tmp):
     fake.down = False
     js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static/nl/player.js"), encoding="utf-8").read()
     check("player.js has the S4 message", "reach the movie server. Is mars on?" in js)
+
+    # ---- JELLYFIN_USER_ID may be a user name (the Mac's .env had one); it's resolved once
+    print("user id resolution")
+    hexid = "0123456789abcdef0123456789abcdef"
+
+    class UsersOnly:
+        calls = 0
+
+        def request(self, method, url, **kw):
+            UsersOnly.calls += 1
+            return FakeResponse(json_data=[{"Name": "labiba", "Id": hexid}])
+
+    class Svc:
+        configured = True
+        base_url = "http://jellyfin.test:8096"
+        session = UsersOnly()
+        user_id = "Labiba"
+
+    pb = jp.JellyfinPlayback(Svc())
+    check("a user name resolves to its id", pb._user_id() == hexid, pb._user_id())
+    pb._user_id()
+    check("the lookup happens once", UsersOnly.calls == 1, UsersOnly.calls)
+    Svc.user_id = hexid
+    UsersOnly.calls = 0
+    check("a real id is used as is, no lookup", jp.JellyfinPlayback(Svc())._user_id() == hexid and UsersOnly.calls == 0)
+    Svc.user_id = "nobody"
+    try:
+        jp.JellyfinPlayback(Svc())._user_id()
+        check("an unknown name gives a clear error", False)
+    except jp.JellyfinUnavailable as e:
+        check("an unknown name gives a clear error", "JELLYFIN_USER_ID" in str(e), str(e))
 
 
 if __name__ == "__main__":

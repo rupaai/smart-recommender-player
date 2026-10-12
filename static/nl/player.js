@@ -338,6 +338,7 @@
       return resp.json().catch(function () { return {}; }).then(function (body) {
         if (!resp.ok) {
           var err = new Error(body.detail || "Could not start playback.");
+          err.detail = body.detail || "";
           err.unreachable = resp.status === 503 || resp.status === 502 || resp.status === 504;
           throw err;
         }
@@ -389,7 +390,7 @@
       if (resume) { playNow(); }
     }).catch(function (err) {
       S.switching = false;
-      showError(err.unreachable ? UNREACHABLE : err.message);
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
     });
   }
 
@@ -424,7 +425,7 @@
       }
     }).catch(function (err) {
       $("nl-buffering").hidden = true;
-      showError(err.unreachable ? UNREACHABLE : err.message);
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
     });
   }
   function begin(stream, at) {
@@ -435,9 +436,10 @@
 
   /* ------------------------------------------------------------------ errors */
 
-  function showError(message) {
+  function showError(message, detail) {
     stopReporting(false);
-    $("nl-error-text").textContent = message;
+    // The server's reason goes on a second line, so a setup problem isn't mistaken for "mars is off".
+    $("nl-error-text").textContent = detail ? message + "\n" + detail : message;
     $("nl-error").hidden = false;
     root.classList.add("controls-visible");
     $("nl-retry").focus();
