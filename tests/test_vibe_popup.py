@@ -162,8 +162,9 @@ def test_skip_reason():
     check("no results", vp.skip_reason("cozy", [], False) == "no_results")
     check("no facets or tags: no_mood_data", vp.skip_reason("cozy", bare, False) == "no_mood_data")
     check("bare pool never asks a question", vp.PopupSession(1, {}, bare).next_question() is None)
-    check("specific request", vp.skip_reason("slow korean revenge thriller with a devastating ending please",
-                                             pool[:3], False) == "specific_request")
+    check("a specific request is no longer a reason (first question is forced)",
+          vp.skip_reason("slow korean revenge thriller with a devastating ending please", pool[:3], False)
+          == "nothing_to_ask")
     check("otherwise nothing worth asking", vp.skip_reason("cozy", pool, False) == "nothing_to_ask")
 
 

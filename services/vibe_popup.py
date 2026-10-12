@@ -641,8 +641,8 @@ def skip_reason(query: Optional[str], pool: List[Dict[str, Any]], asked: bool) -
         return "no_results"
     if not has_mood_data(pool):
         return "no_mood_data"
-    if not should_auto_ask(query, pool):
-        return "specific_request"
+    # The first question is forced (next_question(force=True)), so a specific
+    # request no longer stops it: what's left is no question with live options.
     return "nothing_to_ask"
 
 
