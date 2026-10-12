@@ -585,6 +585,7 @@ async function fetchRecommendations() {
     const data = state.askQuestions ? await startVibeSession() : await requestRecommendations(1);
     showRecommendationPage(data);
     if (data.question) openVibeQuestion(data.question);
+    else noteSkippedQuestions(data.question_skipped);
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     header.innerHTML = '';
@@ -644,6 +645,15 @@ async function startVibeSession() {
   const data = await res.json();
   state.recSessionId = data.session_id || null;
   return data;
+}
+
+// The switch is on but the server had nothing to ask. Only one reason is worth
+// telling the person about: the server's catalogue has no mood data yet, so
+// questions can never appear there (they would on a machine that has it).
+function noteSkippedQuestions(reason) {
+  if (reason !== 'no_mood_data' || state.moodDataNoted) return;
+  state.moodDataNoted = true;
+  showToast("No vibe questions yet: this server doesn't have the films' mood data. It arrives with the Mac's nightly build.");
 }
 
 function openVibeQuestion(q) {
