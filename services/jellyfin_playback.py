@@ -235,6 +235,7 @@ class JellyfinPlayback:
         self.jf = jellyfin_service
         self._ids: Dict[str, str] = {}
         self._lock = threading.Lock()
+        self._resolved_user: Optional[str] = None
 
     def _require(self) -> None:
         if not self.jf.configured or not self.jf.user_id:
@@ -242,14 +243,38 @@ class JellyfinPlayback:
                 "Jellyfin is not configured (set JELLYFIN_URL, JELLYFIN_API_KEY and JELLYFIN_USER_ID in .env)."
             )
 
+    def _user_id(self) -> str:
+        """JELLYFIN_USER_ID as Jellyfin's 32-hex user id. A user *name* is accepted too and
+        looked up once via GET /Users, since the id is easy to confuse with the login name."""
+        if self._resolved_user:
+            return self._resolved_user
+        self._require()
+        raw = (self.jf.user_id or "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{32}", raw.replace("-", "")):
+            self._resolved_user = raw
+            return raw
+        users = self._request("GET", "/Users") or []
+        for u in users:
+            if str(u.get("Name", "")).lower() == raw.lower() and u.get("Id"):
+                self._resolved_user = u["Id"]
+                return u["Id"]
+        raise JellyfinUnavailable(
+            f"JELLYFIN_USER_ID ({raw!r}) is not a Jellyfin user id or user name. "
+            "Find the id in Jellyfin: Dashboard > Users > your user (it's in the page address)."
+        )
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         self._require()
         try:
             resp = self.jf.session.request(method, f"{self.jf.base_url}{path}", timeout=15, **kwargs)
-            resp.raise_for_status()
-            return resp.json()
-        except Exception as e:  # requests errors, bad JSON
+        except Exception as e:  # connection refused, timeout, DNS
             raise JellyfinUnavailable(f"Jellyfin could not be reached ({type(e).__name__}).") from e
+        if resp.status_code >= 400:
+            raise JellyfinUnavailable(f"Jellyfin answered {resp.status_code} for {path.split('?')[0]}.")
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise JellyfinUnavailable("Jellyfin sent a reply that isn't JSON.") from e
 
     def _refresh_ids(self) -> None:
         data = self._request(
@@ -259,7 +284,7 @@ class JellyfinPlayback:
                 "Recursive": "true",
                 "IncludeItemTypes": "Movie,Episode",
                 "Fields": "Path",
-                "UserId": self.jf.user_id,
+                "UserId": self._user_id(),
             },
         )
         self._ids = {
@@ -293,7 +318,7 @@ class JellyfinPlayback:
             "EnableTranscoding": True,
             "AutoOpenLiveStream": False,
         }
-        params: Dict[str, Any] = {"UserId": self.jf.user_id}
+        params: Dict[str, Any] = {"UserId": self._user_id()}
         if audio_index is not None:
             body["AudioStreamIndex"] = params["AudioStreamIndex"] = audio_index
         if subtitle_index is not None:
@@ -319,7 +344,7 @@ class JellyfinPlayback:
     def item_details(self, jf_id: str) -> Dict[str, Any]:
         """The Jellyfin item for our user (UserData, episode numbers). {} if it cannot be read."""
         try:
-            return self._request("GET", f"/Users/{self.jf.user_id}/Items/{jf_id}") or {}
+            return self._request("GET", f"/Users/{self._user_id()}/Items/{jf_id}") or {}
         except JellyfinUnavailable:
             return {}
 
@@ -354,7 +379,7 @@ class JellyfinPlayback:
     def set_played(self, jf_id: str, played: bool) -> None:
         if not valid_jellyfin_id(jf_id):
             raise ValueError("bad item id")
-        self._send("POST" if played else "DELETE", f"/Users/{self.jf.user_id}/PlayedItems/{jf_id}")
+        self._send("POST" if played else "DELETE", f"/Users/{self._user_id()}/PlayedItems/{jf_id}")
 
     def stream_for(
         self,

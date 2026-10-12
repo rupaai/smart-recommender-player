@@ -66,6 +66,8 @@ class FakeJellyfin:
     def request(self, method, url, **kw):
         if self.down:
             raise requests.ConnectionError("down")
+        if url.endswith("/Users") and method == "GET":  # "user1" is looked up as a user name
+            return FakeResponse(json_data=[{"Name": "user1", "Id": "user1"}])
         if url.endswith("/Items") and method == "GET":
             self.items_calls += 1
             return FakeResponse(json_data={"Items": list(self.items)})
