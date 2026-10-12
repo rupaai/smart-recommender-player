@@ -1,0 +1,13 @@
+{% extends "nl/tv/base.html" %}
+{% block main %}
+  <section class="tv-section tv-me" aria-labelledby="tv-me-h">
+    <h2 id="tv-me-h">{{ viewer.label }}</h2>
+    <div class="tv-me-list" data-nl-row="me-audio"><button id="tv-pref-audio" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-sub"><button id="tv-pref-sub" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-on"><button id="tv-pref-on" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="false" data-nl-focus></button></div>
+    {% if people_configured %}
+    <div class="tv-me-list" data-nl-row="me-switch"><a class="tv-btn tv-me-btn" data-nl-focus href="/nl/tv/who?next=%2Fnl%2Ftv%2F">{% if viewer.both %}Change who&rsquo;s watching{% else %}Not {{ viewer.label }}? Switch who&rsquo;s watching{% endif %}</a></div>
+    {% endif %}
+    <p class="tv-hint" id="tv-pref-status" role="status">Press OK to change a setting.</p>
+  </section>
+{% endblock %}

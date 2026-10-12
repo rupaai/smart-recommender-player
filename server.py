@@ -17,10 +17,10 @@ import requests
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -44,6 +44,18 @@ from services.jellyfin_playback import (
 )
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
+from services.nl_people import (
+    BOTH,
+    COOKIE_MAX_AGE,
+    COOKIE_NAME,
+    People,
+    PeopleConfigError,
+    Prefs,
+    Viewer,
+    clean_prefs,
+    resume_summary,
+    safe_next,
+)
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
@@ -121,6 +133,15 @@ torrent_downloader = TorrentDownloader(config, db_manager=db)
 jellyfin_service = JellyfinService(config)
 jellyfin_playback = JellyfinPlayback(jellyfin_service)  # Northern Lights player (M0)
 nl_browse = NLBrowse(db, jellyfin_playback)  # Northern Lights browse (M2); search is wired in below
+
+# Northern Lights who's watching (M4): people from config.yaml `northern_lights.people` or env NL_PEOPLE.
+# None configured = one implicit viewer using JELLYFIN_USER_ID, no who's-watching screen (as before M4).
+try:
+    nl_people = People.from_config(config, os.getenv("NL_PEOPLE"))
+except PeopleConfigError as _e:
+    raise SystemExit(f"[Northern Lights] bad people configuration: {_e}")
+if nl_people.configured and not jellyfin_service.user_id:
+    jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -243,6 +264,7 @@ class FinishWatchRequest(BaseModel):
     session_id: int
     user_rating: Optional[float] = None
     notes: Optional[str] = None
+    profile_ids: Optional[List[int]] = None  # who watched; default: the Northern Lights viewer (M4)
 
 
 class CancelWatchRequest(BaseModel):
@@ -694,6 +716,128 @@ async def stream_media(item_id: int) -> Dict[str, Any]:
     return {"jellyfin_url": jellyfin_url}
 
 
+# --- Northern Lights who's watching (M4) ---
+def _nl_viewer(request: Optional[Request]) -> Optional[Viewer]:
+    """The viewer the nl_viewer cookie names; None = not chosen (or unknown). Always the implicit
+    viewer when no people are configured."""
+    header = request.headers.get("cookie") if request is not None else None
+    return nl_people.parse_cookie(header)
+
+
+def _nl_viewer_or_default(request: Optional[Request]) -> Viewer:
+    """For API calls: the chosen viewer, else the first person (the pages ask before they get here)."""
+    return _nl_viewer(request) or nl_people.default_viewer()
+
+
+def _as_user(user: Optional[str], fn, *args):
+    """Runs fn(*args) with Jellyfin calls made for this user (set inside the worker thread)."""
+    with jellyfin_playback.as_user(user):
+        return fn(*args)
+
+
+def _nl_prefs_row(viewer: Viewer) -> Dict[str, Any]:
+    """The prefs a viewer lives by: their own row. For "Both of us" the first person's, with anything
+    set separately for Both laid over it."""
+    if viewer.is_both:
+        base = db.get_person_prefs(viewer.primary.id) or {} if viewer.primary else {}
+        over = db.get_person_prefs(BOTH) or {}
+        return {**base, **{k: v for k, v in over.items() if v is not None}}
+    return db.get_person_prefs(viewer.key) or {}
+
+
+def _nl_effective_prefs(viewer: Viewer) -> Prefs:
+    return Prefs.from_row(_nl_prefs_row(viewer))
+
+
+def _nl_page(request: Request, name: str, context: Dict[str, Any], tv: bool = False) -> Any:
+    """A /nl/ page. With people configured and nobody chosen yet, the who's-watching screen first."""
+    viewer = _nl_viewer(request)
+    if viewer is None:
+        here = request.url.path + (("?" + request.url.query) if request.url.query else "")
+        return RedirectResponse(f"/nl/{'tv/' if tv else ''}who?next={quote(here, safe='')}", status_code=302)
+    ctx = {**context, "viewer": viewer.public(), "people_configured": nl_people.configured, "tv": tv}
+    return templates.TemplateResponse(request=request, name=name, context=ctx)
+
+
+@app.get("/api/nl/viewer")
+async def nl_viewer_info(request: Request) -> Dict[str, Any]:
+    """Who is watching: the choices for the who's-watching screen, the chosen viewer (null = not
+    chosen yet) and the recommender profiles their ratings go to. Never carries Jellyfin ids."""
+    viewer = _nl_viewer(request)
+    return {
+        "configured": nl_people.configured,
+        "choices": nl_people.choices(),
+        "viewer": viewer.public() if viewer else None,
+        "profile_ids": viewer.profile_ids if viewer else [],
+    }
+
+
+def _nl_choose(key: str, next_url: Optional[str], tv: bool) -> Response:
+    default = "/nl/tv/" if tv else "/nl/"
+    target = safe_next(next_url, default)
+    if not nl_people.configured or nl_people.viewer_for(key) is None:
+        return RedirectResponse(f"/nl/{'tv/' if tv else ''}who?next={quote(target, safe='')}", status_code=302)
+    resp = RedirectResponse(target, status_code=302)
+    resp.set_cookie(COOKIE_NAME, key.lower(), max_age=COOKIE_MAX_AGE, path="/", samesite="lax", httponly=True)
+    return resp
+
+
+@app.get("/nl/who", response_class=HTMLResponse)
+async def nl_who_page(request: Request, next: Optional[str] = None) -> Any:
+    """Who's watching? Without configured people there is nothing to choose: straight home."""
+    if not nl_people.configured:
+        return RedirectResponse("/nl/", status_code=302)
+    return templates.TemplateResponse(request=request, name="nl/who.html", context={
+        "active": "", "choices": nl_people.choices(), "next": safe_next(next, "/nl/"), "viewer": None,
+        "people_configured": True, "tv": False, "choose_base": "/nl/who/",
+    })
+
+
+@app.get("/nl/who/{key}")
+async def nl_who_choose(key: str, next: Optional[str] = None) -> Any:
+    return _nl_choose(key, next, tv=False)
+
+
+@app.get("/nl/tv/who", response_class=HTMLResponse)
+async def nl_tv_who_page(request: Request, next: Optional[str] = None) -> Any:
+    if not nl_people.configured:
+        return RedirectResponse("/nl/tv/", status_code=302)
+    return templates.TemplateResponse(request=request, name="nl/tv/who.html", context={
+        "page": "who", "choices": nl_people.choices(), "next": safe_next(next, "/nl/tv/"), "viewer": None,
+        "people_configured": True, "tv": True, "choose_base": "/nl/tv/who/",
+    })
+
+
+@app.get("/nl/tv/who/{key}")
+async def nl_tv_who_choose(key: str, next: Optional[str] = None) -> Any:
+    return _nl_choose(key, next, tv=True)
+
+
+def _nl_prefs_reply(viewer: Viewer) -> Dict[str, Any]:
+    row = _nl_prefs_row(viewer)
+    return {"viewer": viewer.public(), "prefs": Prefs.from_row(row).public(), "saved": bool(row)}
+
+
+@app.get("/api/nl/prefs")
+async def nl_prefs_get(request: Request) -> Dict[str, Any]:
+    """The current viewer's language and subtitle prefs (audio language, subtitle language, subtitles on
+    by default, the subtitle look, the subtitle search language). Per person, not per device."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(_nl_prefs_reply, viewer)
+
+
+@app.put("/api/nl/prefs")
+async def nl_prefs_put(request: Request, body: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Updates the fields sent (null / "" clears a language); the rest stay. 400 on a bad value."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        fields = clean_prefs(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await asyncio.to_thread(db.set_person_prefs, viewer.key, fields)
+    return await asyncio.to_thread(_nl_prefs_reply, viewer)
+
+
 # --- Northern Lights player (M0): playback through our own proxy, never straight from Jellyfin ---
 _PROXY_REQUEST_HEADERS = ("range", "if-range", "if-none-match", "if-modified-since")
 _PROXY_RESPONSE_HEADERS = (
@@ -714,6 +858,7 @@ def _read_limited(resp: requests.Response, limit: int) -> bytes:
 
 @app.get("/api/nl/play/{item_id}")
 async def nl_play_info(
+    request: Request,
     item_id: int,
     audio: Optional[int] = Query(None, ge=0, description="Jellyfin audio stream index"),
     subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
@@ -723,7 +868,11 @@ async def nl_play_info(
     client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
-    its audio and subtitle tracks, and where the viewer left off."""
+    its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
+    default tracks from their language prefs, and Resume from their own progress (the further of the
+    two for "Both of us", with a note when they are in different places)."""
+    viewer = _nl_viewer_or_default(request)
+    prefer = _nl_effective_prefs(viewer).public()
     item = db.get_nl_title(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
@@ -735,7 +884,11 @@ async def nl_play_info(
     item = {**item, "sources": [chosen]}
     try:
         profile = profile_for(client, caps)
-        info = await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start, profile)
+        info = await asyncio.to_thread(
+            _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer
+        )
+        if nl_people.configured and info.get("jellyfin_id"):
+            await asyncio.to_thread(_apply_resume_rule, viewer, info)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
@@ -746,6 +899,42 @@ async def nl_play_info(
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
     return info
+
+
+def _stream_for_viewer(item, audio, subtitle, start, profile, prefer):
+    if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on")):
+        prefer = None
+    if prefer:
+        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer)
+    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile)
+
+
+def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> None:
+    """Resume from the viewer's own progress; for Both the further of the two. Adds `resume_note`
+    ("You're at 42:10, Sam is at 38:00") when they differ by more than two minutes. Jellyfin trouble
+    for the other person never blocks playback."""
+    primary = viewer.primary
+    states: Dict[str, Dict[str, Any]] = {}
+    if primary is not None:
+        states[primary.id] = {"position": info.get("resume_seconds") or 0.0, "played": info.get("played")}
+    for person in nl_people.people:
+        if person.id in states:
+            continue
+        try:
+            with jellyfin_playback.as_user(person.jellyfin_user_id):
+                details = jellyfin_playback.item_details(info["jellyfin_id"])
+        except Exception:  # noqa: BLE001 - best effort
+            continue
+        data = (details or {}).get("UserData") or {}
+        states[person.id] = {
+            "position": (data.get("PlaybackPositionTicks") or 0) / 10_000_000,
+            "played": bool(data.get("Played")),
+        }
+    summary = resume_summary(viewer, states, nl_people.people)
+    if summary["positions"] or viewer.is_both:
+        info["resume_seconds"] = summary["resume_seconds"]
+        info["played"] = summary["played"]
+    info["resume_note"] = summary["note"]
 
 
 def _nl_subtitle_item(item_id: int, source: Optional[int]) -> Dict[str, Any]:
@@ -880,70 +1069,100 @@ class NLProgressRequest(BaseModel):
     play_method: str = "DirectPlay"
 
 
+def _report_to_users(users: List[Optional[str]], call) -> None:
+    """Runs `call(user)` for every Jellyfin user ("Both of us" = two). One failing does not stop the
+    other; it only raises (the first error) when none succeeded."""
+    errors: List[JellyfinUnavailable] = []
+    done = 0
+    for user in users:
+        try:
+            with jellyfin_playback.as_user(user):
+                call(user)
+            done += 1
+        except JellyfinUnavailable as e:
+            errors.append(e)
+    if errors and not done:
+        raise errors[0]
+    for e in errors:
+        print(f"[NL] one viewer's Jellyfin report failed: {e}", flush=True)
+
+
 @app.post("/api/nl/progress")
-async def nl_progress(req: NLProgressRequest) -> Dict[str, Any]:
-    """Tells Jellyfin where the viewer is (start, progress, stop) so it can offer 'Resume'."""
+async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any]:
+    """Tells Jellyfin where the viewer is (start, progress, stop) so it can offer 'Resume'.
+    Each person's progress goes to their own Jellyfin user; "Both of us" reports to both."""
     if not valid_jellyfin_id(req.jellyfin_id):
         raise HTTPException(status_code=400, detail="Bad item id.")
+    viewer = _nl_viewer_or_default(request)
     try:
         await asyncio.to_thread(
-            jellyfin_playback.report_progress,
-            req.event, req.jellyfin_id, req.play_session_id, req.media_source_id,
-            req.position_seconds, req.paused, req.play_method,
+            _report_to_users, viewer.jellyfin_users,
+            lambda user: jellyfin_playback.report_progress(
+                req.event, req.jellyfin_id, req.play_session_id, req.media_source_id,
+                req.position_seconds, req.paused, req.play_method, **({"user": user} if user else {}),
+            ),
         )
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {"success": True}
 
 
-async def _nl_set_played(jellyfin_id: str, played: bool) -> Dict[str, Any]:
+async def _nl_set_played(jellyfin_id: str, played: bool, request: Request) -> Dict[str, Any]:
     if not valid_jellyfin_id(jellyfin_id):
         raise HTTPException(status_code=400, detail="Bad item id.")
+    viewer = _nl_viewer_or_default(request)
     try:
-        await asyncio.to_thread(jellyfin_playback.set_played, jellyfin_id, played)
+        await asyncio.to_thread(
+            _report_to_users, viewer.jellyfin_users, lambda user: jellyfin_playback.set_played(jellyfin_id, played)
+        )
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {"success": True, "played": played}
 
 
 @app.post("/api/nl/played/{jellyfin_id}")
-async def nl_mark_played(jellyfin_id: str) -> Dict[str, Any]:
-    """Mark a title as watched in Jellyfin."""
-    return await _nl_set_played(jellyfin_id, True)
+async def nl_mark_played(jellyfin_id: str, request: Request) -> Dict[str, Any]:
+    """Mark a title as watched in Jellyfin (for both users when "Both of us")."""
+    return await _nl_set_played(jellyfin_id, True, request)
 
 
 @app.delete("/api/nl/played/{jellyfin_id}")
-async def nl_mark_unplayed(jellyfin_id: str) -> Dict[str, Any]:
+async def nl_mark_unplayed(jellyfin_id: str, request: Request) -> Dict[str, Any]:
     """Mark a title as not watched in Jellyfin."""
-    return await _nl_set_played(jellyfin_id, False)
+    return await _nl_set_played(jellyfin_id, False, request)
 
 
 @app.get("/api/nl/library")
-async def nl_library(type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
+async def nl_library(request: Request, type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
     """Cards for every movie or show that has a file. Movies partly watched carry a progress
     bar, the latest additions a "New" badge. Works with Jellyfin down (no progress then)."""
-    items = await asyncio.to_thread(nl_browse.library, type)
+    viewer = _nl_viewer_or_default(request)
+    items = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.library, type, None, True, viewer.jellyfin_users)
     return {"items": items}
 
 
 @app.get("/api/nl/home")
-async def nl_home_data() -> Dict[str, Any]:
-    """Home: Continue Watching (Jellyfin Resume) plus the newest movies and shows."""
-    return await asyncio.to_thread(nl_browse.home)
+async def nl_home_data(request: Request) -> Dict[str, Any]:
+    """Home: Continue Watching (Jellyfin Resume of the viewer) plus the newest movies and shows."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.home, viewer.jellyfin_users)
 
 
 @app.get("/api/nl/title/{item_id}")
-async def nl_title_data(item_id: int) -> Dict[str, Any]:
-    data = await asyncio.to_thread(nl_browse.title, item_id)
+async def nl_title_data(item_id: int, request: Request) -> Dict[str, Any]:
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.title, item_id, viewer.jellyfin_users)
     if not data:
         raise HTTPException(status_code=404, detail="That title isn't in the library.")
     return data
 
 
 @app.get("/api/nl/show/{item_id}")
-async def nl_show_data(item_id: int) -> Dict[str, Any]:
-    """A show's seasons and episodes with watched state, and its Next up episode."""
-    data = await asyncio.to_thread(nl_browse.show, item_id)
+async def nl_show_data(item_id: int, request: Request) -> Dict[str, Any]:
+    """A show's seasons and episodes with watched state, and its Next up episode (the viewer's;
+    for "Both of us" the first person's)."""
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.show, item_id)
     if not data:
         raise HTTPException(status_code=404, detail="That show isn't in the library.")
     return data
@@ -969,72 +1188,81 @@ async def nl_show_prefs_set(item_id: int, prefs: NLShowPrefs) -> Dict[str, Any]:
 
 
 @app.get("/api/nl/next/{item_id}")
-async def nl_next_episode(item_id: int, source: int = Query(..., ge=1)) -> Dict[str, Any]:
+async def nl_next_episode(request: Request, item_id: int, source: int = Query(..., ge=1)) -> Dict[str, Any]:
     """The episode after `source` for the player's next-episode card (has_next false at the end)."""
-    return await asyncio.to_thread(nl_browse.next_episode, item_id, source)
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.next_episode, item_id, source)
 
 
 @app.get("/api/nl/search")
-async def nl_search(q: str = Query("", max_length=100), limit: int = Query(20, ge=1, le=40)) -> Dict[str, Any]:
+async def nl_search(request: Request, q: str = Query("", max_length=100), limit: int = Query(20, ge=1, le=40)) -> Dict[str, Any]:
     """Movies, shows and episodes matching the text. Each result is Ready (in the library,
     with a link) or Not in library yet (with a link to the Download tab of the main app)."""
-    results = await asyncio.to_thread(nl_browse.search, q, limit)
+    viewer = _nl_viewer_or_default(request)
+    results = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.search, q, limit)
     return {"query": q, "results": results}
 
 
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/home.html", context={"active": "home"})
+    return _nl_page(request, "nl/home.html", {"active": "home"})
 
 
 @app.get("/nl/movies", response_class=HTMLResponse)
 async def nl_movies_page(request: Request) -> Any:
-    return templates.TemplateResponse(
-        request=request, name="nl/browse.html", context={"active": "movies", "kind": "movie", "heading": "Movies"}
-    )
+    return _nl_page(request, "nl/browse.html", {"active": "movies", "kind": "movie", "heading": "Movies"})
 
 
 @app.get("/nl/shows", response_class=HTMLResponse)
 async def nl_shows_page(request: Request) -> Any:
-    return templates.TemplateResponse(
-        request=request, name="nl/browse.html", context={"active": "shows", "kind": "tv", "heading": "Shows"}
-    )
+    return _nl_page(request, "nl/browse.html", {"active": "shows", "kind": "tv", "heading": "Shows"})
 
 
 @app.get("/nl/title/{item_id}", response_class=HTMLResponse)
 async def nl_title_page(item_id: int, request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/title.html", context={"active": "", "item_id": item_id})
+    return _nl_page(request, "nl/title.html", {"active": "", "item_id": item_id})
 
 
 @app.get("/nl/show/{item_id}", response_class=HTMLResponse)
 async def nl_show_page(item_id: int, request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/show.html", context={"active": "shows", "item_id": item_id})
+    return _nl_page(request, "nl/show.html", {"active": "shows", "item_id": item_id})
+
+
+@app.get("/nl/me", response_class=HTMLResponse)
+async def nl_me_page(request: Request) -> Any:
+    """The viewer's own settings: their languages and subtitles, and who's watching."""
+    return _nl_page(request, "nl/me.html", {"active": "me"})
 
 
 @app.get("/nl/tv/", response_class=HTMLResponse)
 async def nl_tv_home(request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/tv/home.html", context={"page": "home"})
+    return _nl_page(request, "nl/tv/home.html", {"page": "home"}, tv=True)
 
 
 @app.get("/nl/tv/search", response_class=HTMLResponse)
 async def nl_tv_search(request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/tv/search.html", context={"page": "search"})
+    return _nl_page(request, "nl/tv/search.html", {"page": "search"}, tv=True)
 
 
 @app.get("/nl/tv/title/{item_id}", response_class=HTMLResponse)
 async def nl_tv_title(item_id: int, request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/tv/title.html", context={"page": "title", "item_id": item_id})
+    return _nl_page(request, "nl/tv/title.html", {"page": "title", "item_id": item_id}, tv=True)
 
 
 @app.get("/nl/tv/show/{item_id}", response_class=HTMLResponse)
 async def nl_tv_show(item_id: int, request: Request) -> Any:
-    return templates.TemplateResponse(request=request, name="nl/tv/show.html", context={"page": "show", "item_id": item_id})
+    return _nl_page(request, "nl/tv/show.html", {"page": "show", "item_id": item_id}, tv=True)
+
+
+@app.get("/nl/tv/me", response_class=HTMLResponse)
+async def nl_tv_me(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/me.html", {"page": "me"}, tv=True)
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
 async def nl_play_page(item_id: int, request: Request) -> Any:
     """Minimal full-screen player page for one movie or episode."""
-    return templates.TemplateResponse(request=request, name="nl/player.html", context={"item_id": item_id})
+    return _nl_page(request, "nl/player.html", {"item_id": item_id}, tv=request.query_params.get("tv") == "1")
 
 
 @app.post("/api/watch/start")
@@ -1047,17 +1275,28 @@ async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
 
 
 @app.post("/api/watch/finish")
-async def finish_watch(req: FinishWatchRequest) -> Dict[str, Any]:
-    """Completes watch session with star rating & review notes, updating taste profile."""
+async def finish_watch(req: FinishWatchRequest, request: Request) -> Dict[str, Any]:
+    """Completes watch session with star rating & review notes, updating taste profile.
+    With who's-watching set up, the watch and rating are logged for the viewer's recommender
+    profile(s) ("Both of us" = both) instead of always landing on profile 1."""
     with db.get_connection() as conn:
         row = conn.execute(
             "SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (req.session_id,)
         ).fetchone()
-    record_id = db.finish_active_watch(
-        session_id=req.session_id,
-        user_rating=req.user_rating,
-        notes=req.notes,
-    )
+    viewer = _nl_viewer(request) if nl_people.configured else None
+    profile_ids = req.profile_ids or (viewer.profile_ids if viewer else [])
+    if profile_ids:
+        try:
+            done = db.mark_watch_done_for_profiles(req.session_id, profile_ids, req.user_rating, req.notes)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        record_id = req.session_id if done else None
+    else:
+        record_id = db.finish_active_watch(
+            session_id=req.session_id,
+            user_rating=req.user_rating,
+            notes=req.notes,
+        )
     if not record_id:
         raise HTTPException(status_code=404, detail="Active session not found.")
     if req.user_rating and row:

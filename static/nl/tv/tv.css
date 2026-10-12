@@ -107,6 +107,19 @@ button { font: inherit; color: inherit; }
   box-shadow: 0 0 0 0.3rem var(--action), 0 0 3rem 0.6rem rgba(255, 106, 43, 0.55); }
 .tv-hint { margin: 1rem var(--side) 0; color: var(--text-2); }
 
+/* ---- who's watching, me (M4) */
+.tv-who-row { gap: 3rem; justify-content: center; padding-top: 5rem; }
+.tv-who-item { width: 18rem; text-align: center; }
+.tv-who-art { aspect-ratio: 1 / 1; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-stretch: 72%; font-weight: 800; font-size: 8rem; line-height: 1; color: var(--text);
+  background: linear-gradient(135deg, var(--aurora-green), var(--aurora-violet)); }
+.tv-who-item:nth-child(2) .tv-who-art { background: linear-gradient(135deg, var(--aurora-teal), var(--aurora-magenta)); }
+.tv-who-item:nth-child(3) .tv-who-art { background: var(--surface-2); }
+.tv-who-card .tv-name { font-size: 2rem; }
+.tv-me { padding-bottom: 2rem; }
+.tv-me-list { padding: 1.25rem var(--side) 0.75rem; }
+.tv-me-btn { justify-content: flex-start; min-width: 44rem; }
+
 @media (prefers-reduced-motion: reduce) {
   .tv-pill, .tv-btn, .tv-art { transition: none; }
 }

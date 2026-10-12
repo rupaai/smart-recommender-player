@@ -90,6 +90,15 @@ torrent_ranking:
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
 
+# Northern Lights "Who's watching" (M4). Leave it commented and the app has one viewer
+# (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
+# fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, deploy.
+# profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
+#northern_lights:
+#  people:
+#    - {id: labiba,  name: Labiba,          jellyfin_user_id: PASTE_USER_ID_OR_NAME, profile_id: 1}
+#    - {id: partner, name: PARTNER_NAME,    jellyfin_user_id: PASTE_USER_ID_OR_NAME, profile_id: 2}
+
 # libtorrent configuration
 torrent:
   # Port range for incoming connections

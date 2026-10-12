@@ -72,7 +72,7 @@
     advancing: false,     // already switching to the next episode
     backHref: isTv ? "/nl/tv/" : "/nl/",
     nextPromise: null,    // the next-episode lookup in flight (the native player wants the label up front)
-    subStyle: { size: "M", background: "box", raise: 0 },   // P15, saved per device (M4 moves it to the person's prefs)
+    subStyle: { size: "M", background: "box", raise: 0 },   // P15, saved in the person's prefs (NLPrefs; localStorage is the fallback)
     subDelay: 0           // P16, seconds; per file, so never saved
   };
 
@@ -109,12 +109,12 @@
     muted: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/>')
   };
 
-  function toast(text) {
+  function toast(text, ms) {
     var el = $("nl-toast");
     el.textContent = text;
     el.classList.add("on");
     clearTimeout(S.toastTimer);
-    S.toastTimer = setTimeout(function () { el.classList.remove("on"); }, 1100);
+    S.toastTimer = setTimeout(function () { el.classList.remove("on"); }, ms || 1100);
   }
 
   /* -------------------------------------------------------- control hiding */
@@ -427,21 +427,28 @@
     if (r === 0) { return "0 s"; }
     return (r > 0 ? "+" : "−") + Math.abs(r).toFixed(2) + " s";
   }
+  function adoptSubStyle(saved) {
+    if (saved && typeof saved === "object") {
+      if (SUB_SIZES.indexOf(saved.size) >= 0) { S.subStyle.size = saved.size; }
+      if (SUB_BACKGROUNDS.some(function (b) { return b[0] === saved.background; })) { S.subStyle.background = saved.background; }
+      if (saved.raise === 0 || saved.raise === 1 || saved.raise === 2) { S.subStyle.raise = saved.raise; }
+    }
+  }
   function loadSubStyle() {
-    try {
-      var saved = JSON.parse(lsGet("nl.subStyle") || "null");
-      if (saved && typeof saved === "object") {
-        if (SUB_SIZES.indexOf(saved.size) >= 0) { S.subStyle.size = saved.size; }
-        if (SUB_BACKGROUNDS.some(function (b) { return b[0] === saved.background; })) { S.subStyle.background = saved.background; }
-        if (saved.raise === 0 || saved.raise === 1 || saved.raise === 2) { S.subStyle.raise = saved.raise; }
-      }
-    } catch (e) { /* unreadable: keep the defaults */ }
+    // The person's saved look (the server knows who is watching); the device's own value shows until it arrives.
+    try { adoptSubStyle(JSON.parse(lsGet("nl.subStyle") || "null")); } catch (e) { /* unreadable: keep the defaults */ }
+    if (window.NLPrefs) {
+      window.NLPrefs.get().then(function (p) {
+        if (p && p.sub_style) { adoptSubStyle(p.sub_style); applySubStyle(); }
+      });
+    }
   }
   function applySubStyle() {
     if (player.canStyleSubtitles) { player.setSubtitleStyle(S.subStyle); }
   }
   function saveSubStyle() {
-    lsSet("nl.subStyle", JSON.stringify(S.subStyle));
+    var style = { size: S.subStyle.size, background: S.subStyle.background, raise: S.subStyle.raise };
+    if (window.NLPrefs) { window.NLPrefs.save({ sub_style: style }); } else { lsSet("nl.subStyle", JSON.stringify(style)); }
     applySubStyle();
   }
   function backgroundName() {
@@ -661,6 +668,7 @@
       loadNext(stream);
       $("nl-buffering").hidden = true;
       var resumeAt = stream.resume_seconds || 0;
+      var note = opts.fromNext ? "" : (stream.resume_note || "");   // M4: "You're at 42:10, Sam is at 38:00"
       var choice = opts.fromNext ? "0" : urlResume;
       urlResume = null;                      // the link only decides the first load
       if (choice === "0") {
@@ -668,7 +676,8 @@
       } else if (choice === "1" && resumeAt > 0 && !stream.played) {
         begin(stream, resumeAt);
       } else if (resumeAt > 30 && !stream.played) {
-        $("nl-resume-name").textContent = stream.title || "";
+        $("nl-resume-name").textContent = (stream.title || "") + (note ? "\n" + note : "");
+        note = "";
         $("nl-resume-yes").textContent = "Resume from " + fmt(resumeAt);
         $("nl-resume").hidden = false;
         showControls();
@@ -678,6 +687,7 @@
       } else {
         begin(stream, 0);
       }
+      if (note) { toast(note, 6000); }
     }).catch(function (err) {
       S.advancing = false;
       $("nl-buffering").hidden = true;
@@ -692,6 +702,9 @@
       Promise.race([pending, new Promise(function (resolve) { setTimeout(resolve, 1500); })]).then(function () { begin(stream, at); });
       return;
     }
+    // M4: the person's own default subtitles (a text track; picture subtitles were burned in by the server).
+    if (stream.default_subtitle_index >= 0 && !S.defaultSubDone) { S.textIndex = stream.default_subtitle_index; }
+    S.defaultSubDone = true;
     applyStream(stream, at);
     playNow();
     showControls();

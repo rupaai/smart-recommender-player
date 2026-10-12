@@ -141,6 +141,7 @@ class DatabaseManager:
             self._migrate_v10_season_ratings(cursor)
             self._migrate_v11_watch_later(cursor)
             self._migrate_v12_nl_browse(cursor)
+            self._migrate_v13_nl_people(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -721,6 +722,34 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 12;")
             print("[Database] Migration v12 applied: media_sources.jellyfin_id, nl_show_prefs added.")
 
+    def _migrate_v13_nl_people(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M4 (who's watching).
+
+          nl_person_prefs   one row per viewer key (a configured person's id, "both", or
+                            "default" when no people are configured): preferred audio and
+                            subtitle language, subtitles on by default, the subtitle look
+                            (JSON) and the subtitle search language.
+
+        The people themselves live in config, not here. Idempotent and additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_person_prefs (
+                person_id       TEXT PRIMARY KEY,
+                audio_lang      TEXT,
+                subtitle_lang   TEXT,
+                subtitles_on    INTEGER,
+                sub_style       TEXT,
+                search_lang     TEXT,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 13:
+            cursor.execute("PRAGMA user_version = 13;")
+            print("[Database] Migration v13 applied: nl_person_prefs added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1294,6 +1323,75 @@ class DatabaseManager:
                 (media_item_id, 1 if autoplay else 0),
             )
         return bool(autoplay)
+
+    # ------------------------------------------------------------------ Northern Lights people (M4)
+
+    def get_person_prefs(self, person_id: str) -> Optional[Dict[str, Any]]:
+        """The saved language / subtitle prefs of one viewer key, or None if nothing was ever saved."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM nl_person_prefs WHERE person_id = ?;", (person_id,)).fetchone()
+        if row is None:
+            return None
+        try:
+            style = json.loads(row["sub_style"]) if row["sub_style"] else None
+        except ValueError:
+            style = None
+        return {
+            "audio_lang": row["audio_lang"],
+            "subtitle_lang": row["subtitle_lang"],
+            "subtitles_on": None if row["subtitles_on"] is None else bool(row["subtitles_on"]),
+            "sub_style": style,
+            "search_lang": row["search_lang"],
+        }
+
+    def set_person_prefs(self, person_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+        """Updates the given (already validated) pref fields and leaves the others alone."""
+        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang")
+        values: Dict[str, Any] = {}
+        for key in allowed:
+            if key in fields:
+                v = fields[key]
+                if key == "sub_style":
+                    v = json.dumps(v, separators=(",", ":")) if v else None
+                elif key == "subtitles_on":
+                    v = None if v is None else (1 if v else 0)
+                values[key] = v
+        with self.get_connection() as conn:
+            conn.execute("INSERT OR IGNORE INTO nl_person_prefs (person_id) VALUES (?);", (person_id,))
+            if values:
+                sets = ", ".join(f"{k} = ?" for k in values)
+                conn.execute(
+                    f"UPDATE nl_person_prefs SET {sets}, updated_at = CURRENT_TIMESTAMP WHERE person_id = ?;",
+                    (*values.values(), person_id),
+                )
+        return self.get_person_prefs(person_id) or {}
+
+    def mark_watch_done_for_profiles(
+        self, session_id: int, profile_ids: List[int], user_rating: Optional[float] = None, notes: Optional[str] = None
+    ) -> Optional[int]:
+        """Finishes the active watch session and logs it as seen by exactly these profiles
+        (who's watching), instead of the legacy row that always landed on profile 1.
+        Returns the media_item_id, or None if the session is unknown."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (session_id,)).fetchone()
+            if not row:
+                return None
+            conn.execute("UPDATE active_watch_sessions SET status = 'completed' WHERE id = ?;", (session_id,))
+            media_item_id = row["media_item_id"]
+        for pid in profile_ids:
+            if user_rating is not None:
+                self.rate_item(media_item_id, profile_id=pid, user_rating=user_rating, status="seen", notes=notes)
+                continue
+            # Seen but not rated: never wipe a rating this person already gave.
+            with self.get_connection() as conn:
+                if conn.execute("SELECT 1 FROM profiles WHERE id = ?;", (pid,)).fetchone():
+                    conn.execute(
+                        "INSERT INTO watch_history (media_item_id, profile_id, user_rating, status, notes) "
+                        "VALUES (?, ?, NULL, 'seen', ?) ON CONFLICT(profile_id, media_item_id) DO UPDATE SET status = 'seen' "
+                        "WHERE watch_history.status != 'seen';",
+                        (media_item_id, pid, notes),
+                    )
+        return media_item_id
 
     def get_candidates(
         self,
