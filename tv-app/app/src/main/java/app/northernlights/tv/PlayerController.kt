@@ -235,7 +235,9 @@ class PlayerController(
         for (group in p.currentTracks.groups) {
             if (group.type != C.TRACK_TYPE_TEXT) continue
             val g = group.mediaTrackGroup
-            if (g.length > 0 && g.getFormat(0).id == wantedId) {
+            // Media3 prefixes side-loaded track ids with the source number ("1:nlsub3").
+            val id = if (g.length > 0) g.getFormat(0).id else null
+            if (id == wantedId || id?.endsWith(":$wantedId") == true) {
                 p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                     .setOverrideForType(TrackSelectionOverride(g, 0))
