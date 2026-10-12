@@ -1,0 +1,22 @@
+<resources>
+    <style name="Theme.NorthernLights" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/night</item>
+        <item name="android:colorBackground">@color/night</item>
+        <item name="colorPrimary">@color/aurora_teal</item>
+        <item name="colorAccent">@color/aurora_green</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:windowFullscreen">true</item>
+    </style>
+
+    <style name="NlButton" parent="Widget.AppCompat.Button">
+        <item name="android:background">@drawable/btn_bg</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textSize">24sp</item>
+        <item name="android:minHeight">72dp</item>
+        <item name="android:minWidth">200dp</item>
+        <item name="android:paddingLeft">32dp</item>
+        <item name="android:paddingRight">32dp</item>
+        <item name="android:focusable">true</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+</resources>
