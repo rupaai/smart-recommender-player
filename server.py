@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 import socket
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote
 
 import requests
@@ -35,6 +35,7 @@ from services.jellyfin_playback import (
     NotPlayable,
     rewrite_playlist,
     safe_proxy_path,
+    valid_jellyfin_id,
     strip_api_key,
 )
 from services.jellyfin_service import JellyfinService
@@ -696,13 +697,19 @@ def _read_limited(resp: requests.Response, limit: int) -> bytes:
 
 
 @app.get("/api/nl/play/{item_id}")
-async def nl_play_info(item_id: int) -> Dict[str, Any]:
-    """How to play one movie or episode: a proxied stream URL and its kind (file or hls)."""
+async def nl_play_info(
+    item_id: int,
+    audio: Optional[int] = Query(None, ge=0, description="Jellyfin audio stream index"),
+    subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
+    start: float = Query(0.0, ge=0, description="Start position in seconds"),
+) -> Dict[str, Any]:
+    """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
+    its audio and subtitle tracks, and where the viewer left off."""
     item = db.get_item_by_id(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
     try:
-        return await asyncio.to_thread(jellyfin_playback.stream_for, item)
+        return await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
@@ -765,6 +772,67 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
             upstream.close()  # also runs when the client disconnects and the stream is cancelled
 
     return StreamingResponse(body_iter(), status_code=upstream.status_code, headers=out_headers)
+
+
+class NLProgressRequest(BaseModel):
+    jellyfin_id: str
+    play_session_id: str = ""
+    media_source_id: str = ""
+    position_seconds: float = Field(0.0, ge=0)
+    paused: bool = False
+    event: Literal["start", "progress", "stop"]
+    play_method: str = "DirectPlay"
+
+
+@app.post("/api/nl/progress")
+async def nl_progress(req: NLProgressRequest) -> Dict[str, Any]:
+    """Tells Jellyfin where the viewer is (start, progress, stop) so it can offer 'Resume'."""
+    if not valid_jellyfin_id(req.jellyfin_id):
+        raise HTTPException(status_code=400, detail="Bad item id.")
+    try:
+        await asyncio.to_thread(
+            jellyfin_playback.report_progress,
+            req.event, req.jellyfin_id, req.play_session_id, req.media_source_id,
+            req.position_seconds, req.paused, req.play_method,
+        )
+    except JellyfinUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"success": True}
+
+
+async def _nl_set_played(jellyfin_id: str, played: bool) -> Dict[str, Any]:
+    if not valid_jellyfin_id(jellyfin_id):
+        raise HTTPException(status_code=400, detail="Bad item id.")
+    try:
+        await asyncio.to_thread(jellyfin_playback.set_played, jellyfin_id, played)
+    except JellyfinUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"success": True, "played": played}
+
+
+@app.post("/api/nl/played/{jellyfin_id}")
+async def nl_mark_played(jellyfin_id: str) -> Dict[str, Any]:
+    """Mark a title as watched in Jellyfin."""
+    return await _nl_set_played(jellyfin_id, True)
+
+
+@app.delete("/api/nl/played/{jellyfin_id}")
+async def nl_mark_unplayed(jellyfin_id: str) -> Dict[str, Any]:
+    """Mark a title as not watched in Jellyfin."""
+    return await _nl_set_played(jellyfin_id, False)
+
+
+@app.get("/api/nl/library")
+async def nl_library(type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
+    """Titles that have a file on disk: the bare list on /nl/ (M2 replaces it)."""
+    items = await asyncio.to_thread(db.get_library_items, type)
+    return {"items": items}
+
+
+@app.get("/nl/", response_class=HTMLResponse)
+async def nl_home(request: Request) -> Any:
+    """Bare poster grid of the movies we can play."""
+    return templates.TemplateResponse(request=request, name="nl/library.html", context={})
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
