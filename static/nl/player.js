@@ -8,6 +8,8 @@
   var PROGRESS_EVERY_MS = 10000;
   var LONG_PRESS_MS = 500;
   var UNREACHABLE = "Can’t reach the movie server. Is mars on?";
+  var CONVERT_FAILED = "The server couldn’t convert this video.";
+  var CONVERT_DETAIL = "Jellyfin failed to transcode it. Check Jellyfin’s FFmpeg log.";
   var UNPLAYABLE = "This video’s format can’t play in this browser.";
 
   function $(id) { return document.getElementById(id); }
@@ -328,8 +330,17 @@
 
   /* ----------------------------------------------------------- stream loading */
 
+  var capsParam = null;
+  function capsString() {
+    if (capsParam === null) {
+      var c = NLPlayerCore.capabilities();
+      capsParam = "v=" + c.video.join(".") + ";a=" + c.audio.join(".") + ";h=" + c.hls.join(".");
+    }
+    return capsParam;
+  }
+
   function fetchPlay(params) {
-    var qs = [];
+    var qs = ["caps=" + encodeURIComponent(capsString())];
     if (params.audio !== undefined && params.audio !== null) { qs.push("audio=" + encodeURIComponent(params.audio)); }
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
@@ -448,6 +459,10 @@
 
   player.on("error", function (e) {
     if (S.switching || !S.stream) { return; }
+    if (e && e.server) { // Jellyfin's transcode failed: reloading would fail the same way
+      showError(CONVERT_FAILED, CONVERT_DETAIL);
+      return;
+    }
     S.errors += 1;
     if (S.errors <= 2) {
       reloadStream({});
