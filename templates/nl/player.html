@@ -54,6 +54,16 @@
       <div id="nl-menu" class="nl-menu" role="menu" hidden></div>
     </div>
 
+    <div id="nl-next" class="nl-next" role="group" aria-label="Next episode" hidden>
+      <div class="nl-next-label">Next episode</div>
+      <div id="nl-next-title" class="nl-next-title"></div>
+      <div id="nl-next-count" class="nl-next-count" role="timer" aria-live="off"></div>
+      <div class="nl-next-actions">
+        <button id="nl-next-play" class="nl-primary" type="button">Play now</button>
+        <button id="nl-next-cancel" class="nl-secondary" type="button">Cancel</button>
+      </div>
+    </div>
+
     <div id="nl-resume" class="nl-screen" hidden>
       <div class="nl-card">
         <p class="nl-card-title" id="nl-resume-name"></p>
@@ -81,6 +91,7 @@
           <dt>M</dt><dd>Mute</dd>
           <dt>F</dt><dd>Fullscreen</dd>
           <dt>C</dt><dd>Next subtitles</dd>
+          <dt>N</dt><dd>Next episode (when offered)</dd>
           <dt>?</dt><dd>This help</dd>
         </dl>
         <p class="nl-hint">Press any key to close</p>

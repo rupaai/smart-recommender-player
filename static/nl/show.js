@@ -55,6 +55,40 @@
     });
   }
 
+  function autoplaySwitch() {
+    var wrap = NL.el("div", "nl-switch");
+    var box = document.createElement("button");
+    box.type = "button";
+    box.className = "nl-switch-btn";
+    box.setAttribute("role", "switch");
+    box.setAttribute("aria-checked", String(!!show.autoplay));
+    box.appendChild(NL.el("span", "nl-switch-knob"));
+    var label = NL.el("span", "nl-switch-label", "Autoplay next episode");
+    label.id = "nl-autoplay-label";
+    box.setAttribute("aria-labelledby", "nl-autoplay-label");
+    var note = NL.el("span", "nl-visually-hidden");
+    note.setAttribute("role", "status");
+    box.addEventListener("click", function () {
+      var want = box.getAttribute("aria-checked") !== "true";
+      box.setAttribute("aria-checked", String(want));          // optimistic; rolled back on failure
+      NL.fetchJSON("/api/nl/show/" + encodeURIComponent(id) + "/prefs", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ autoplay: want })
+      }).then(function (r) {
+        show.autoplay = r.autoplay;
+        box.setAttribute("aria-checked", String(!!r.autoplay));
+        note.textContent = "Autoplay " + (r.autoplay ? "on" : "off");
+      }).catch(function () {
+        box.setAttribute("aria-checked", String(!want));
+        note.textContent = "Couldn’t save that";
+      });
+    });
+    label.addEventListener("click", function () { box.click(); });
+    wrap.appendChild(box);
+    wrap.appendChild(label);
+    wrap.appendChild(note);
+    return wrap;
+  }
+
   function render(s) {
     show = s;
     document.title = s.title + " - Northern Lights";
@@ -99,6 +133,7 @@
     if (s.next_up && s.next_up.name && s.next_up.name.indexOf("Episode ") !== 0) {
       info.appendChild(NL.el("p", "nl-meta nl-next-name", s.next_up.name));
     }
+    info.appendChild(autoplaySwitch());
     if (!s.jellyfin) {
       info.appendChild(NL.el("p", "nl-meta nl-note", "Watched ticks and Next up need Jellyfin, which isn’t answering right now."));
     }

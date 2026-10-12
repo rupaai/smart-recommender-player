@@ -11,6 +11,8 @@
   var CONVERT_FAILED = "The server couldn’t convert this video.";
   var CONVERT_DETAIL = "Jellyfin failed to transcode it. Check Jellyfin’s FFmpeg log.";
   var UNPLAYABLE = "This video’s format can’t play in this browser.";
+  var NEXT_CARD_SECONDS = 30;   // the next-episode card appears this long before the end (P11)
+  var COUNTDOWN_SECONDS = 10;   // and counts down for this long before starting the episode
 
   function $(id) { return document.getElementById(id); }
   var root = $("nl-player");
@@ -40,6 +42,9 @@
     toastTimer: null,
     menuOpen: false,
     sourceId: urlSource,  // episode being played (null for a movie, or a show's first file)
+    next: null,           // {source_id, code, name, autoplay} while a next episode exists
+    nextCancelled: false, // Cancel pressed for this episode
+    advancing: false,     // already switching to the next episode
     backHref: "/nl/"
   };
 
@@ -433,9 +438,11 @@
       } else {
         $("nl-episode").hidden = true;
       }
+      S.advancing = false;
+      loadNext(stream);
       $("nl-buffering").hidden = true;
       var resumeAt = stream.resume_seconds || 0;
-      var choice = urlResume;
+      var choice = opts.fromNext ? "0" : urlResume;
       urlResume = null;                      // the link only decides the first load
       if (choice === "0") {
         begin(stream, 0);
@@ -453,6 +460,7 @@
         begin(stream, 0);
       }
     }).catch(function (err) {
+      S.advancing = false;
       $("nl-buffering").hidden = true;
       showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
     });
@@ -461,6 +469,72 @@
     applyStream(stream, at);
     playNow();
     showControls();
+  }
+
+  /* ------------------------------------------------- next episode (P11, P12) */
+
+  // The episode after this one, from the server; the autoplay switch lives on the show page.
+  function loadNext(stream) {
+    S.next = null;
+    S.nextCancelled = false;
+    hideNextCard();
+    if (stream.media_type !== "tv" || !stream.source_id) { return; }
+    var forSource = stream.source_id;
+    fetchNext(forSource).then(function (n) {
+      if (n && n.has_next && S.sourceId === forSource) { S.next = n; }
+    }).catch(function () { /* no card without the lookup; the episode still plays */ });
+  }
+  function fetchNext(sourceId) {
+    return fetch("/api/nl/next/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(sourceId))
+      .then(function (r) { return r.ok ? r.json() : null; });
+  }
+  function nextCardVisible() { return !$("nl-next").hidden; }
+  function hideNextCard() {
+    $("nl-next").hidden = true;
+    $("nl-next-count").textContent = "";
+  }
+  function showNextCard() {
+    var n = S.next;
+    if (!n) { return; }
+    var label = n.code ? n.code.replace(" · ", "·") : "";
+    $("nl-next-title").textContent = "Next: " + (label ? label + " " : "") + (n.name || "").trim();
+    $("nl-next").hidden = false;
+  }
+  function advanceToNext() {
+    var n = S.next;
+    if (!n || S.advancing) { return; }
+    S.advancing = true;
+    hideNextCard();
+    stopReporting(false);
+    S.sourceId = n.source_id;
+    S.next = null;
+    try { window.history.replaceState(null, "", "/nl/play/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(n.source_id)); } catch (e) { /* ignore */ }
+    startFirst({ fromNext: true });
+  }
+  function cancelNext() {
+    S.nextCancelled = true;
+    hideNextCard();
+    toast("Autoplay cancelled");
+  }
+  // Called on every time update: card at 30 s before the end, countdown over the last 10 s.
+  function checkNext() {
+    if (!S.next || S.nextCancelled || S.advancing || S.switching) { return; }
+    var d = duration();
+    if (!d || d < 2 * NEXT_CARD_SECONDS) { return; }
+    var remaining = d - player.currentTime;
+    if (remaining > NEXT_CARD_SECONDS + 0.5) {
+      if (nextCardVisible()) { hideNextCard(); }   // seeked back out of the closing seconds
+      return;
+    }
+    if (!nextCardVisible()) { showNextCard(); }
+    if (!S.next.autoplay) { $("nl-next-count").textContent = ""; return; }
+    if (remaining <= COUNTDOWN_SECONDS) {
+      var secs = Math.max(0, Math.ceil(remaining - 0.05));
+      $("nl-next-count").textContent = "Starting in " + secs;
+      if (remaining <= 0.35) { advanceToNext(); }
+    } else {
+      $("nl-next-count").textContent = "";
+    }
   }
 
   /* ------------------------------------------------------------------ errors */
@@ -500,7 +574,7 @@
   player.on("playing", function () { renderPlayState(); onPlaying(); showControls(); });
   player.on("waiting", function () { $("nl-buffering").hidden = false; });
   player.on("loadedmetadata", function () { renderProgress(); });
-  player.on("timeupdate", renderProgress);
+  player.on("timeupdate", function () { renderProgress(); checkNext(); });
   player.on("seeked", function () {
     $("nl-buffering").hidden = true;
     if (S.started && !S.stopped) { report("progress"); }
@@ -509,6 +583,7 @@
     renderPlayState();
     showControls();
     stopReporting(false);
+    if (S.next && S.next.autoplay && !S.nextCancelled) { advanceToNext(); }
   });
   player.on("volumechange", function () {
     $("nl-volume").value = player.muted ? 0 : player.volume;
@@ -537,6 +612,8 @@
 
   $("nl-back").addEventListener("click", leave);
   $("nl-error-back").addEventListener("click", function (e) { e.preventDefault(); leave(); });
+  $("nl-next-play").addEventListener("click", advanceToNext);
+  $("nl-next-cancel").addEventListener("click", cancelNext);
   $("nl-retry").addEventListener("click", function () { S.errors = 0; if (S.retry) { S.retry(); } });
   $("nl-play").addEventListener("click", togglePlay);
   $("nl-center").addEventListener("click", togglePlay);
@@ -610,7 +687,7 @@
     if (!$("nl-help").hidden) { e.preventDefault(); closeHelp(); return; }
     var key = e.key;
     if (key === "Escape") {
-      if (S.menuOpen) { e.preventDefault(); closeMenu(); }
+      if (S.menuOpen) { e.preventDefault(); closeMenu(); } else if (nextCardVisible()) { e.preventDefault(); cancelNext(); }
       return;
     }
     if (!$("nl-resume").hidden || !$("nl-error").hidden) { showControls(); return; }
@@ -625,6 +702,7 @@
       case "m": case "M": toggleMute(); break;
       case "f": case "F": player.toggleFullscreen(root); break;
       case "c": case "C": cycleSubtitle(); break;
+      case "n": case "N": if (nextCardVisible()) { advanceToNext(); } else { handled = false; } break;
       case "[": cycleSkip(-1); break;
       case "]": cycleSkip(1); break;
       case "?": $("nl-help").hidden = false; break;

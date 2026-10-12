@@ -873,6 +873,31 @@ async def nl_show_data(item_id: int) -> Dict[str, Any]:
     return data
 
 
+class NLShowPrefs(BaseModel):
+    autoplay: bool
+
+
+@app.get("/api/nl/show/{item_id}/prefs")
+async def nl_show_prefs_get(item_id: int) -> Dict[str, Any]:
+    return {"autoplay": await asyncio.to_thread(db.get_show_autoplay, item_id)}
+
+
+@app.put("/api/nl/show/{item_id}/prefs")
+async def nl_show_prefs_set(item_id: int, prefs: NLShowPrefs) -> Dict[str, Any]:
+    """Autoplay of the next episode, per show (on by default)."""
+    try:
+        value = await asyncio.to_thread(db.set_show_autoplay, item_id, prefs.autoplay)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"autoplay": value}
+
+
+@app.get("/api/nl/next/{item_id}")
+async def nl_next_episode(item_id: int, source: int = Query(..., ge=1)) -> Dict[str, Any]:
+    """The episode after `source` for the player's next-episode card (has_next false at the end)."""
+    return await asyncio.to_thread(nl_browse.next_episode, item_id, source)
+
+
 @app.get("/api/nl/search")
 async def nl_search(q: str = Query("", max_length=100), limit: int = Query(20, ge=1, le=40)) -> Dict[str, Any]:
     """Movies, shows and episodes matching the text. Each result is Ready (in the library,

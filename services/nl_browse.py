@@ -463,6 +463,35 @@ class NLBrowse:
             "episode_count": len(flat),
         }
 
+    def next_episode(self, item_id: int, source_id: int) -> Dict[str, Any]:
+        """The episode after this one (season/episode order among our files) for the player's
+        next-episode card, plus the show's autoplay setting. Names come from Jellyfin when it answers."""
+        item = self.db.get_nl_title(item_id)
+        if not item or item["media_type"] != "tv":
+            return {"has_next": False, "autoplay": True}
+        ids = [s["id"] for s in item["sources"]]
+        if source_id not in ids or ids.index(source_id) + 1 >= len(ids):
+            return {"has_next": False, "autoplay": self.db.get_show_autoplay(item_id)}
+        nxt = item["sources"][ids.index(source_id) + 1]
+        name = ""
+        try:
+            series_id = self.series_id(item)
+            if series_id:
+                name = (self.episode_states(item, series_id).get(nxt["id"]) or {}).get("name") or ""
+        except JellyfinUnavailable:
+            name = ""
+        n = nxt.get("season_number") or 0
+        return {
+            "has_next": True,
+            "autoplay": self.db.get_show_autoplay(item_id),
+            "source_id": nxt["id"],
+            "season": n,
+            "episode": nxt.get("episode_number"),
+            "code": episode_code(n, nxt.get("episode_number")),
+            "name": name,
+            "show_title": item["title"],
+        }
+
     # ----------------------------------------------------------------- search
 
     def search(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
