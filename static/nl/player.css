@@ -107,6 +107,18 @@ svg .fill { fill: currentColor; stroke: none; }
 .nl-help dt { font-weight: 700; white-space: nowrap; }
 .nl-help dd { margin: 0; color: var(--nl-ink-2); }
 
+/* next-episode card (P11) */
+.nl-next { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 4;
+  width: min(300px, calc(100vw - 32px)); padding: 14px; border-radius: 14px; background: var(--nl-panel); border: 1px solid var(--nl-line);
+  display: flex; flex-direction: column; gap: 6px; transition: bottom 0.2s; }
+.nl-next[hidden] { display: none; }
+.controls-visible .nl-next { bottom: calc(var(--nl-tap) * 2 + 44px + env(safe-area-inset-bottom)); }
+.nl-next-label { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--nl-ink-2); }
+.nl-next-title { font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
+.nl-next-count { min-height: 1.3em; font-size: 0.9rem; color: var(--nl-accent); font-weight: 700; }
+.nl-next-actions { display: flex; gap: 8px; margin-top: 4px; }
+.nl-next-actions .nl-primary, .nl-next-actions .nl-secondary { flex: 1; min-height: 44px; }
+
 @media (max-width: 640px) {
   .nl-volume, .nl-total { display: none; }
   .nl-chip { margin-left: 0; }
@@ -114,6 +126,6 @@ svg .fill { fill: currentColor; stroke: none; }
   .nl-center { width: 76px; height: 76px; margin: -38px 0 0 -38px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .nl-controls, .nl-toast { transition: none; }
+  .nl-controls, .nl-toast, .nl-next { transition: none; }
   .nl-buffering span { animation-duration: 2.4s; }
 }

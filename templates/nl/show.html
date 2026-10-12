@@ -1,0 +1,7 @@
+{% extends "nl/base.html" %}
+{% block title %}Northern Lights{% endblock %}
+{% block main %}
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <article id="nl-detail" class="nl-detail" data-item-id="{{ item_id }}" hidden></article>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/show.js"></script>{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "nl/base.html" %}
+{% block title %}Northern Lights{% endblock %}
+{% block main %}
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <section id="nl-continue" class="nl-row" hidden aria-labelledby="nl-continue-h">
+    <div class="nl-row-head"><h2 id="nl-continue-h">Continue watching</h2></div>
+    <ul class="nl-scroller nl-scroller-wide" id="nl-continue-list"></ul>
+  </section>
+  <section id="nl-movies" class="nl-row" hidden aria-labelledby="nl-movies-h">
+    <div class="nl-row-head"><h2 id="nl-movies-h">Movies</h2><a id="nl-movies-all" href="/nl/movies">See all</a></div>
+    <ul class="nl-scroller" id="nl-movies-list"></ul>
+  </section>
+  <section id="nl-shows" class="nl-row" hidden aria-labelledby="nl-shows-h">
+    <div class="nl-row-head"><h2 id="nl-shows-h">Shows</h2><a id="nl-shows-all" href="/nl/shows">See all</a></div>
+    <ul class="nl-scroller" id="nl-shows-list"></ul>
+  </section>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/home.js"></script>{% endblock %}
