@@ -1,0 +1,9 @@
+<resources>
+    <color name="night">#0B1020</color>
+    <color name="night_raised">#162038</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B8C2DB</color>
+    <color name="aurora_green">#3DDC97</color>
+    <color name="aurora_teal">#2EC4D6</color>
+    <color name="aurora_violet">#9B6BFF</color>
+</resources>

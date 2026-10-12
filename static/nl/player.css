@@ -129,3 +129,50 @@ svg .fill { fill: currentColor; stroke: none; }
   .nl-controls, .nl-toast, .nl-next { transition: none; }
   .nl-buffering span { animation-duration: 2.4s; }
 }
+
+/* ---- TV (M3): ?tv=1 or inside the Android app. 1920x1080 is the design size (1rem = 16px there),
+   text is at least 1.5rem, focus is a ring plus a glow, nothing needs a pointer. */
+html.tv { font-size: calc(min(100vw / 1920, 100vh / 1080) * 16px); }
+.nl-player.tv { --nl-tap: 5rem; font-size: 1.5rem; }
+.tv .nl-top, .tv .nl-bottom { padding-left: 5rem; padding-right: 5rem; }
+.tv .nl-top { padding-top: 3rem; gap: 1.5rem; }
+.tv .nl-bottom { padding-bottom: 3rem; }
+.tv .nl-title { font-size: 2.25rem; }
+.tv .nl-episode { font-size: 1.5rem; }
+.tv .nl-time { font-size: 1.5rem; min-width: 4.5em; }
+.tv .nl-btn { border-radius: 1rem; padding: 0 1.25rem; }
+.tv .nl-btn svg { width: 3rem; height: 3rem; }
+.tv .nl-skip svg { width: 3.5rem; height: 3.5rem; }
+.tv .nl-text-btn { font-size: 1.5rem; }
+.tv .nl-chip { height: 4rem; min-width: 5.5rem; padding: 0 1.5rem; font-size: 1.5rem; margin-left: 1rem; }
+.tv .nl-range::-webkit-slider-runnable-track { height: 0.5rem; border-radius: 0.25rem; }
+.tv .nl-range::-webkit-slider-thumb { width: 2rem; height: 2rem; margin-top: -0.75rem; }
+.tv .nl-toast { font-size: 1.5rem; padding: 0.75rem 2rem; }
+.tv .nl-center { display: none; }          /* OK pauses; no pointer to press the big button */
+.tv #nl-mute, .tv #nl-volume, .tv #nl-fs { display: none; }   /* the TV has its own volume and is always full screen */
+.tv :focus-visible, .tv :focus { outline: none; }
+.tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: #1d1b29; transform: scale(1.08);
+  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
+.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2rem 0.4rem rgba(255, 106, 43, 0.55); }
+.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0 1.5rem rgba(255, 106, 43, 0.4); }
+.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.25rem; padding: 0.75rem; }
+.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; }
+.tv .nl-menu button { font-size: 1.5rem; min-height: 4.5rem; border-radius: 0.9rem; gap: 1rem; }
+.tv .nl-menu button:focus { background: var(--nl-ink); color: #1d1b29; box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu .tick { width: 1.5rem; }
+.tv .nl-card { width: min(36rem, 100%); gap: 1.25rem; }
+.tv .nl-card-title { font-size: 2rem; }
+.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; }
+.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.06); background: var(--nl-ink); color: #1d1b29;
+  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
+.tv .nl-primary:focus { background: var(--nl-accent); border: 0.2rem solid var(--nl-ink); }
+.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.25rem; bottom: 3rem; }
+.controls-visible.tv .nl-next { bottom: calc(var(--nl-tap) * 2 + 6rem); }
+.tv .nl-next-label, .tv .nl-next-count { font-size: 1.5rem; }
+.tv .nl-next-title { font-size: 1.75rem; }
+.tv .nl-next-actions .nl-primary, .tv .nl-next-actions .nl-secondary { min-height: 4.5rem; }
+.tv .nl-buffering { width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; }
+
+/* Inside the Android app Media3 draws the video and its own controls; the page is only the shell
+   for the resume question, errors and the loading spinner. */
+.nl-player.native video, .nl-player.native .nl-controls, .nl-player.native .nl-next { display: none !important; }

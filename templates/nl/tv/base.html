@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#14121f">
+  <title>{% block title %}Northern Lights{% endblock %}</title>
+  <link rel="stylesheet" href="/static/nl/tv/tv.css">
+</head>
+<body class="tv-page-{{ page }}" data-page="{{ page }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
+  <header class="tv-bar">
+    <a class="tv-brand" href="/nl/tv/" aria-label="Northern Lights home">Northern Lights</a>
+    <nav class="tv-nav" data-nl-row="nav" data-nl-skip-initial aria-label="Sections">
+      <a class="tv-pill" data-nl-focus href="/nl/tv/">Home</a>
+      <a class="tv-pill" data-nl-focus href="/nl/tv/search">Search</a>
+    </nav>
+    <span class="tv-foil" aria-hidden="true"></span>
+  </header>
+  <main id="tv-main">
+    <p id="tv-status" class="tv-status" role="status">Loading&hellip;</p>
+    {% block main %}{% endblock %}
+  </main>
+  <script src="/static/nl/nl.js"></script>
+  <script src="/static/nl/tv/focus.js"></script>
+  <script src="/static/nl/tv/tv.js"></script>
+</body>
+</html>

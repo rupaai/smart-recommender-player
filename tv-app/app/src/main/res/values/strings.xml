@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Northern Lights</string>
+    <string name="settings_hint">Enter the address of your Northern Lights server, for example http://192.168.1.20:8000</string>
+    <string name="save">Save</string>
+    <string name="testing">Testing…</string>
+    <string name="connected">Connected</string>
+    <string name="error_title">Can\'t reach the server</string>
+    <string name="try_again">Try again</string>
+    <string name="change_server">Change server</string>
+    <string name="press_back_again">Press Back again to exit</string>
+    <string name="audio">Audio</string>
+    <string name="subtitles">Subtitles</string>
+    <string name="subtitles_off">Off</string>
+</resources>

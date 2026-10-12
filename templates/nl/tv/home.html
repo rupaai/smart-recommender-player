@@ -1,0 +1,15 @@
+{% extends "nl/tv/base.html" %}
+{% block main %}
+  <section id="tv-continue" class="tv-section" hidden aria-labelledby="tv-continue-h">
+    <h2 id="tv-continue-h">Continue watching</h2>
+    <ul class="tv-row" data-nl-row="continue" id="tv-continue-list"></ul>
+  </section>
+  <section id="tv-movies" class="tv-section" hidden aria-labelledby="tv-movies-h">
+    <h2 id="tv-movies-h">Movies</h2>
+    <ul class="tv-row" data-nl-row="movies" id="tv-movies-list"></ul>
+  </section>
+  <section id="tv-shows" class="tv-section" hidden aria-labelledby="tv-shows-h">
+    <h2 id="tv-shows-h">Shows</h2>
+    <ul class="tv-row" data-nl-row="shows" id="tv-shows-list"></ul>
+  </section>
+{% endblock %}

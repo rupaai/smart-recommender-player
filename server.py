@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
-from services.device_profiles import browser_profile, parse_caps
+from services.device_profiles import profile_for
 from services.jellyfin_playback import (
     ItemNotFound,
     JellyfinPlayback,
@@ -708,6 +708,7 @@ async def nl_play_info(
     start: float = Query(0.0, ge=0, description="Start position in seconds"),
     caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
     source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
+    client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off."""
@@ -721,7 +722,7 @@ async def nl_play_info(
             raise HTTPException(status_code=404, detail="That episode isn't in the library.")
     item = {**item, "sources": [chosen]}
     try:
-        profile = browser_profile(parse_caps(caps))
+        profile = profile_for(client, caps)
         info = await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start, profile)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -933,6 +934,26 @@ async def nl_title_page(item_id: int, request: Request) -> Any:
 @app.get("/nl/show/{item_id}", response_class=HTMLResponse)
 async def nl_show_page(item_id: int, request: Request) -> Any:
     return templates.TemplateResponse(request=request, name="nl/show.html", context={"active": "shows", "item_id": item_id})
+
+
+@app.get("/nl/tv/", response_class=HTMLResponse)
+async def nl_tv_home(request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/tv/home.html", context={"page": "home"})
+
+
+@app.get("/nl/tv/search", response_class=HTMLResponse)
+async def nl_tv_search(request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/tv/search.html", context={"page": "search"})
+
+
+@app.get("/nl/tv/title/{item_id}", response_class=HTMLResponse)
+async def nl_tv_title(item_id: int, request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/tv/title.html", context={"page": "title", "item_id": item_id})
+
+
+@app.get("/nl/tv/show/{item_id}", response_class=HTMLResponse)
+async def nl_tv_show(item_id: int, request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/tv/show.html", context={"page": "show", "item_id": item_id})
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
