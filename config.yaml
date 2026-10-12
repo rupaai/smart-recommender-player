@@ -38,6 +38,10 @@ recommender:
   shortlist_size: 250     # top-rated items kept after the Bayesian quality cut
   final_pool: 50          # diverse pool served for pagination
 
+  # Mood-map questions (services/mood_popup.py): score = pool score + mood_weight x
+  # sum over moods of P(mood) x fit(film, mood). Higher = answers move the order more.
+  mood_weight: 3.0
+
   # Recommendation engine router for the TIGER generative retrieval engine
   # (parallel engine — the legacy SQL/taste recommender is never modified):
   #   "fallback"        generative first; legacy on missing artifacts/history

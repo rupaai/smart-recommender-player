@@ -13,13 +13,15 @@ answer  P(mood) *= 0.05 + likelihood(option, mood), renormalised. The 0.05 floor
 next    A3 first; then the eligible question with the largest expected drop in
         entropy of the belief (ties go to bank order, so it is deterministic).
 stop    top mood >= 0.55, or top two >= 0.80, or 6 answers; never before 2.
-rank    pool order for now; T3 adds ranking by mood mix.
+rank    score = pool score + MOOD_WEIGHT x sum over moods of P(mood) x fit(film, mood)
+        (T3). Per-film fit vectors are cached; only the belief changes between answers.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import os
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -35,6 +37,22 @@ TIE_GAP = 0.1           # tier 3 needs the top two moods this close
 STOP_TOP = 0.55
 STOP_TOP_TWO = 0.80
 MOOD_IDS: List[str] = [m["id"] for m in vibe_moods.MOODS]
+DEFAULT_MOOD_WEIGHT = 3.0
+TOP_MOODS_PER_ITEM = 3
+
+
+def load_mood_weight(path: Optional[str] = None) -> float:
+    """`recommender.mood_weight` from the config file (CONFIG_PATH or config.yaml), 3.0 when the
+    file, the key or a sane number is missing."""
+    path = path or os.getenv("CONFIG_PATH", "config.yaml")
+    try:
+        import yaml
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        w = float((cfg.get("recommender") or {}).get("mood_weight", DEFAULT_MOOD_WEIGHT))
+        return w if math.isfinite(w) and w >= 0 else DEFAULT_MOOD_WEIGHT
+    except Exception:
+        return DEFAULT_MOOD_WEIGHT
 
 
 def new_belief(prior: Optional[Dict[str, float]] = None) -> Dict[str, float]:
@@ -83,7 +101,8 @@ def expected_gain(belief: Dict[str, float], question: Dict[str, Any]) -> float:
 class MoodSession:
     def __init__(self, session_id: int, request: Dict[str, Any], pool: List[Dict[str, Any]],
                  cluster_labels: Optional[Dict[int, str]] = None, vibe_index: Any = None,
-                 prior: Optional[Dict[str, float]] = None):
+                 prior: Optional[Dict[str, float]] = None, mood_weight: Optional[float] = None):
+        self.mood_weight = load_mood_weight() if mood_weight is None else float(mood_weight)
         self.id = session_id
         self.request = request
         self.cluster_labels = cluster_labels or {}
@@ -103,19 +122,37 @@ class MoodSession:
             features(it)
         self.pool = pool[:POOL_TOP] if len(pool) > POOL_TOP else pool
 
+    def _fits(self, it: Dict[str, Any]) -> List[float]:
+        """fit(film, mood) for every mood in MOOD_IDS order; computed once per film."""
+        v = it.get("_popup_moodfit")
+        if v is None:
+            fx = features(it)
+            v = it["_popup_moodfit"] = [vibe_moods.fit(fx, m) for m in vibe_moods.MOODS]
+        return v
+
+    def _mood_fit(self, it: Dict[str, Any], belief: Dict[str, float]) -> float:
+        return self.mood_weight * sum(belief.get(m, 0.0) * f for m, f in zip(MOOD_IDS, self._fits(it)))
+
     def scored(self, belief: Optional[Dict[str, float]] = None) -> List[Tuple[float, Dict[str, Any]]]:
-        """(score, item), best first. For now the pool's own score (T3 adds the mood mix)."""
-        out = [(float(it.get("_popup_base") or 0.0), it) for it in self.pool]
-        out.sort(key=lambda p: -p[0])
+        """(score, item), best first: pool score + MOOD_WEIGHT x sum P(mood) x fit. Ties keep pool order."""
+        b = belief or self.belief
+        out = [(float(it.get("_popup_base") or 0.0) + self._mood_fit(it, b), it) for it in self.pool]
+        out.sort(key=lambda p: -p[0])       # stable sort
         return out
 
     def ranked(self) -> List[Dict[str, Any]]:
-        """The pool, ready for finalize(). Same shape as PopupSession.ranked()."""
+        """The pool, ready for finalize(). Same shape as PopupSession.ranked(), plus
+        mood_fit (the points the mood mix added) and top_moods (3 mood ids by P x fit)."""
         out = []
+        order = {m: i for i, m in enumerate(MOOD_IDS)}
         for s, it in self.scored():
             copy_it = {k: v for k, v in it.items() if not k.startswith("_popup")}
             copy_it["recommendation_score"] = round(s, 2)
             copy_it["popup_boost"] = round(s - float(it.get("_popup_base") or 0.0), 2)
+            contrib = [(self.belief.get(m, 0.0) * f, m) for m, f in zip(MOOD_IDS, self._fits(it))]
+            contrib.sort(key=lambda c: (-c[0], order[c[1]]))
+            copy_it["mood_fit"] = round(self._mood_fit(it, self.belief), 3)
+            copy_it["top_moods"] = [m for _, m in contrib[:TOP_MOODS_PER_ITEM]]
             out.append(copy_it)
         return out
 
