@@ -16,6 +16,9 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
+from services.jellyfin_playback import JellyfinPlayback  # noqa: E402
+
+JellyfinPlayback.file_exists = staticmethod(lambda path: True)  # fake files: no real disk
 
 from services.device_profiles import BROWSER_PROFILE, browser_profile, parse_caps  # noqa: E402
 
