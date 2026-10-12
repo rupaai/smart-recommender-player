@@ -24,13 +24,21 @@
   var urlResume = query.get("resume");                    // "1" resume, "0" start over: skip the prompt
   var player = NLPlayerCore.create(video);
   // On a TV (?tv=1, or inside the Android app) everything works with a remote; phones and laptops are untouched.
-  var isNative = NLPlayerCore.isNative();          // the Android app plays through Media3, the page is only the shell
+  var isNative = NLPlayerCore.isNative();          // the Android app decodes through Media3 behind this transparent page
+  // Bridge v2 (pause/resume/seekTo/setSubtitle + "time" events): the web controls drive the native player.
+  // An old app (v1) draws its own controls: the page then hides its own and is only the shell.
+  var isNativeV2 = isNative && Number(NLPlayerCore.nativeVersion()) >= 2;
+  var isNativeV1 = isNative && !isNativeV2;
   var isTv = isNative || query.get("tv") === "1";
   if (isTv) {
     document.documentElement.classList.add("tv");
     root.classList.add("tv");
   }
-  if (isNative) { root.classList.add("native"); }
+  if (isNativeV2) {
+    document.documentElement.classList.add("native");   // transparent page: the video is behind the WebView
+    root.classList.add("native");
+  }
+  if (isNativeV1) { root.classList.add("native-v1"); }
   var TV_ROOT = "/nl/tv/";
 
   var S = {
@@ -289,7 +297,7 @@
       S.stopped = false;
       report("start");
     }
-    // The native player reports "progress" itself every 10 s; the web player is polled here.
+    // The native player reports "progress" itself every 10 s (both bridge versions); the web player is polled here.
     if (!S.progressTimer && !isNative) {
       S.progressTimer = setInterval(function () { if (!player.paused) { report("progress"); } }, PROGRESS_EVERY_MS);
     }
@@ -501,8 +509,8 @@
     });
   }
   function begin(stream, at) {
-    if (isNative && S.nextPromise) {
-      // The native player shows "Next: ..." from the label we hand it, so wait (briefly) for the lookup.
+    if (isNativeV1 && S.nextPromise) {
+      // The old native player shows "Next: ..." from the label we hand it, so wait (briefly) for the lookup.
       var pending = S.nextPromise;
       S.nextPromise = null;
       Promise.race([pending, new Promise(function (resolve) { setTimeout(resolve, 1500); })]).then(function () { begin(stream, at); });
@@ -565,8 +573,8 @@
   }
   // Called on every time update: card at 30 s before the end, countdown over the last 10 s.
   function checkNext() {
-    // The native player draws its own "Next" prompt and reports "ended"; the page only advances then.
-    if (isNative || !S.next || S.nextCancelled || S.advancing || S.switching) { return; }
+    // The old (v1) native player draws its own "Next" prompt and reports "ended"; the page only advances then.
+    if (isNativeV1 || !S.next || S.nextCancelled || S.advancing || S.switching) { return; }
     var d = duration();
     if (!d || d < 2 * NEXT_CARD_SECONDS) { return; }
     var remaining = d - player.currentTime;
@@ -664,7 +672,10 @@
     }
     window.location.href = S.backHref;
   }
-  window.addEventListener("pagehide", function () { stopReporting(true); });
+  window.addEventListener("pagehide", function () {
+    stopReporting(true);
+    if (isNative) { player.destroy(); }   // stop the native player when the page goes away
+  });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") {
       stopReporting(true);
@@ -772,6 +783,20 @@
   }
   function isOkKey(e) { return e.key === "Enter" || e.keyCode === 23 || e.keyCode === 66 || e.keyCode === 13; }
 
+  // Play/pause/seek keys on the remote (the Android WebView passes them on as these key names).
+  function mediaKey(e) {
+    var k = e.key;
+    if (k === "MediaPlayPause") { togglePlay(); }
+    else if (k === "MediaPlay") { if (player.paused) { togglePlay(); } }
+    else if (k === "MediaPause") { if (!player.paused) { togglePlay(); } }
+    else if (k === "MediaFastForward" || k === "MediaTrackNext") { skipBy(1); }
+    else if (k === "MediaRewind" || k === "MediaTrackPrevious") { skipBy(-1); }
+    else { return false; }
+    e.preventDefault();
+    showControls();
+    return true;
+  }
+
   function tvKey(e) {
     var dir = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" }[e.key];
     var back = isBackKey(e);
@@ -838,6 +863,7 @@
   document.addEventListener("keydown", function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) { return; }
     if (!$("nl-help").hidden) { e.preventDefault(); closeHelp(); return; }
+    if (isTv && mediaKey(e)) { return; }
     if (isTv && tvKey(e)) { return; }
     var key = e.key;
     if (key === "Escape") {

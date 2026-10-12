@@ -5,6 +5,19 @@
     android:layout_height="match_parent"
     android:background="@color/night">
 
+    <!-- Media3 draws the picture here, BEHIND the WebView (declared first = lower z-order). The
+         controller is off: the page draws every control. Default SurfaceView renders below the
+         window, so the transparent page shows it. -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/player_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#000000"
+        android:focusable="false"
+        android:visibility="gone"
+        app:show_buffering="never"
+        app:use_controller="false" />
+
     <WebView
         android:id="@+id/webview"
         android:layout_width="match_parent"
@@ -57,134 +70,4 @@
                 android:text="@string/change_server" />
         </LinearLayout>
     </LinearLayout>
-
-    <FrameLayout
-        android:id="@+id/player_container"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#000000"
-        android:visibility="gone">
-
-        <androidx.media3.ui.PlayerView
-            android:id="@+id/player_view"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:focusable="false"
-            app:show_buffering="when_playing"
-            app:use_controller="true" />
-
-        <LinearLayout
-            android:id="@+id/title_box"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#99000000"
-            android:orientation="vertical"
-            android:paddingLeft="48dp"
-            android:paddingTop="24dp"
-            android:paddingRight="48dp"
-            android:paddingBottom="24dp"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/player_title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:singleLine="true"
-                android:textColor="@color/text_primary"
-                android:textSize="32sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/player_subtitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:singleLine="true"
-                android:textColor="@color/text_secondary"
-                android:textSize="22sp" />
-
-            <TextView
-                android:id="@+id/player_hint"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:singleLine="true"
-                android:textColor="@color/text_secondary"
-                android:textSize="20sp" />
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/seek_badge"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:background="#CC000000"
-            android:paddingLeft="32dp"
-            android:paddingTop="16dp"
-            android:paddingRight="32dp"
-            android:paddingBottom="16dp"
-            android:textColor="@color/text_primary"
-            android:textSize="40sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
-
-        <LinearLayout
-            android:id="@+id/track_menu"
-            android:layout_width="480dp"
-            android:layout_height="match_parent"
-            android:layout_gravity="end"
-            android:background="#E6101830"
-            android:orientation="vertical"
-            android:padding="24dp"
-            android:visibility="gone">
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/audio"
-                android:textColor="@color/aurora_green"
-                android:textSize="22sp"
-                android:textStyle="bold" />
-
-            <ListView
-                android:id="@+id/list_audio"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:divider="@null" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/subtitles"
-                android:textColor="@color/aurora_green"
-                android:textSize="22sp"
-                android:textStyle="bold" />
-
-            <ListView
-                android:id="@+id/list_subs"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:divider="@null" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:text="@string/skip_length"
-                android:textColor="@color/aurora_green"
-                android:textSize="22sp"
-                android:textStyle="bold" />
-
-            <ListView
-                android:id="@+id/list_skip"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:divider="@null" />
-        </LinearLayout>
-    </FrameLayout>
 </FrameLayout>

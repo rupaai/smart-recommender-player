@@ -20,7 +20,8 @@
  *
  *   Inside the Android TV app (window.NorthernLightsNative exists) create() returns the native
  *   adapter instead (same surface, see "native adapter" below); load() then also takes src.native.
- *   NLPlayerCore.isNative() tells which one you get.
+ *   NLPlayerCore.isNative() tells which one you get; NLPlayerCore.nativeVersion() is the bridge version
+ *   ("2": pause/resume/seekTo/setSubtitle + "time" events, the web controls work; "1": old app).
  */
 (function (global) {
   "use strict";
@@ -264,25 +265,33 @@
     };
   }
 
-  /* ------------------------------------------------------------- native adapter (T4/T5)
+  /* ------------------------------------------------------------- native adapter (bridge v2)
    * Inside the Android TV app the page does not decode anything: window.NorthernLightsNative
-   * (Android addJavascriptInterface; every method takes and returns strings) plays through
-   * Media3 and reports back through window.NLNativeEvents.dispatch(jsonString).
+   * (Android addJavascriptInterface; every method takes and returns strings/numbers) plays through
+   * Media3 behind the transparent WebView and reports back through window.NLNativeEvents.dispatch(jsonString).
+   * The page draws every control; native only decodes, draws the picture and text subtitles.
    *
-   *   NorthernLightsNative.play(json)   json = {url, kind, startSeconds, title, subtitle, skipSeconds,
+   *   NorthernLightsNative.play(json)      json = {url, kind, startSeconds, title, subtitle, skipSeconds,
    *       audioTracks:[{index,label,language,isDefault}], subtitleTracks:[{index,label,language,url,kind}],
    *       audioIndex, subtitleIndex, nextUp: null | {label}}. url and subtitle urls are absolute
-   *       (our /nl/jf/... proxy, never Jellyfin). Calling play again replaces the current stream.
-   *   NorthernLightsNative.stop()       leave the native player
-   *   NorthernLightsNative.version()    string, for diagnostics
-   *   NLNativeEvents.dispatch(json)     json = {type: started|progress|paused|resumed|seeked|stopped|
-   *       ended|error|audio|subtitle, positionSeconds, durationSeconds, message?, index?}
+   *       (our /nl/jf/... proxy, never Jellyfin). Calling play again replaces the current stream
+   *       (audio change, or a picture subtitle: the page re-fetches and plays again at startSeconds).
+   *   NorthernLightsNative.pause() / resume()
+   *   NorthernLightsNative.seekTo(seconds)  seeks inside the current stream (no restart)
+   *   NorthernLightsNative.setSubtitle(i)   show the side-loaded text track with the page's index i, -1 = off
+   *   NorthernLightsNative.stop()           leave the native player (page teardown)
+   *   NorthernLightsNative.version()        "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *                                         setSubtitle and with its own native controls: the web
+   *                                         controls then stay hidden and seek() restarts the stream
+   *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
+   *       stopped|ended|error, positionSeconds, durationSeconds, bufferedSeconds (seconds buffered ahead of
+   *       the playhead), playing (bool), message?}. "time" arrives every 500 ms while a player exists,
+   *       "progress" every 10 s while playing.
    *
-   * The adapter has the same surface as the web one. The native UI owns pause/seek (the bridge has no
-   * such calls), so play()/pause() here do nothing and seek() restarts the stream at that position.
-   * Extra events: "progress" (every 10 s while playing), "stopped" (Back in the native player),
-   * "audiochange" / "subtitlechange" ({index}) when the viewer picks a track in the native UI.
-   * load() reads the extra field src.native = {title, subtitle, skipSeconds, audioTracks,
+   * The adapter has the same surface as the web one: play/pause/seek call the bridge, currentTime /
+   * duration / paused / buffered come from the events. Extra events: "progress" (every 10 s while
+   * playing) and "stopped" (the native player was closed from outside, e.g. the app went to the
+   * background). load() reads the extra field src.native = {title, subtitle, skipSeconds, audioTracks,
    * subtitleTracks, audioIndex, subtitleIndex, nextUp}. */
 
   function absolute(path) {
@@ -299,10 +308,15 @@
   }
 
   function createNative() {
+    var v2 = Number(nativeVersion()) >= 2;
     var listeners = {};
     var pos = 0;
     var dur = 0;
+    var buf = 0;
     var paused = true;
+    var waiting = false;
+    var closed = true;       // no native player right now (never started, ended, errored or stopped)
+    var ready = false;       // native reported "started" for the current stream
     var lastSrc = null;
     var alive = true;
     var tick = null;
@@ -314,9 +328,10 @@
       });
     }
 
-    // Between the native "progress" events the position is estimated so the next-episode card can count down.
+    // v1 only (the old app has no "time" events): between its 10 s "progress" events the position is estimated.
     function startTick() {
       stopTick();
+      if (v2) { return; }
       tickAt = Date.now();
       tick = setInterval(function () {
         var now = Date.now();
@@ -333,7 +348,19 @@
     function sync(ev) {
       if (typeof ev.positionSeconds === "number" && isFinite(ev.positionSeconds)) { pos = ev.positionSeconds; }
       if (typeof ev.durationSeconds === "number" && isFinite(ev.durationSeconds) && ev.durationSeconds > 0) { dur = ev.durationSeconds; }
+      if (typeof ev.bufferedSeconds === "number" && isFinite(ev.bufferedSeconds)) { buf = Math.max(0, ev.bufferedSeconds); }
       tickAt = Date.now();
+    }
+
+    function setPaused(value) {
+      if (paused === value) { return; }
+      paused = value;
+      if (value) {
+        emit("pause");
+      } else {
+        emit("play");
+        emit("playing");
+      }
     }
 
     function handle(ev) {
@@ -341,6 +368,9 @@
       sync(ev);
       switch (ev.type) {
         case "started":
+          closed = false;
+          ready = true;
+          waiting = false;
           paused = false;
           startTick();
           emit("loadedmetadata");
@@ -348,18 +378,25 @@
           emit("playing");
           emit("timeupdate");
           break;
+        case "time":
+          if (!paused && ev.playing === false && !waiting) {
+            waiting = true;       // stalled: the page shows its spinner
+            emit("waiting");
+          } else if (waiting && ev.playing === true) {
+            waiting = false;
+            emit("playing");
+          }
+          emit("timeupdate");
+          break;
         case "progress":
           emit("timeupdate");
           emit("progress");
           break;
         case "paused":
-          paused = true;
-          emit("pause");
+          setPaused(true);
           break;
         case "resumed":
-          paused = false;
-          emit("play");
-          emit("playing");
+          setPaused(false);
           break;
         case "seeked":
           emit("seeked");
@@ -367,17 +404,20 @@
           break;
         case "stopped":
           paused = true;
+          closed = true;
           stopTick();
           emit("stopped");
           break;
         case "ended":
-          paused = true;
+          closed = true;
           stopTick();
-          emit("pause");
+          setPaused(true);
           emit("ended");
           break;
         case "error":
           paused = true;
+          closed = true;
+          stopTick();
           emit("error", { format: false, message: ev.message || "The video could not be played." });
           break;
         case "audio":
@@ -399,6 +439,13 @@
       }
     };
 
+    function call(name, arg) {
+      try {
+        var api = global.NorthernLightsNative;
+        if (arg === undefined) { api[name](); } else { api[name](arg); }
+      } catch (e) { /* the app is gone or too old for this call */ }
+    }
+
     function send(src, startAt) {
       var n = src.native || {};
       var payload = {
@@ -419,37 +466,67 @@
         nextUp: n.nextUp || null
       };
       pos = payload.startSeconds;
+      buf = 0;
       paused = true;
+      waiting = false;
+      closed = false;
+      ready = false;
       try {
         global.NorthernLightsNative.play(JSON.stringify(payload));
       } catch (e) {
+        closed = true;
         emit("error", { format: false, message: "The TV player could not start." });
       }
     }
 
     return {
       native: true,
+      nativeVersion: v2 ? 2 : 1,
       load: function (src) {
         lastSrc = src;
         dur = 0;
         send(src, src.startAt);
       },
-      play: function () { return Promise.resolve(); },
-      pause: function () { /* the native UI owns pause */ },
+      play: function () {
+        if (!v2) { return Promise.resolve(); }
+        if (closed) {                       // the native player ended or failed: start the stream again
+          if (lastSrc) { send(lastSrc, dur > 0 && pos >= dur - 0.5 ? 0 : pos); }
+          return Promise.resolve();
+        }
+        if (!ready) { return Promise.resolve(); }   // the stream starts by itself
+        call("resume");
+        setPaused(false);                   // optimistic; the "resumed" event confirms
+        return Promise.resolve();
+      },
+      pause: function () {
+        if (!v2) { return; }
+        call("pause");
+        setPaused(true);
+      },
       seek: function (seconds) {
         if (!lastSrc) { return; }
-        send(lastSrc, seconds);
+        var target = Math.max(0, seconds);
+        if (!v2 || closed) {
+          send(lastSrc, target);            // old app, or nothing to seek in: (re)start at that position
+          return;
+        }
+        pos = target;
+        call("seekTo", String(target));
+        emit("seeking");
+        emit("timeupdate");
       },
       get currentTime() { return pos; },
       get duration() { return dur || NaN; },
       get paused() { return paused; },
-      get buffered() { return 0; },
+      get buffered() { return buf; },
       get volume() { return 1; },
       set volume(v) { /* the TV's own volume */ },
       get muted() { return false; },
       set muted(m) { /* the TV's own volume */ },
-      setTextTracks: function () { /* drawn by the native player */ },
-      showTextTrack: function () { /* picked in the native UI */ },
+      setTextTracks: function () { /* the native player loads them from the play() json */ },
+      showTextTrack: function (id) {
+        if (v2) { call("setSubtitle", id === null || id === undefined ? -1 : Number(id)); }
+      },
       get isFullscreen() { return true; },
       toggleFullscreen: function () { /* always full screen */ },
       on: function (name, fn) { (listeners[name] = listeners[name] || []).push(fn); },

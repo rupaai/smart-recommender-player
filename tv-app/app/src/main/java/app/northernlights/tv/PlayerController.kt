@@ -1,17 +1,10 @@
 package app.northernlights.tv
 
 import android.app.Activity
-import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.view.Gravity
-import android.view.KeyEvent
 import android.view.View
-import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.ListView
-import android.widget.TextView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -29,42 +22,36 @@ import androidx.media3.ui.PlayerView
 import org.json.JSONObject
 
 /**
- * Full-screen native player drawn as an overlay inside MainActivity, so the WebView (and the
- * page state under it) is never destroyed. Reports back through [sendEvent] using the
- * NLNativeEvents contract: started, progress (every 10 s), paused, resumed, seeked, stopped,
- * ended, error, audio, subtitle.
+ * Headless native player (bridge v2): Media3 decodes and draws the picture (and text subtitles)
+ * into [playerView], which sits BEHIND the transparent WebView. There is no native UI at all; the
+ * page draws the controls and drives this class through the NorthernLightsNative bridge
+ * (play / pause / resume / seekTo / setSubtitle). Reports back through [sendEvent] using the
+ * NLNativeEvents contract: started, time (every 500 ms), progress (every 10 s), paused, resumed,
+ * seeked, stopped, ended, error.
  */
 class PlayerController(
     private val activity: Activity,
-    private val container: View,
     private val playerView: PlayerView,
-    private val titleBox: View,
-    private val titleText: TextView,
-    private val subtitleText: TextView,
-    private val trackMenu: View,
-    private val audioList: ListView,
-    private val subtitleList: ListView,
-    private val skipList: ListView,
-    private val hintText: TextView,
-    private val seekBadge: TextView,
     private val sendEvent: (JSONObject) -> Unit,
+    private val onOpened: () -> Unit,
     private val onClosed: () -> Unit,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private var player: ExoPlayer? = null
     private var session: MediaSession? = null
-    private var request: PlayRequest? = null
     private var startedSent = false
     private var pendingSubtitleIndex: Int? = null
-    private var menuOpen = false
+    private var ticks = 0
 
     val isActive: Boolean get() = player != null
 
-    private val progressTick = object : Runnable {
+    private val timeTick = object : Runnable {
         override fun run() {
             val p = player ?: return
-            if (p.isPlaying) emit("progress")
-            handler.postDelayed(this, PROGRESS_MS)
+            emit("time")
+            ticks += 1
+            if (ticks % PROGRESS_EVERY_TICKS == 0 && p.isPlaying) emit("progress")
+            handler.postDelayed(this, TIME_MS)
         }
     }
 
@@ -72,7 +59,7 @@ class PlayerController(
 
     private val listener = object : Player.Listener {
         override fun onPlaybackStateChanged(state: Int) {
-            val p = player ?: return
+            if (player == null) return
             if (state == Player.STATE_READY && !startedSent) {
                 startedSent = true
                 emit("started")
@@ -80,13 +67,11 @@ class PlayerController(
                 emit("ended")
                 handler.post { close(sendStopped = false) }
             }
-            if (p.playbackState == Player.STATE_BUFFERING) playerView.showController()
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (!startedSent) return
             emit(if (playWhenReady) "resumed" else "paused")
-            if (!playWhenReady) playerView.showController()
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -101,45 +86,11 @@ class PlayerController(
         }
     }
 
-    init {
-        audioList.setOnItemClickListener { _, _, position, _ ->
-            val req = request ?: return@setOnItemClickListener
-            val track = req.audioTracks.getOrNull(position) ?: return@setOnItemClickListener
-            audioList.setItemChecked(position, true)
-            closeMenu()
-            emit("audio", index = track.index)
-        }
-        subtitleList.setOnItemClickListener { _, _, position, _ ->
-            val req = request ?: return@setOnItemClickListener
-            // Position 0 is "Off".
-            val index = if (position == 0) -1 else req.subtitleTracks.getOrNull(position - 1)?.index
-                ?: return@setOnItemClickListener
-            subtitleList.setItemChecked(position, true)
-            closeMenu()
-            if (index < 0) setSubtitlesOff() else selectSubtitleLocally(index)
-            emit("subtitle", index = index)
-        }
-        skipList.setOnItemClickListener { _, _, position, _ ->
-            val seconds = SKIP_CHOICES.getOrNull(position) ?: return@setOnItemClickListener
-            skipList.setItemChecked(position, true)
-            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_SKIP, seconds).apply()
-            updateHint()
-            closeMenu()
-            showBadge(activity.getString(R.string.seconds, seconds))
-        }
-    }
-
-    /** The skip length picked in this app's menu wins; until one is picked, use the page's. */
-    private fun skipSeconds(): Int {
-        val saved = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_SKIP, 0)
-        return if (saved > 0) saved else request?.skipSeconds ?: 10
-    }
-
     fun start(req: PlayRequest) {
         close(sendStopped = false, notifyClosed = false)
-        request = req
         startedSent = false
         pendingSubtitleIndex = req.subtitleIndex
+        ticks = 0
 
         val exo = ExoPlayer.Builder(activity)
             .setAudioAttributes(
@@ -192,52 +143,30 @@ class PlayerController(
         exo.playWhenReady = true
 
         playerView.player = exo
-        playerView.controllerShowTimeoutMs = 4000
-        // Left / Right skip by the chosen length; Media3's own buttons would use a fixed 5 s / 15 s.
-        playerView.setShowRewindButton(false)
-        playerView.setShowFastForwardButton(false)
-        playerView.setControllerVisibilityListener(
-            PlayerView.ControllerVisibilityListener { visibility ->
-                titleBox.visibility = if (visibility == View.VISIBLE) View.VISIBLE else View.GONE
-            }
-        )
-        titleText.text = req.title
-        subtitleText.text = req.subtitle
-        subtitleText.visibility = if (req.subtitle.isEmpty()) View.GONE else View.VISIBLE
-        updateHint()
-
         session = MediaSession.Builder(activity, exo).setId("northern-lights-tv").build()
         player = exo
-        buildMenus(req)
-        closeMenu()
-        container.visibility = View.VISIBLE
-        container.requestFocus()
+        playerView.visibility = View.VISIBLE
         playerView.keepScreenOn = true
+        onOpened()
         exo.prepare()
-        playerView.showController()
-        handler.removeCallbacks(progressTick)
-        handler.postDelayed(progressTick, PROGRESS_MS)
+        handler.removeCallbacks(timeTick)
+        handler.postDelayed(timeTick, TIME_MS)
     }
 
     /** Called for page-initiated stop() and for Back. */
     fun close(sendStopped: Boolean, notifyClosed: Boolean = true) {
         val p = player ?: return
         if (sendStopped) emit("stopped")
-        handler.removeCallbacks(progressTick)
+        handler.removeCallbacks(timeTick)
         handler.removeCallbacks(seekedTick)
-        handler.removeCallbacks(hideBadge)
-        seekBadge.visibility = View.GONE
         player = null
         playerView.keepScreenOn = false
         playerView.player = null
+        playerView.visibility = View.GONE
         session?.release()
         session = null
         p.removeListener(listener)
         p.release()
-        request = null
-        menuOpen = false
-        trackMenu.visibility = View.GONE
-        container.visibility = View.GONE
         if (notifyClosed) onClosed()
     }
 
@@ -245,7 +174,35 @@ class PlayerController(
         player?.pause()
     }
 
-    private fun emit(type: String, message: String? = null, index: Int? = null) {
+    fun resume() {
+        player?.play()
+    }
+
+    /** Page-driven seek. A debounced "seeked" event follows, like the web player's. */
+    fun seekTo(seconds: Double) {
+        val p = player ?: return
+        if (seconds.isNaN() || seconds.isInfinite()) return
+        var target = (seconds * 1000).toLong()
+        if (target < 0) target = 0
+        val dur = p.duration
+        if (dur != C.TIME_UNSET && dur > 0 && target > dur) target = dur
+        p.seekTo(target)
+        handler.removeCallbacks(seekedTick)
+        handler.postDelayed(seekedTick, SEEKED_DEBOUNCE_MS)
+    }
+
+    /** Select a side-loaded text track by the page's track index; -1 = off. */
+    fun setSubtitle(index: Int) {
+        if (player == null) return
+        if (index < 0) {
+            pendingSubtitleIndex = null
+            setSubtitlesOff()
+        } else if (!selectSubtitleLocally(index)) {
+            pendingSubtitleIndex = index // tracks not loaded yet; onTracksChanged retries
+        }
+    }
+
+    private fun emit(type: String, message: String? = null) {
         val p = player
         val o = JSONObject()
         o.put("type", type)
@@ -253,63 +210,12 @@ class PlayerController(
         val dur = p?.duration ?: C.TIME_UNSET
         o.put("positionSeconds", pos / 1000.0)
         o.put("durationSeconds", if (dur == C.TIME_UNSET || dur < 0) 0.0 else dur / 1000.0)
+        // Seconds buffered ahead of the playhead.
+        val ahead = if (p == null) 0L else (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
+        o.put("bufferedSeconds", ahead / 1000.0)
+        o.put("playing", p?.isPlaying ?: false)
         if (message != null) o.put("message", message)
-        if (index != null) o.put("index", index)
         sendEvent(o)
-    }
-
-    // ---- track menu -------------------------------------------------------------------
-
-    private fun buildMenus(req: PlayRequest) {
-        val audioLabels = req.audioTracks.map { it.label }
-        audioList.adapter = menuAdapter(audioLabels)
-        val checkedAudio = req.audioTracks.indexOfFirst { it.index == req.audioIndex }
-            .let { if (it >= 0) it else req.audioTracks.indexOfFirst { t -> t.isDefault } }
-        audioList.choiceMode = ListView.CHOICE_MODE_SINGLE
-        if (checkedAudio >= 0) audioList.setItemChecked(checkedAudio, true)
-
-        val subLabels = listOf(activity.getString(R.string.subtitles_off)) + req.subtitleTracks.map { it.label }
-        subtitleList.adapter = menuAdapter(subLabels)
-        subtitleList.choiceMode = ListView.CHOICE_MODE_SINGLE
-        val checkedSub = req.subtitleTracks.indexOfFirst { it.index == req.subtitleIndex }
-        subtitleList.setItemChecked(if (checkedSub >= 0) checkedSub + 1 else 0, true)
-
-        skipList.adapter = menuAdapter(SKIP_CHOICES.map { activity.getString(R.string.seconds, it) })
-        skipList.choiceMode = ListView.CHOICE_MODE_SINGLE
-        val checkedSkip = SKIP_CHOICES.indexOf(skipSeconds())
-        if (checkedSkip >= 0) skipList.setItemChecked(checkedSkip, true)
-    }
-
-    private fun menuAdapter(labels: List<String>): ArrayAdapter<String> =
-        object : ArrayAdapter<String>(activity, android.R.layout.simple_list_item_single_choice, labels) {
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val v = super.getView(position, convertView, parent)
-                (v as? TextView)?.apply {
-                    textSize = 22f
-                    setTextColor(0xFFFFFFFF.toInt())
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(8, 20, 8, 20)
-                }
-                return v
-            }
-        }
-
-    private fun openMenu() {
-        val req = request ?: return
-        menuOpen = true
-        trackMenu.visibility = View.VISIBLE
-        playerView.hideController()
-        when {
-            req.audioTracks.isNotEmpty() -> audioList
-            req.subtitleTracks.isNotEmpty() -> subtitleList
-            else -> skipList
-        }.requestFocus()
-    }
-
-    private fun closeMenu() {
-        menuOpen = false
-        trackMenu.visibility = View.GONE
-        container.requestFocus()
     }
 
     // ---- local text-track switching ---------------------------------------------------
@@ -340,117 +246,11 @@ class PlayerController(
         return false
     }
 
-    // ---- remote keys ------------------------------------------------------------------
-
-    /** Returns true when the key was consumed. Called by MainActivity before normal dispatch. */
-    fun onKey(event: KeyEvent): Boolean {
-        val p = player ?: return false
-        val down = event.action == KeyEvent.ACTION_DOWN
-        val up = event.action == KeyEvent.ACTION_UP
-
-        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (up) {
-                if (menuOpen) closeMenu() else close(sendStopped = true)
-            }
-            return true
-        }
-        if (menuOpen) return false // let the lists handle D-pad / Enter
-
-        val skip = skipSeconds()
-        when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                if (down) seekBy(p, -skip, event.repeatCount)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                if (down) seekBy(p, skip, event.repeatCount)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER,
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                if (down && event.repeatCount == 0) {
-                    togglePlay(p)
-                    playerView.showController()
-                }
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                if (down) p.play()
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                if (down) p.pause()
-                return true
-            }
-            KeyEvent.KEYCODE_MEDIA_STOP -> {
-                if (up) close(sendStopped = true)
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_UP -> {
-                if (down && event.repeatCount == 0) openMenu()
-                return true
-            }
-            KeyEvent.KEYCODE_DPAD_DOWN -> {
-                if (down) playerView.showController()
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun togglePlay(p: ExoPlayer) {
-        if (p.playbackState == Player.STATE_ENDED) {
-            p.seekTo(0)
-            p.play()
-        } else if (p.playWhenReady) {
-            p.pause()
-        } else {
-            p.play()
-        }
-    }
-
-    /** Holding the key repeats; the step grows from 1x up to 6x the chosen skip length. */
-    private fun seekBy(p: ExoPlayer, seconds: Int, repeatCount: Int) {
-        val multiplier = 1 + (repeatCount / 4).coerceAtMost(5)
-        val dur = p.duration
-        var target = p.currentPosition + seconds.toLong() * multiplier * 1000L
-        if (target < 0) target = 0
-        if (dur != C.TIME_UNSET && dur > 0 && target > dur) target = dur
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastSeekAt > BADGE_MS || (seekDelta > 0) != (seconds > 0)) seekDelta = 0
-        lastSeekAt = now
-        seekDelta += (target - p.currentPosition) / 1000
-        showBadge((if (seekDelta < 0) "−" else "+") + kotlin.math.abs(seekDelta) + " s")
-        p.seekTo(target)
-        playerView.showController()
-        handler.removeCallbacks(seekedTick)
-        handler.postDelayed(seekedTick, SEEKED_DEBOUNCE_MS)
-    }
-
-    private var seekDelta = 0L
-    private var lastSeekAt = 0L
-    private val hideBadge = Runnable { seekBadge.visibility = View.GONE }
-
-    /** A big "+10 s" / "−30 s" in the middle of the picture; repeated presses add up. */
-    private fun showBadge(text: String) {
-        seekBadge.text = text
-        seekBadge.visibility = View.VISIBLE
-        handler.removeCallbacks(hideBadge)
-        handler.postDelayed(hideBadge, BADGE_MS)
-    }
-
-    private fun updateHint() {
-        hintText.text = activity.getString(R.string.player_hint, skipSeconds())
-    }
-
     companion object {
-        private const val BADGE_MS = 1_200L
-        private const val PROGRESS_MS = 10_000L
+        private const val TIME_MS = 500L
+        private const val PROGRESS_EVERY_TICKS = 20 // 20 x 500 ms = 10 s
         private const val SEEKED_DEBOUNCE_MS = 700L
         private const val SUB_ID_PREFIX = "nlsub"
-        private const val PREFS = "nl_tv"
-        private const val KEY_SKIP = "skip_seconds"
-        private val SKIP_CHOICES = listOf(5, 10, 15, 30, 60)
         private const val START_BUFFER_MS = 1_000
         private const val REBUFFER_MS = 2_000
     }
