@@ -124,6 +124,11 @@ def run(tmp):
         r = client.get(f"/static/nl/tv/{f}")
         check(f"/static/nl/tv/{f} served", r.status_code == 200 and len(r.text) > 200, r.status_code)
         check(f"  {f} has no API key", SECRET not in r.text)
+        check(f"  {f} is revalidated on every use (Cache-Control: no-cache)", r.headers.get("cache-control") == "no-cache",
+              r.headers.get("cache-control"))
+    css = client.get("/static/nl/tv/tv.css").text
+    check("tv.css scales 16px per rem at 1920x1080 with valid CSS (no px * px)",
+          "min(100vw / 120, 100vh / 67.5)" in css and "1080) * 16px" not in css)
     r = client.get("/static/nl/player-core.js")
     check("player-core.js carries the NativeAdapter contract",
           r.status_code == 200 and "NorthernLightsNative" in r.text and "NLNativeEvents" in r.text)

@@ -1,6 +1,7 @@
 package app.northernlights.tv
 
 import android.app.Activity
+import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -43,6 +44,7 @@ class PlayerController(
     private val trackMenu: View,
     private val audioList: ListView,
     private val subtitleList: ListView,
+    private val skipList: ListView,
     private val sendEvent: (JSONObject) -> Unit,
     private val onClosed: () -> Unit,
 ) {
@@ -115,6 +117,18 @@ class PlayerController(
             if (index < 0) setSubtitlesOff() else selectSubtitleLocally(index)
             emit("subtitle", index = index)
         }
+        skipList.setOnItemClickListener { _, _, position, _ ->
+            val seconds = SKIP_CHOICES.getOrNull(position) ?: return@setOnItemClickListener
+            skipList.setItemChecked(position, true)
+            activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_SKIP, seconds).apply()
+            closeMenu()
+        }
+    }
+
+    /** The skip length picked in this app's menu wins; until one is picked, use the page's. */
+    private fun skipSeconds(): Int {
+        val saved = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY_SKIP, 0)
+        return if (saved > 0) saved else request?.skipSeconds ?: 10
     }
 
     fun start(req: PlayRequest) {
@@ -143,9 +157,6 @@ class PlayerController(
                     )
                     .build()
             )
-            // The on-screen rewind / forward buttons use the same step as Left / Right.
-            .setSeekBackIncrementMs(req.skipSeconds * 1000L)
-            .setSeekForwardIncrementMs(req.skipSeconds * 1000L)
             .build()
         exo.addListener(listener)
         // Land on the nearest keyframe: no decoding up to an exact frame, so seeks start sooner.
@@ -178,6 +189,9 @@ class PlayerController(
 
         playerView.player = exo
         playerView.controllerShowTimeoutMs = 4000
+        // Left / Right skip by the chosen length; Media3's own buttons would use a fixed 5 s / 15 s.
+        playerView.setShowRewindButton(false)
+        playerView.setShowFastForwardButton(false)
         playerView.setControllerVisibilityListener(
             PlayerView.ControllerVisibilityListener { visibility ->
                 titleBox.visibility = if (visibility == View.VISIBLE) View.VISIBLE else View.GONE
@@ -252,6 +266,11 @@ class PlayerController(
         subtitleList.choiceMode = ListView.CHOICE_MODE_SINGLE
         val checkedSub = req.subtitleTracks.indexOfFirst { it.index == req.subtitleIndex }
         subtitleList.setItemChecked(if (checkedSub >= 0) checkedSub + 1 else 0, true)
+
+        skipList.adapter = menuAdapter(SKIP_CHOICES.map { activity.getString(R.string.seconds, it) })
+        skipList.choiceMode = ListView.CHOICE_MODE_SINGLE
+        val checkedSkip = SKIP_CHOICES.indexOf(skipSeconds())
+        if (checkedSkip >= 0) skipList.setItemChecked(checkedSkip, true)
     }
 
     private fun menuAdapter(labels: List<String>): ArrayAdapter<String> =
@@ -270,11 +289,14 @@ class PlayerController(
 
     private fun openMenu() {
         val req = request ?: return
-        if (req.audioTracks.isEmpty() && req.subtitleTracks.isEmpty()) return
         menuOpen = true
         trackMenu.visibility = View.VISIBLE
         playerView.hideController()
-        (if (req.audioTracks.isNotEmpty()) audioList else subtitleList).requestFocus()
+        when {
+            req.audioTracks.isNotEmpty() -> audioList
+            req.subtitleTracks.isNotEmpty() -> subtitleList
+            else -> skipList
+        }.requestFocus()
     }
 
     private fun closeMenu() {
@@ -327,7 +349,7 @@ class PlayerController(
         }
         if (menuOpen) return false // let the lists handle D-pad / Enter
 
-        val skip = request?.skipSeconds ?: 10
+        val skip = skipSeconds()
         when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
                 if (down) seekBy(p, -skip, event.repeatCount)
@@ -397,6 +419,9 @@ class PlayerController(
         private const val PROGRESS_MS = 10_000L
         private const val SEEKED_DEBOUNCE_MS = 700L
         private const val SUB_ID_PREFIX = "nlsub"
+        private const val PREFS = "nl_tv"
+        private const val KEY_SKIP = "skip_seconds"
+        private val SKIP_CHOICES = listOf(5, 10, 15, 30, 60)
         private const val START_BUFFER_MS = 1_000
         private const val REBUFFER_MS = 2_000
     }

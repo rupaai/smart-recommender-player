@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
             trackMenu = findViewById(R.id.track_menu),
             audioList = findViewById<ListView>(R.id.list_audio),
             subtitleList = findViewById<ListView>(R.id.list_subs),
+            skipList = findViewById<ListView>(R.id.list_skip),
             sendEvent = { dispatchToPage(it) },
             onClosed = { webView.requestFocus() },
         )

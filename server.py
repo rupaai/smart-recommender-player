@@ -158,6 +158,16 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def revalidate_static(request: Request, call_next):
+    # Without this, browsers (the TV app's WebView especially) keep using an old CSS/JS file for
+    # a while after a deploy. no-cache still caches, but checks the ETag on every use.
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 

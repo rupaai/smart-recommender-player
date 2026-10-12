@@ -11,4 +11,6 @@
     <string name="audio">Audio</string>
     <string name="subtitles">Subtitles</string>
     <string name="subtitles_off">Off</string>
+    <string name="skip_length">Skip length (Left / Right)</string>
+    <string name="seconds">%1$d seconds</string>
 </resources>
