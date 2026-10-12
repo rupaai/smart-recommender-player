@@ -15,6 +15,9 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
+from services.jellyfin_playback import JellyfinPlayback  # noqa: E402
+
+JellyfinPlayback.file_exists = staticmethod(lambda path: True)  # fake files: no real disk
 
 failures = []
 SECRET = "SECRET-KEY-123"
@@ -176,6 +179,13 @@ def run(tmp):
     check("HLS otherwise", s["kind"] == "hls" and s["play_method"] == "Transcode", s)
     check("transcoding url is proxied and key stripped",
           s["url"] == "/nl/jf/videos/jf1/master.m3u8?MediaSourceId=ms2&PlaySessionId=ps2" and SECRET not in s["url"], s["url"])
+    JellyfinPlayback.file_exists = staticmethod(lambda path: False)
+    try:
+        playback.stream_for(item)
+        check("missing file is refused before asking Jellyfin", False)
+    except jp.ItemNotFound as e:
+        check("missing file is refused before asking Jellyfin", "isn't on disk" in str(e), str(e))
+    JellyfinPlayback.file_exists = staticmethod(lambda path: True)
 
     client = TestClient(server.app)
 

@@ -13,6 +13,7 @@ point at our own proxy, and the pure helpers below strip any key from URLs and p
 from __future__ import annotations
 
 import copy
+import os
 import posixpath
 import re
 import threading
@@ -231,6 +232,9 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str) -> 
 
 
 class JellyfinPlayback:
+    # The app and Jellyfin see the same paths (both mount media at /media); tests replace this.
+    file_exists = staticmethod(os.path.exists)
+
     def __init__(self, jellyfin_service: JellyfinService):
         self.jf = jellyfin_service
         self._ids: Dict[str, str] = {}
@@ -392,7 +396,13 @@ class JellyfinPlayback:
         sources = item.get("sources") or []
         if not sources:
             raise ItemNotFound("This item has no media file.")
-        jf_id = self.find_item_id(sources[0]["file_path"])
+        file_path = sources[0]["file_path"]
+        if not self.file_exists(file_path):
+            # Jellyfin would answer every segment with a 500 (ffmpeg can't open the input).
+            raise ItemNotFound(
+                "This movie's file isn't on disk any more (moved or deleted). Rescan the library."
+            )
+        jf_id = self.find_item_id(file_path)
         if not jf_id:
             raise ItemNotFound("Jellyfin does not know this file yet.")
 
