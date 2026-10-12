@@ -35,7 +35,9 @@ from services import verdicts as vd
 from services.taste_runtime import TasteRuntime
 from services.admin_api import build_router as build_admin_router
 from services.vibe_index import VibeIndex
-from services.vibe_popup import PopupSession, SessionStore, should_auto_ask, skip_reason
+from services import vibe_moods
+from services.mood_popup import MoodSession
+from services.vibe_popup import PopupSession, SessionStore, should_auto_ask, skip_reason  # noqa: F401 - PopupSession kept, unused by /api/discover/*
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -546,9 +548,23 @@ def _with_on_list(items: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[s
     return items
 
 
-def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+_MOOD_LABELS = {m["id"]: m["label"] for m in vibe_moods.MOODS}
+
+
+def _mood_list(popup: Any, n: int = 3) -> Optional[List[Dict[str, Any]]]:
+    """Top moods as [{id, label, p}] for the UI; None for sessions without a mood belief."""
+    top = getattr(popup, "top_moods", None)
+    if top is None:
+        return None
+    return [{"id": m, "label": _MOOD_LABELS.get(m, m), "p": round(p, 2)} for m, p in top(n)]
+
+
+def _popup_response(popup: Any, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     results = recommender_service.finalize(popup.ranked(), 1, page_size)
     results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
+    moods = _mood_list(popup)
+    if moods is not None:
+        results["moods"] = moods
     _with_on_list(results.get("items"))
     if vibe is not None:
         results["vibe"] = vibe
@@ -573,15 +589,16 @@ async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
         request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
         engine="legacy+popup",
     )
-    popup = PopupSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
-                         recommender_service.vibe_index)
+    popup = MoodSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
+                        recommender_service.vibe_index, mood_weight=recommender_cfg.get("mood_weight"))
     if req.ask and pool:
         await asyncio.to_thread(popup.next_question, force=True)
     popup.done = popup.current is None
     popup_sessions.put(popup)
     out = await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
     if req.ask:
-        out["question_skipped"] = skip_reason(req.query, pool, popup.current is not None)
+        # MoodSession always asks A3 when there is a pool, so only an empty pool skips.
+        out["question_skipped"] = None if popup.current is not None else ("no_results" if not pool else None)
     return out
 
 
@@ -596,12 +613,8 @@ async def discover_answer(req: DiscoverAnswerRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     kwargs = popup.request["kwargs"]
-    new_profile = popup.belief.get("profile")
-    if new_profile and new_profile != kwargs.get("profile"):
-        # "Who's on the sofa?" changes whose taste counts: rebuild the pool.
-        kwargs = {**kwargs, "profile": new_profile}
-        popup.request["kwargs"] = kwargs
-        popup.set_pool(await asyncio.to_thread(_pool_for, kwargs))
+    # (PopupSession's D1 "who's on the sofa" pool rebuild has no MoodSession equivalent: the mood
+    # bank has no profile question, so the pool never changes during a mood session.)
     if popup.should_stop():
         popup.done = True
     else:
