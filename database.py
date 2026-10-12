@@ -1181,7 +1181,7 @@ class DatabaseManager:
         """Titles that have at least one source file, for the Northern Lights lists.
 
         Besides the card fields it returns `added_at` (newest file) and, for shows,
-        `seasons` (distinct season numbers among the files)."""
+        `seasons` (distinct season numbers among the files) and `file_paths` (every source file)."""
         with self.get_connection() as conn:
             rows = conn.execute(
                 """
@@ -1190,7 +1190,9 @@ class DatabaseManager:
                        (SELECT COUNT(DISTINCT ms.season_number) FROM media_sources ms
                          WHERE ms.media_item_id = mi.id AND ms.season_number IS NOT NULL) AS seasons,
                        (SELECT ms.jellyfin_id FROM media_sources ms
-                         WHERE ms.media_item_id = mi.id AND ms.jellyfin_id IS NOT NULL LIMIT 1) AS jellyfin_id
+                         WHERE ms.media_item_id = mi.id AND ms.jellyfin_id IS NOT NULL LIMIT 1) AS jellyfin_id,
+                       (SELECT GROUP_CONCAT(ms.file_path, char(31)) FROM media_sources ms
+                         WHERE ms.media_item_id = mi.id) AS file_paths
                 FROM media_items mi
                 WHERE mi.media_type = ?
                   AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id)
@@ -1198,7 +1200,12 @@ class DatabaseManager:
                 """,
                 (media_type,),
             ).fetchall()
-            return [dict(r) for r in rows]
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["file_paths"] = (d.get("file_paths") or "").split("\x1f") if d.get("file_paths") else []
+                out.append(d)
+            return out
 
     # --- Northern Lights browse (schema v12) -------------------------------------
 

@@ -197,6 +197,19 @@ def run(tmp):
     resume_call = [c for c in fake.calls if c[1] == "/Users/user1/Items/Resume"][-1]
     check("Resume asked for Video with Path", resume_call[2].get("MediaTypes") == "Video" and "Path" in resume_call[2].get("Fields", ""), resume_call)
 
+    print("titles whose files are gone are hidden")
+    from services.jellyfin_playback import JellyfinPlayback
+    JellyfinPlayback.file_exists = staticmethod(lambda path: "Beta" not in path)  # Beta's file moved away
+    try:
+        r = client.get("/api/nl/library", params={"type": "movie"})
+        check("library drops a movie with no file on disk", [m["title"] for m in r.json()["items"]] == ["Alpha"], r.text[:200])
+        data = client.get("/api/nl/home").json()
+        check("home row and total drop it too", [m["title"] for m in data["movies"]] == ["Alpha"] and data["movies_total"] == 1,
+              data["movies"])
+        check("a show with its files still there stays", [s["title"] for s in data["shows"]] == ["Sigma"])
+    finally:
+        JellyfinPlayback.file_exists = staticmethod(lambda path: True)
+
     print("Jellyfin ids are cached in the database")
     with db.get_connection() as conn:
         cached = {r["file_path"]: r["jellyfin_id"] for r in conn.execute("SELECT file_path, jellyfin_id FROM media_sources")}

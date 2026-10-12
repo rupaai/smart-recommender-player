@@ -276,10 +276,16 @@ class NLBrowse:
     def _movie_fallback(self, row: Dict[str, Any]) -> Optional[str]:
         return image_url(row.get("jellyfin_id"), "Primary", 400) if row.get("media_type") == "movie" else None
 
+    def _on_disk(self, media_type: str) -> List[Dict[str, Any]]:
+        """Library rows with at least one source file still on disk. Files that were moved or
+        deleted keep their database rows (history, ratings) but should not show up as playable."""
+        exists = self.pb.file_exists
+        return [r for r in self.db.get_library_items(media_type) if any(exists(p) for p in r.get("file_paths") or [])]
+
     def library(self, media_type: str, limit: Optional[int] = None, with_progress: bool = True) -> List[Dict[str, Any]]:
         """Cards for movies or shows. Movies carry a progress bar when partly watched, else
         "New" for the latest additions. One badge at most."""
-        rows = self.db.get_library_items(media_type)
+        rows = self._on_disk(media_type)
         mark_new(rows)
         progress: Dict[int, int] = {}
         if with_progress and media_type == "movie":
@@ -314,7 +320,7 @@ class NLBrowse:
         progress = {c["media_item_id"]: c["progress"] for c in cont if c["kind"] == "movie"}
         out: Dict[str, Any] = {"continue_watching": cont}
         for key, mtype in (("movies", "movie"), ("shows", "tv")):
-            rows = self.db.get_library_items(mtype)
+            rows = self._on_disk(mtype)
             mark_new(rows)
             total = len(rows)
             rows = sorted(rows, key=lambda r: r.get("added_at") or "", reverse=True)[:HOME_ROW]
