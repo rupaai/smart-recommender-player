@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
             cacheMode = WebSettings.LOAD_DEFAULT
+            textZoom = 100 // the page scales itself to the screen; ignore the system font size
             userAgentString = (userAgentString ?: "") + " NorthernLightsTV/1"
         }
         webView.addJavascriptInterface(NativeBridge(this), "NorthernLightsNative")

@@ -13,7 +13,7 @@
   --side: 6rem;
 }
 * { box-sizing: border-box; }
-html { font-size: calc(min(100vw / 1920, 100vh / 1080) * 16px); color-scheme: dark; overflow: hidden; background: var(--bg); }
+html { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; color-scheme: dark; overflow: hidden; background: var(--bg); }
 body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 1.5rem; line-height: 1.4;
   -webkit-font-smoothing: antialiased; min-height: 100vh; padding-bottom: 12rem; overflow: hidden; }
 a { color: inherit; text-decoration: none; }
