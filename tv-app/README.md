@@ -47,16 +47,17 @@ Cleartext HTTP is allowed (see `res/xml/network_security_config.xml`): the app i
 ## Remote control
 
 - Browsing: D-pad and Enter go to the web page. Back goes back in the page; on the first screen press Back twice to exit.
-- Playing: Left/Right skip by the page's chosen length (hold to speed up, up to 6x), Enter or Play/Pause toggles and shows the controls, Up opens the Audio / Subtitles menu, Back stops and returns to the page exactly where you left it. System media keys work (also via a Media3 MediaSession).
+- Playing: the on-screen player is the web page's own (same controls as `/nl/play/{id}?tv=1` in a browser): Left/Right skip by the chosen length, OK pauses, Up/Down open the controls (seek bar with times, skip buttons, skip-length chip, Audio and Subtitles menus), Back closes a menu or leaves and returns to the page where you left it. The app has no player UI of its own: Media3 only decodes and draws the picture (and text subtitles) behind the transparent WebView. Media keys (play/pause, rewind, fast forward) reach the page too, and Media3's MediaSession stays for the system.
 
 ## How progress works
 
-The page calls `window.NorthernLightsNative.play(json)`; the app plays it natively and reports back with `window.NLNativeEvents.dispatch(json)`: `started`, `progress` (every 10 s while playing), `paused`, `resumed`, `seeked`, `stopped` (Back, with the position), `ended`, `error`, `audio` and `subtitle` (a track picked in the menu; the page then fetches a new stream and calls `play` again). The page turns these into the same `/api/nl/progress` calls the browser player makes, so "Continue Watching" works the same on the TV. Leaving the app with Home also sends `stopped`.
+The page calls `window.NorthernLightsNative.play(json)`; the app plays it natively and reports back with `window.NLNativeEvents.dispatch(json)`: `started`, `time` (every 500 ms), `progress` (every 10 s while playing), `paused`, `resumed`, `seeked`, `stopped` (the app went to the background), `ended` and `error`. Pause, resume, seeking and the text-subtitle choice are calls from the page; an audio or picture-subtitle change makes the page fetch a new stream and call `play` again. The page turns these into the same `/api/nl/progress` calls the browser player makes, so "Continue Watching" works the same on the TV. Leaving the app with Home also sends `stopped`.
 
-### Bridge contract (version 1)
+### Bridge contract (version 2)
 
 `window.NorthernLightsNative` exists only on pages from the saved server origin:
 
 - `play(json)`: `{url, kind ("file"|"hls"), startSeconds, title, subtitle, skipSeconds, audioTracks:[{index,label,language,isDefault}], subtitleTracks:[{index,label,language,url,kind}], audioIndex, subtitleIndex, nextUp: null|{label}}`. All URLs must be absolute and on the server origin; anything else is refused with an `error` event.
-- `stop()`, `version()` (returns `"1"`).
-- Events: `{type, positionSeconds, durationSeconds, message?, index?}`.
+- `pause()`, `resume()`, `seekTo(seconds)` (inside the current stream), `setSubtitle(index)` (side-loaded text track by the page's track index, -1 = off), `stop()`, `version()` (returns `"2"`; version 1 was the app with its own native controls, and the page still supports it by keeping its web controls hidden).
+- Events: `{type, positionSeconds, durationSeconds, bufferedSeconds (ahead of the playhead), playing, message?}`.
+- Layering: the `PlayerView` (controller off) is behind the WebView; while playback is active the WebView background is transparent, the page is transparent too (`html.native`), and every key goes to the WebView (Back is sent to the page as Escape).

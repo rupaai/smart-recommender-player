@@ -8,10 +8,4 @@
     <string name="try_again">Try again</string>
     <string name="change_server">Change server</string>
     <string name="press_back_again">Press Back again to exit</string>
-    <string name="audio">Audio</string>
-    <string name="subtitles">Subtitles</string>
-    <string name="subtitles_off">Off</string>
-    <string name="skip_length">Skip length (Left / Right)</string>
-    <string name="seconds">%1$d seconds</string>
-    <string name="player_hint">◀ ▶ skip %1$d s  ·  ▲ audio, subtitles, skip length</string>
 </resources>

@@ -173,6 +173,11 @@ html.tv { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; }
 .tv .nl-next-actions .nl-primary, .tv .nl-next-actions .nl-secondary { min-height: 4.5rem; }
 .tv .nl-buffering { width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; }
 
-/* Inside the Android app Media3 draws the video and its own controls; the page is only the shell
-   for the resume question, errors and the loading spinner. */
-.nl-player.native video, .nl-player.native .nl-controls, .nl-player.native .nl-next { display: none !important; }
+/* Inside the Android app (bridge v2) Media3 draws the video BEHIND the WebView, so the page is
+   transparent and the <video> element stays unused; our controls draw on top of the picture. */
+html.native, html.native body, .nl-player.native { background: transparent !important; }
+.nl-player.native video { display: none !important; }
+
+/* An old app (bridge v1) draws its own controls: the page is only the shell for the resume question,
+   errors and the loading spinner. */
+.nl-player.native-v1 video, .nl-player.native-v1 .nl-controls, .nl-player.native-v1 .nl-next { display: none !important; }

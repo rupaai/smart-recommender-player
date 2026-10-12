@@ -132,6 +132,15 @@ def run(tmp):
     r = client.get("/static/nl/player-core.js")
     check("player-core.js carries the NativeAdapter contract",
           r.status_code == 200 and "NorthernLightsNative" in r.text and "NLNativeEvents" in r.text)
+    check("player-core.js drives bridge v2 (pause, resume, seekTo, setSubtitle, version, time events)",
+          all(n in r.text for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"')),
+          [n for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"') if n not in r.text])
+    css_player = client.get("/static/nl/player.css").text
+    check("player.css makes the page transparent in native mode and keeps the v1 fallback",
+          "html.native body" in css_player and "background: transparent" in css_player and "native-v1" in css_player)
+    js_player = client.get("/static/nl/player.js").text
+    check("player.js keeps the web controls in native v2 and hides them only for v1",
+          "isNativeV2" in js_player and "native-v1" in js_player)
 
     print("data the TV pages read (same APIs as M2)")
     home = client.get("/api/nl/home")

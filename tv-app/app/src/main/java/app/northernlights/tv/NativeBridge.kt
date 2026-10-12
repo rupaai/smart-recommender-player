@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative. Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v2). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -14,6 +14,10 @@ class NativeBridge(private val host: Host) {
         fun isTrusted(): Boolean
         fun onPlay(json: String)
         fun onStopRequested()
+        fun onPauseRequested()
+        fun onResumeRequested()
+        fun onSeekRequested(seconds: Double)
+        fun onSubtitleRequested(index: Int)
     }
 
     @JavascriptInterface
@@ -29,5 +33,32 @@ class NativeBridge(private val host: Host) {
     }
 
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "1" else ""
+    fun pause() {
+        if (!host.isTrusted()) return
+        host.onPauseRequested()
+    }
+
+    @JavascriptInterface
+    fun resume() {
+        if (!host.isTrusted()) return
+        host.onResumeRequested()
+    }
+
+    /** [seconds] arrives as a string ("123.4") so a JS number or string both work. */
+    @JavascriptInterface
+    fun seekTo(seconds: String?) {
+        if (!host.isTrusted()) return
+        val value = seconds?.toDoubleOrNull() ?: return
+        host.onSeekRequested(value)
+    }
+
+    /** Local side-loaded text track by the page's track index; -1 = off. */
+    @JavascriptInterface
+    fun setSubtitle(index: Int) {
+        if (!host.isTrusted()) return
+        host.onSubtitleRequested(index)
+    }
+
+    @JavascriptInterface
+    fun version(): String = if (host.isTrusted()) "2" else ""
 }
