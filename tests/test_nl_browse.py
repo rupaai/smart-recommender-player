@@ -207,6 +207,10 @@ def run(tmp):
         check("home row and total drop it too", [m["title"] for m in data["movies"]] == ["Alpha"] and data["movies_total"] == 1,
               data["movies"])
         check("a show with its files still there stays", [s["title"] for s in data["shows"]] == ["Sigma"])
+        JellyfinPlayback.file_exists = staticmethod(lambda path: "Alpha" not in path)  # Alpha (partly watched) moved
+        data = client.get("/api/nl/home").json()
+        check("Continue Watching drops a title whose file is gone", [c["title"] for c in data["continue_watching"]] == ["Sigma"],
+              [c["title"] for c in data["continue_watching"]])
     finally:
         JellyfinPlayback.file_exists = staticmethod(lambda path: True)
 

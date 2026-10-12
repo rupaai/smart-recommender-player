@@ -103,7 +103,31 @@
                 android:singleLine="true"
                 android:textColor="@color/text_secondary"
                 android:textSize="22sp" />
+
+            <TextView
+                android:id="@+id/player_hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:singleLine="true"
+                android:textColor="@color/text_secondary"
+                android:textSize="20sp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/seek_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:background="#CC000000"
+            android:paddingLeft="32dp"
+            android:paddingTop="16dp"
+            android:paddingRight="32dp"
+            android:paddingBottom="16dp"
+            android:textColor="@color/text_primary"
+            android:textSize="40sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
         <LinearLayout
             android:id="@+id/track_menu"
