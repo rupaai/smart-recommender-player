@@ -1,8 +1,8 @@
 """
 Mood session tests (tests/test_mood_popup.py)
 
-No DB, no model; a tiny synthetic pool is enough because the belief engine does
-not look at films yet.
+No DB, no model; a tiny synthetic pool is enough. The ranking tests use a pool of
+thrillers, rom-coms, dramas, comedies and animation (with or without facets).
 
     uv run python tests/test_mood_popup.py
 """
@@ -34,7 +34,46 @@ def pool(n=8):
 
 
 def new(**kw):
+    kw.setdefault("mood_weight", 3.0)
     return mp.MoodSession(1, {}, pool(), **kw)
+
+
+KINDS = {
+    "thriller": ("Thriller, Action", {"tension": 0.9, "energy": 0.8, "pace": 0.8, "darkness": 0.6, "humour": 0.1,
+                                      "weight": 0.5, "ending_valence": 0.4}),
+    "romcom": ("Romance, Comedy", {"tension": 0.15, "energy": 0.4, "pace": 0.5, "darkness": 0.1, "humour": 0.5,
+                                   "weight": 0.2, "ending_valence": 0.9}),
+    "drama": ("Drama", {"tension": 0.4, "energy": 0.3, "pace": 0.3, "darkness": 0.5, "humour": 0.1,
+                        "weight": 0.8, "ending_valence": 0.4}),
+    "comedy": ("Comedy", {"tension": 0.1, "energy": 0.6, "pace": 0.7, "darkness": 0.1, "humour": 0.95,
+                          "weight": 0.1, "ending_valence": 0.8}),
+    "family": ("Family, Animation", {"tension": 0.1, "energy": 0.4, "pace": 0.5, "darkness": 0.05, "humour": 0.6,
+                                     "weight": 0.2, "ending_valence": 0.95}),
+}
+
+
+def mood_pool(facets=True, per=3):
+    """per films of each kind, all with the same base score so only the moods separate them."""
+    out, i = [], 0
+    for kind, (genres, dials) in KINDS.items():
+        for _ in range(per):
+            i += 1
+            out.append({"id": i, "title": f"{kind} {i}", "kind": kind, "media_type": "movie",
+                        "recommendation_score": 7.0, "genres": genres,
+                        "facets": json.dumps(dials) if facets else None})
+    return out
+
+
+def ids_of(s, kind):
+    return [x["id"] for x in s.ranked() if x["kind"] == kind]
+
+
+def answered(facets=True, **answers):
+    s = mp.MoodSession(1, {}, mood_pool(facets), mood_weight=3.0)
+    for qid, oid in answers.items():
+        s.current = {"id": qid, "options": mq.BY_ID[qid]["options"]}
+        s.answer(qid, oid)
+    return s
 
 
 def play(s, picks, limit=20):
@@ -241,12 +280,104 @@ def test_interface():
     check("log_fields JSON", json.loads(f["answers_json"]) == {"A3": "stressed"}
           and json.loads(f["asked_order"]) == ["A3"] and set(json.loads(f["belief_json"])) == set(mp.MOOD_IDS))
     r = s.ranked()
-    check("ranked keeps pool order and adds popup_boost", [x["id"] for x in r] == list(range(1, 9))
-          and all(x["popup_boost"] == 0 and "_popup_base" not in x for x in r))
-    check("scored is (score, item)", s.scored()[0][1]["id"] == 1)
+    check("ranked adds popup_boost and hides _popup keys", sorted(x["id"] for x in r) == list(range(1, 9))
+          and all("_popup_base" not in x and "_popup_moodfit" not in x for x in r))
+    check("scored is (score, item)", isinstance(s.scored()[0][0], float) and "id" in s.scored()[0][1])
     for attr in ("id", "request", "done", "current", "belief", "asked"):
         check(f"has .{attr}", hasattr(s, attr))
 
+
+def test_ranking():
+    print("Ranking")
+    s0 = answered()
+    r0 = s0.ranked()
+    check("even belief: same keys as before plus mood_fit and top_moods",
+          all({"mood_fit", "top_moods", "popup_boost", "recommendation_score", "kind"} <= set(x) for x in r0))
+    check("no _popup keys leak", all(not any(k.startswith("_popup") for k in x) for x in r0))
+    check("score = pool score + mood_fit", all(abs(x["recommendation_score"] - (7.0 + x["mood_fit"])) < 0.01
+                                               and abs(x["popup_boost"] - x["mood_fit"]) < 0.01 for x in r0))
+    check("top_moods are 3 distinct mood ids", all(len(x["top_moods"]) == 3 and len(set(x["top_moods"])) == 3
+                                                  and set(x["top_moods"]) <= set(mp.MOOD_IDS) for x in r0))
+    check("mood_weight 0 leaves the pool score",
+          all(x["mood_fit"] == 0 and x["recommendation_score"] == 7.0
+              for x in mp.MoodSession(1, {}, mood_pool(), mood_weight=0).ranked()))
+
+    # Thrill answers
+    s = answered(G1="racing", G3="loud")
+    r = s.ranked()
+    pos = {x["id"]: i for i, x in enumerate(r)}
+    th, rc = ids_of(s, "thriller"), ids_of(s, "romcom")
+    before = {x["id"]: i for i, x in enumerate(r0)}
+    check("after Thrill answers thrillers lead", {x["kind"] for x in r[:3]} == {"thriller"}, [x["kind"] for x in r[:4]])
+    check("thrillers rose against the even belief", min(pos[i] for i in th) < min(before[i] for i in th)
+          or all(pos[i] <= before[i] for i in th), (pos, before))
+    check("thriller top_moods lean thrill",
+          any(m in vibe_moods.GROUPS["thrill"] for m in r[0]["top_moods"]), r[0]["top_moods"])
+
+    # Not-Light answer
+    s = answered(G4="bringit")
+    r = s.ranked()
+    pos = {x["id"]: i for i, x in enumerate(r)}
+    rc = ids_of(s, "romcom")
+    base = {x["id"]: i for i, x in enumerate(r0)}
+    fits0 = {x["id"]: x["mood_fit"] for x in r0}
+    check("rom-com score drops after a not-Light answer",
+          all(x["mood_fit"] < fits0[x["id"]] for x in r if x["kind"] == "romcom"))
+    dr = ids_of(s, "drama")
+    check("drama passes the rom-com", max(pos[i] for i in dr) < min(pos[i] for i in rc)
+          and not max(base[i] for i in dr) < min(base[i] for i in rc), (pos, base))
+    check("rom-com is lowered but not last", max(pos[i] for i in rc) < len(r) - 1
+          and any(x["kind"] != "romcom" for x in r[pos[rc[-1]] + 1:]), [x["kind"] for x in r])
+
+    # No facets: genres alone still move the order
+    n0 = answered(facets=False)
+    n1 = answered(facets=False, G1="racing", G3="loud")
+    o0 = [x["id"] for x in n0.ranked()]
+    o1 = [x["id"] for x in n1.ranked()]
+    check("no facets: answers still change the order", o0 != o1)
+    check("no facets: thrillers lead on genres", {x["kind"] for x in n1.ranked()[:3]} == {"thriller"},
+          [x["kind"] for x in n1.ranked()[:4]])
+    check("no facets: every film still gets a mood_fit", all(x["mood_fit"] > 0 for x in n1.ranked()))
+
+    # Cache: fits are computed once per film
+    calls = []
+    real = vibe_moods.fit
+    vibe_moods.fit = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+    try:
+        c = answered()
+        c.ranked()
+        first = len(calls)
+        c.current = {"id": "G1", "options": mq.BY_ID["G1"]["options"]}
+        c.answer("G1", "racing")
+        c.ranked()
+    finally:
+        vibe_moods.fit = real
+    check("fits are cached across answers", first == len(c.pool) * len(vibe_moods.MOODS) and len(calls) == first,
+          (first, len(calls)))
+
+    # Determinism
+    a = [(x["id"], x["recommendation_score"], x["mood_fit"], x["top_moods"])
+         for x in answered(G1="racing", G3="loud", T1="even").ranked()]
+    b = [(x["id"], x["recommendation_score"], x["mood_fit"], x["top_moods"])
+         for x in answered(G1="racing", G3="loud", T1="even").ranked()]
+    check("ranking is deterministic", a == b)
+    check("equal scores keep pool order", [x["id"] for x in sorted(
+        mp.MoodSession(1, {}, [dict(id=i, recommendation_score=5.0) for i in range(5)], mood_weight=3.0).ranked(),
+        key=lambda x: -x["recommendation_score"])] == list(range(5)))
+
+
+def test_weight():
+    print("Mood weight")
+    check("constructor argument wins", new(mood_weight=1.5).mood_weight == 1.5)
+    check("missing file falls back to 3.0", mp.load_mood_weight("/nonexistent/config.yaml") == 3.0)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        for text, want in (("recommender:\n  mood_weight: 2.5\n", 2.5), ("recommender:\n  x: 1\n", 3.0),
+                           ("recommender: {mood_weight: oops}\n", 3.0), ("", 3.0)):
+            path = os.path.join(d, "c.yaml")
+            with open(path, "w") as f:
+                f.write(text)
+            check(f"config {text.strip()[:30]!r} -> {want}", mp.load_mood_weight(path) == want)
 
 if __name__ == "__main__":
     test_bank()
@@ -255,5 +386,7 @@ if __name__ == "__main__":
     test_eligibility()
     test_stop()
     test_interface()
+    test_ranking()
+    test_weight()
     print(f"\n{'ALL PASSED' if not failures else f'{len(failures)} FAILED'}")
     sys.exit(1 if failures else 0)
