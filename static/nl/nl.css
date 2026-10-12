@@ -162,3 +162,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 8px var(--gutter) 24px; }
 @media (prefers-reduced-motion: reduce) {
   .nl-poster, .nl-still, .nl-switch-btn, .nl-switch-knob { transition: none; }
 }
+
+/* M5: "Find subtitles" is a button next to the Play link, same look as the quiet link. */
+button.nl-btn-quiet { background: transparent; color: var(--text); font-family: inherit; cursor: pointer; }
+button.nl-btn-quiet:hover { background: rgba(29, 27, 41, 0.06); }
+.nl-note:empty { display: none; }

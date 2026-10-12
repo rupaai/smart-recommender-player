@@ -14,6 +14,13 @@
   var UNPLAYABLE = "This video’s format can’t play in this browser.";
   var NEXT_CARD_SECONDS = 30;   // the next-episode card appears this long before the end (P11)
   var COUNTDOWN_SECONDS = 10;   // and counts down for this long before starting the episode
+  var DELAY_STEP = 0.25;        // subtitle delay buttons (P16)
+  var DELAY_MAX = 60;
+  var SUB_SIZES = ["S", "M", "L", "XL"];
+  var SUB_BACKGROUNDS = [["none", "None"], ["shadow", "Shadow"], ["box", "Box"]];
+  var SUB_POSITIONS = ["Normal", "Raised", "High"];
+  var SUB_POLL_MS = 1200;       // after a download, how often we ask whether Jellyfin lists the new track
+  var SUB_POLL_TRIES = 5;
 
   function $(id) { return document.getElementById(id); }
   var root = $("nl-player");
@@ -64,7 +71,9 @@
     nextCancelled: false, // Cancel pressed for this episode
     advancing: false,     // already switching to the next episode
     backHref: isTv ? "/nl/tv/" : "/nl/",
-    nextPromise: null     // the next-episode lookup in flight (the native player wants the label up front)
+    nextPromise: null,    // the next-episode lookup in flight (the native player wants the label up front)
+    subStyle: { size: "M", background: "box", raise: 0 },   // P15, saved per device (M4 moves it to the person's prefs)
+    subDelay: 0           // P16, seconds; per file, so never saved
   };
 
   /* ---------------------------------------------------------- small helpers */
@@ -111,7 +120,7 @@
   /* -------------------------------------------------------- control hiding */
 
   function screenOpen() {
-    return !$("nl-resume").hidden || !$("nl-error").hidden || !$("nl-help").hidden;
+    return !$("nl-resume").hidden || !$("nl-error").hidden || !$("nl-help").hidden || !$("nl-subfind").hidden;
   }
   function canHide() {
     return !player.paused && !S.menuOpen && !S.scrubbing && !screenOpen();
@@ -151,18 +160,31 @@
     h.textContent = title;
     menu.appendChild(h);
     items.forEach(function (it) {
+      if (it.kind === "stepper") { menu.appendChild(stepperRow(it)); return; }
       var b = document.createElement("button");
       b.type = "button";
-      b.setAttribute("role", "menuitemradio");
-      b.setAttribute("aria-checked", it.selected ? "true" : "false");
       var tick = document.createElement("span");
       tick.className = "tick";
-      tick.textContent = it.selected ? "✓" : "";
       var label = document.createElement("span");
-      label.textContent = it.label;
+      if (it.kind === "action" || it.kind === "cycle") {
+        // An action closes the menu; a cycle changes its value and stays open (the label is updated in place).
+        b.setAttribute("role", "menuitem");
+        label.textContent = it.kind === "cycle" ? it.getLabel() : it.label;
+        if (it.kind === "action") { b.className = "nl-menu-action"; }
+        b.addEventListener("click", function () {
+          if (it.kind === "action") { closeMenu(); it.onSelect(); return; }
+          it.onSelect();
+          label.textContent = it.getLabel();
+        });
+      } else {
+        b.setAttribute("role", "menuitemradio");
+        b.setAttribute("aria-checked", it.selected ? "true" : "false");
+        tick.textContent = it.selected ? "✓" : "";
+        label.textContent = it.label;
+        b.addEventListener("click", function () { closeMenu(); it.onSelect(); });
+      }
       b.appendChild(tick);
       b.appendChild(label);
-      b.addEventListener("click", function () { closeMenu(); it.onSelect(); });
       menu.appendChild(b);
     });
     menu.hidden = false;
@@ -170,6 +192,33 @@
     showControls();
     var first = menu.querySelector("button[aria-checked='true']") || menu.querySelector("button");
     if (first) { first.focus(); }
+  }
+  // A row with a value and a - / + pair, e.g. the subtitle delay. The menu stays open.
+  function stepperRow(it) {
+    var row = document.createElement("div");
+    row.className = "nl-stepper";
+    row.setAttribute("role", "group");
+    var label = document.createElement("span");
+    label.className = "nl-stepper-label";
+    label.textContent = it.getLabel();
+    row.setAttribute("aria-label", it.name);
+    function step(sign) {
+      return function () { it.onStep(sign); label.textContent = it.getLabel(); };
+    }
+    var minus = document.createElement("button");
+    minus.type = "button";
+    minus.textContent = "−";
+    minus.setAttribute("aria-label", it.name + " minus " + it.stepText);
+    minus.addEventListener("click", step(-1));
+    var plus = document.createElement("button");
+    plus.type = "button";
+    plus.textContent = "+";
+    plus.setAttribute("aria-label", it.name + " plus " + it.stepText);
+    plus.addEventListener("click", step(1));
+    row.appendChild(label);
+    row.appendChild(minus);
+    row.appendChild(plus);
+    return row;
   }
   document.addEventListener("pointerdown", function (e) {
     if (S.menuOpen && !menu.contains(e.target) && !e.target.closest(".nl-text-btn, .nl-chip")) { closeMenu(); }
@@ -361,9 +410,134 @@
   }
   function openSubtitleMenu() {
     var cur = currentSubtitleIndex();
-    openMenu("Subtitles", subtitleChoices().map(function (t) {
+    var items = subtitleChoices().map(function (t) {
       return { label: t.label, selected: t.index === cur, onSelect: function () { chooseSubtitle(t.index); } };
-    }));
+    });
+    items.push({ kind: "action", label: "Find subtitles…", onSelect: openFinder });
+    if (player.canStyleSubtitles || player.canDelaySubtitles) {
+      items.push({ kind: "action", label: "Subtitle settings…", onSelect: openSubtitleSettings });
+    }
+    openMenu("Subtitles", items);
+  }
+
+  /* ----------------------------------------------- subtitle look and delay (P15, P16) */
+
+  function formatDelay(seconds) {
+    var r = Math.round(seconds * 100) / 100;
+    if (r === 0) { return "0 s"; }
+    return (r > 0 ? "+" : "−") + Math.abs(r).toFixed(2) + " s";
+  }
+  function loadSubStyle() {
+    try {
+      var saved = JSON.parse(lsGet("nl.subStyle") || "null");
+      if (saved && typeof saved === "object") {
+        if (SUB_SIZES.indexOf(saved.size) >= 0) { S.subStyle.size = saved.size; }
+        if (SUB_BACKGROUNDS.some(function (b) { return b[0] === saved.background; })) { S.subStyle.background = saved.background; }
+        if (saved.raise === 0 || saved.raise === 1 || saved.raise === 2) { S.subStyle.raise = saved.raise; }
+      }
+    } catch (e) { /* unreadable: keep the defaults */ }
+  }
+  function applySubStyle() {
+    if (player.canStyleSubtitles) { player.setSubtitleStyle(S.subStyle); }
+  }
+  function saveSubStyle() {
+    lsSet("nl.subStyle", JSON.stringify(S.subStyle));
+    applySubStyle();
+  }
+  function backgroundName() {
+    return SUB_BACKGROUNDS.filter(function (b) { return b[0] === S.subStyle.background; })[0][1];
+  }
+  function changeDelay(sign) {
+    var next = Math.round((S.subDelay + sign * DELAY_STEP) * 100) / 100;
+    S.subDelay = Math.max(-DELAY_MAX, Math.min(DELAY_MAX, next));
+    player.setSubtitleDelay(S.subDelay);
+  }
+  function openSubtitleSettings() {
+    var items = [];
+    if (player.canStyleSubtitles) {
+      items.push({ kind: "cycle", getLabel: function () { return "Size: " + S.subStyle.size; }, onSelect: function () {
+        S.subStyle.size = SUB_SIZES[(SUB_SIZES.indexOf(S.subStyle.size) + 1) % SUB_SIZES.length];
+        saveSubStyle();
+      } });
+      items.push({ kind: "cycle", getLabel: function () { return "Background: " + backgroundName(); }, onSelect: function () {
+        var i = 0;
+        SUB_BACKGROUNDS.forEach(function (b, n) { if (b[0] === S.subStyle.background) { i = n; } });
+        S.subStyle.background = SUB_BACKGROUNDS[(i + 1) % SUB_BACKGROUNDS.length][0];
+        saveSubStyle();
+      } });
+      items.push({ kind: "cycle", getLabel: function () { return "Position: " + SUB_POSITIONS[S.subStyle.raise]; }, onSelect: function () {
+        S.subStyle.raise = (S.subStyle.raise + 1) % SUB_POSITIONS.length;
+        saveSubStyle();
+      } });
+    }
+    if (player.canDelaySubtitles) {
+      items.push({ kind: "stepper", name: "Delay", stepText: DELAY_STEP + " seconds",
+        getLabel: function () { return "Delay: " + formatDelay(S.subDelay); },
+        onStep: changeDelay });
+    }
+    openMenu("Subtitle settings", items);
+  }
+
+  /* ------------------------------------------------- find subtitles (D1, D2, D3) */
+
+  function openFinder() {
+    if (!S.stream) { return; }
+    NLSubtitles.open({
+      container: $("nl-subfind"),
+      itemId: itemId,
+      sourceId: S.sourceId,
+      tv: isTv,
+      onDownloaded: addDownloadedSubtitle,
+      onClose: function () {
+        showControls();
+        if (isTv) { $("nl-subs").focus(); }
+      }
+    });
+  }
+
+  function textTracksOf(stream) {
+    return (stream.subtitle_tracks || []).filter(function (t) { return t.kind === "text" && t.url; });
+  }
+  function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  // After Jellyfin saved a subtitle it takes a moment to list it: ask a few times for a text track we didn't have.
+  function findNewTrack(before, language, pos, attempt) {
+    return fetchPlay({ audio: S.audioIndex, subtitle: S.burnIndex >= 0 ? -1 : null, start: pos }).then(function (stream) {
+      var added = textTracksOf(stream).filter(function (t) { return before.indexOf(t.index) < 0; })[0];
+      if (!added && attempt + 1 >= SUB_POLL_TRIES) {
+        // Same language saved over an older file of ours: use that external track.
+        added = textTracksOf(stream).filter(function (t) { return t.is_external && t.language === language; }).pop();
+      }
+      if (added || attempt + 1 >= SUB_POLL_TRIES) { return { stream: stream, added: added || null }; }
+      return wait(SUB_POLL_MS).then(function () { return findNewTrack(before, language, pos, attempt + 1); });
+    });
+  }
+
+  // D3: the new track appears and is selected. On the web the video keeps playing (only the <track> elements are
+  // rebuilt). The TV player only reads side-loaded tracks when playback starts, so there the stream is started
+  // again at the same position with the new subtitle selected.
+  function addDownloadedSubtitle(result) {
+    var before = ((S.stream && S.stream.subtitle_tracks) || []).map(function (t) { return t.index; });
+    var pos = player.currentTime || 0;
+    var resume = !player.paused;
+    return findNewTrack(before, (result && result.language) || "", pos, 0).then(function (found) {
+      if (!found.added) {
+        throw new Error("Saved, but Jellyfin hasn’t listed it yet. Look in the Subtitles menu in a moment.");
+      }
+      if (isNative) {
+        S.textIndex = found.added.index;
+        stopReporting(false);
+        $("nl-buffering").hidden = false;
+        applyStream(found.stream, pos);
+        if (resume) { playNow(); }
+        toast("Subtitles: " + found.added.label);
+        return;
+      }
+      S.stream.subtitle_tracks = found.stream.subtitle_tracks;
+      renderTrackButtons();
+      applyTextTracks();
+      chooseSubtitle(found.added.index);
+    });
   }
 
   /* ----------------------------------------------------------- stream loading */
@@ -411,6 +585,7 @@
     renderTrackButtons();
     player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined });
     applyTextTracks();
+    applySubStyle();
   }
   // What the native player needs besides the stream (see the NorthernLightsNative contract in player-core.js).
   function nativeMeta(stream) {
@@ -428,7 +603,7 @@
   }
   function renderTrackButtons() {
     $("nl-audio").hidden = ((S.stream.audio_tracks || []).length < 2);
-    $("nl-subs").hidden = ((S.stream.subtitle_tracks || []).length < 1);
+    $("nl-subs").hidden = false;   // always there: "Find subtitles" lives in this menu
   }
   function playNow() {
     var p = player.play();
@@ -461,6 +636,7 @@
 
   function startFirst(opts) {
     opts = opts || {};
+    if (opts.fromNext) { S.subDelay = 0; player.setSubtitleDelay(0); }   // the delay belongs to one file
     hideError();
     $("nl-buffering").hidden = false;
     S.retry = function () { startFirst(opts); };
@@ -903,6 +1079,8 @@
   if (isFinite(savedVol)) { player.volume = savedVol; }
   player.muted = lsGet("nl.muted") === "1";
   renderSkip();
+  loadSubStyle();
+  applySubStyle();
   renderPlayState();
   renderProgress();
   $("nl-mute-icon").innerHTML = ICONS.vol;

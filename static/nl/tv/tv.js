@@ -166,7 +166,37 @@
     } else {
       actions.appendChild(button(t.played ? "Watch again" : "Play", t.play_href, true));
     }
+    var subNote = el("p", "tv-meta");
+    subNote.setAttribute("role", "status");
+    subNote.hidden = true;
+    if (t.media_type !== "tv" && window.NLSubtitles) {
+      // D4: fix a missing or out-of-sync subtitle before pressing play.
+      var find = el("button", "tv-btn", "Find subtitles");
+      find.type = "button";
+      find.setAttribute("data-nl-focus", "");
+      find.addEventListener("click", function () {
+        var host = document.getElementById("tv-subfind");
+        if (!host) {
+          host = el("div");
+          host.id = "tv-subfind";
+          host.hidden = true;
+          document.body.appendChild(host);
+        }
+        window.NLSubtitles.open({
+          container: host,
+          itemId: t.id,
+          tv: true,
+          onDownloaded: function () {
+            subNote.textContent = "Subtitles added. Pick them in the player’s Subtitles menu.";
+            subNote.hidden = false;
+          },
+          onClose: function () { window.NLFocus.focus(find); }
+        });
+      });
+      actions.appendChild(find);
+    }
     h.info.appendChild(actions);
+    h.info.appendChild(subNote);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = el("div", "tv-detail-progress");
       p.appendChild(NL.progressBar(t.progress));

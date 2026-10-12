@@ -1,6 +1,7 @@
 package app.northernlights.tv
 
 import android.app.Activity
+import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -18,7 +19,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.session.MediaSession
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.SubtitleView
 import org.json.JSONObject
 
 /**
@@ -42,6 +45,7 @@ class PlayerController(
     private var startedSent = false
     private var pendingSubtitleIndex: Int? = null
     private var ticks = 0
+    private var subtitleStyleJson: String? = null
 
     val isActive: Boolean get() = player != null
 
@@ -143,6 +147,7 @@ class PlayerController(
         exo.playWhenReady = true
 
         playerView.player = exo
+        subtitleStyleJson?.let { applySubtitleStyle(it) }
         session = MediaSession.Builder(activity, exo).setId("northern-lights-tv").build()
         player = exo
         playerView.visibility = View.VISIBLE
@@ -202,6 +207,55 @@ class PlayerController(
         }
     }
 
+    /**
+     * Bridge v3: size, background and position of the subtitles Media3 draws. Remembered, so it also applies
+     * to the next stream. Media3 1.5.1 has no subtitle delay, so there is none.
+     */
+    fun setSubtitleStyle(json: String) {
+        subtitleStyleJson = json
+        applySubtitleStyle(json)
+    }
+
+    private fun applySubtitleStyle(json: String) {
+        val o = try {
+            JSONObject(json)
+        } catch (e: Exception) {
+            return
+        }
+        val view = playerView.subtitleView ?: return
+        val scale = when (o.optString("size", "M")) {
+            "S" -> 0.8f
+            "L" -> 1.5f
+            "XL" -> 2.0f
+            else -> 1.15f
+        }
+        val boxColor = Color.argb(184, 0, 0, 0)
+        val background: Int
+        val edge: Int
+        when (o.optString("background", "box")) {
+            "none" -> {
+                background = Color.TRANSPARENT
+                edge = CaptionStyleCompat.EDGE_TYPE_NONE
+            }
+            "shadow" -> {
+                background = Color.TRANSPARENT
+                edge = CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW
+            }
+            else -> {
+                background = boxColor
+                edge = CaptionStyleCompat.EDGE_TYPE_NONE
+            }
+        }
+        val raise = o.optInt("raise", 0).coerceIn(0, 2)
+        view.setStyle(
+            CaptionStyleCompat(Color.WHITE, background, Color.TRANSPARENT, edge, Color.BLACK, null)
+        )
+        view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * scale)
+        view.setBottomPaddingFraction(
+            SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION + RAISE_STEP_FRACTION * raise
+        )
+    }
+
     private fun emit(type: String, message: String? = null) {
         val p = player
         val o = JSONObject()
@@ -253,6 +307,7 @@ class PlayerController(
         private const val PROGRESS_EVERY_TICKS = 20 // 20 x 500 ms = 10 s
         private const val SEEKED_DEBOUNCE_MS = 700L
         private const val SUB_ID_PREFIX = "nlsub"
+        private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
         private const val REBUFFER_MS = 2_000
     }

@@ -8,6 +8,10 @@
  *   p.volume (0..1, get/set); p.muted (get/set)
  *   p.setTextTracks([{id, label, language, url}])   // external WebVTT, all start hidden
  *   p.showTextTrack(id | null)                       // null = subtitles off
+ *   p.setSubtitleDelay(seconds)                      // web: shifts the shown track's cue times; p.subtitleDelay reads it
+ *   p.setSubtitleStyle({size: S|M|L|XL, background: none|shadow|box, raise: 0|1|2})
+ *   p.canStyleSubtitles / p.canDelaySubtitles        // false where the player can't (the TV app has no delay: Media3 1.5.1
+ *                                                    // has no subtitle offset; style needs bridge version 3)
  *   p.toggleFullscreen(containerElement); p.isFullscreen
  *   p.on("play"|"pause"|"timeupdate"|"ended"|"waiting"|"playing"|"loadedmetadata"|"seeking"|"seeked"
  *        |"volumechange"|"fullscreenchange"|"error", fn);
@@ -21,7 +25,7 @@
  *   Inside the Android TV app (window.NorthernLightsNative exists) create() returns the native
  *   adapter instead (same surface, see "native adapter" below); load() then also takes src.native.
  *   NLPlayerCore.isNative() tells which one you get; NLPlayerCore.nativeVersion() is the bridge version
- *   ("2": pause/resume/seekTo/setSubtitle + "time" events, the web controls work; "1": old app).
+ *   ("3": + setSubtitleStyle; "2": pause/resume/seekTo/setSubtitle + "time" events, the web controls work; "1": old app).
  */
 (function (global) {
   "use strict";
@@ -102,6 +106,12 @@
     var docHandlers = [];
     var pendingStart = 0;
     var trackEls = {};
+    var shownId = null;       // id of the text track being shown
+    var subDelay = 0;         // seconds added to every cue of the shown track (P16)
+    var cueLevel = 0;         // 0 normal, 1 raised, 2 high (P15)
+    var styleEl = null;
+    var CUE_LINES = [null, -3, -6];   // cue.line: negative counts lines up from the bottom
+    var CUE_SIZES = { S: 90, M: 115, L: 150, XL: 200 };   // percent of the browser's default cue size
 
     function emit(name, detail) {
       (listeners[name] || []).slice().forEach(function (fn) {
@@ -141,6 +151,48 @@
     var onIosEnd = function () { emit("fullscreenchange"); };
     video.addEventListener("webkitendfullscreen", onIosEnd);
     domHandlers.push(["webkitendfullscreen", onIosEnd]);
+
+    // Shift the cues of one track by the delay and put them on the chosen line. The original times
+    // are kept on the cue (_nlStart/_nlEnd), so repeated changes never drift.
+    function tune(track) {
+      if (!track || !track.cues) { return; }
+      var line = CUE_LINES[cueLevel];
+      for (var i = 0; i < track.cues.length; i++) {
+        var cue = track.cues[i];
+        if (cue._nlStart === undefined) { cue._nlStart = cue.startTime; cue._nlEnd = cue.endTime; }
+        cue.endTime = Math.max(0, cue._nlEnd + subDelay);
+        cue.startTime = Math.max(0, cue._nlStart + subDelay);
+        try {
+          if (line === null) {
+            if (cue._nlLined) { cue.line = "auto"; cue._nlLined = false; }
+          } else {
+            cue.snapToLines = true;
+            cue.line = line;
+            cue._nlLined = true;
+          }
+        } catch (e) { /* a browser that won't position cues */ }
+      }
+    }
+    // Browsers may switch on a subtitle track by themselves when <track> elements are added (Chrome does after we
+    // rebuild them for a new download). For a moment after we set the modes, put back what the page asked for.
+    var enforceUntil = 0;
+    function applyModes() {
+      Object.keys(trackEls).forEach(function (key) {
+        var el = trackEls[key];
+        if (!el.track) { return; }
+        var want = (shownId !== null && String(shownId) === key) ? "showing" : "disabled";
+        if (el.track.mode !== want) { el.track.mode = want; }
+      });
+    }
+    if (video.textTracks && video.textTracks.addEventListener) {
+      video.textTracks.addEventListener("change", function () {
+        if (Date.now() < enforceUntil) { applyModes(); }
+      });
+    }
+    function shownTrack() {
+      var el = shownId === null ? null : trackEls[String(shownId)];
+      return el && el.track ? el.track : null;
+    }
 
     function teardownHls() {
       if (hls) { hls.destroy(); hls = null; }
@@ -218,16 +270,41 @@
           el.label = t.label || "";
           if (t.language) { el.srclang = t.language.slice(0, 3); }
           el.src = t.url;
+          // The cues arrive after the track is first shown: shift/position them then.
+          el.addEventListener("load", function () { if (shownId !== null && String(shownId) === String(t.id)) { tune(el.track); } });
           video.appendChild(el);
           if (el.track) { el.track.mode = "disabled"; }
           trackEls[String(t.id)] = el;
         });
+        if (shownId !== null && !trackEls[String(shownId)]) { shownId = null; }
       },
       showTextTrack: function (id) {
-        Object.keys(trackEls).forEach(function (key) {
-          var el = trackEls[key];
-          if (el.track) { el.track.mode = (id !== null && String(id) === key) ? "showing" : "disabled"; }
-        });
+        shownId = id === null || id === undefined ? null : id;
+        enforceUntil = Date.now() + 1500;
+        applyModes();
+        tune(shownTrack());
+      },
+      canStyleSubtitles: true,
+      canDelaySubtitles: true,
+      get subtitleDelay() { return subDelay; },
+      setSubtitleDelay: function (seconds) {
+        subDelay = isFinite(seconds) ? seconds : 0;
+        tune(shownTrack());
+      },
+      setSubtitleStyle: function (style) {
+        style = style || {};
+        cueLevel = Math.max(0, Math.min(2, Number(style.raise) || 0));
+        var bg = style.background === "none" ? "background-color: transparent; text-shadow: none;"
+          : style.background === "shadow" ? "background-color: transparent; text-shadow: 0 0 3px #000, 0 0 6px #000, 1px 1px 3px #000;"
+          : "background-color: rgba(0, 0, 0, 0.72); text-shadow: none;";
+        var css = "video::cue { color: #fff; font-size: " + (CUE_SIZES[style.size] || CUE_SIZES.M) + "%; " + bg + " }";
+        if (!styleEl) {
+          styleEl = document.createElement("style");
+          styleEl.setAttribute("data-nl-cue-style", "");
+          document.head.appendChild(styleEl);
+        }
+        styleEl.textContent = css;
+        tune(shownTrack());
       },
 
       get isFullscreen() {
@@ -259,6 +336,7 @@
         domHandlers = [];
         docHandlers = [];
         listeners = {};
+        if (styleEl && styleEl.parentNode) { styleEl.parentNode.removeChild(styleEl); }
         video.removeAttribute("src");
         video.load();
       }
@@ -279,8 +357,10 @@
    *   NorthernLightsNative.pause() / resume()
    *   NorthernLightsNative.seekTo(seconds)  seeks inside the current stream (no restart)
    *   NorthernLightsNative.setSubtitle(i)   show the side-loaded text track with the page's index i, -1 = off
+   *   NorthernLightsNative.setSubtitleStyle(json)   (version 3) json = {size: S|M|L|XL, background: none|shadow|box,
+   *                                         raise: 0|1|2}; styles the subtitles Media3 draws (works before and during playback)
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
-   *   NorthernLightsNative.version()        "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *   NorthernLightsNative.version()        "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
    *                                         setSubtitle and with its own native controls: the web
    *                                         controls then stay hidden and seek() restarts the stream
    *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
@@ -309,6 +389,7 @@
 
   function createNative() {
     var v2 = Number(nativeVersion()) >= 2;
+    var v3 = Number(nativeVersion()) >= 3;
     var listeners = {};
     var pos = 0;
     var dur = 0;
@@ -481,7 +562,7 @@
 
     return {
       native: true,
-      nativeVersion: v2 ? 2 : 1,
+      nativeVersion: v3 ? 3 : (v2 ? 2 : 1),
       load: function (src) {
         lastSrc = src;
         dur = 0;
@@ -526,6 +607,14 @@
       setTextTracks: function () { /* the native player loads them from the play() json */ },
       showTextTrack: function (id) {
         if (v2) { call("setSubtitle", id === null || id === undefined ? -1 : Number(id)); }
+      },
+      // Media3 1.5.1 has no subtitle offset, so the TV offers no delay; style needs an app with bridge version 3.
+      canDelaySubtitles: false,
+      canStyleSubtitles: v3,
+      get subtitleDelay() { return 0; },
+      setSubtitleDelay: function () { /* unsupported on the TV */ },
+      setSubtitleStyle: function (style) {
+        if (v3) { call("setSubtitleStyle", JSON.stringify(style || {})); }
       },
       get isFullscreen() { return true; },
       toggleFullscreen: function () { /* always full screen */ },

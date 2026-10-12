@@ -9,7 +9,7 @@ One file per milestone. Each one has the goal, the features (IDs from `../ROADMA
 | [M02-browse.md](M02-browse.md) | M2 Browse like a real app | done |
 | [M03-tv-app.md](M03-tv-app.md) | M3 On the TV | in progress (web part done) |
 | [M04-whos-watching.md](M04-whos-watching.md) | M4 Who's watching | planned |
-| [M05-subtitles.md](M05-subtitles.md) | M5 Subtitles that fix themselves (switch-over point) | planned |
+| [M05-subtitles.md](M05-subtitles.md) | M5 Subtitles that fix themselves (switch-over point) | built (needs the OpenSubtitles plugin in Jellyfin; TV Kotlin not compiled yet) |
 | [M06-picks-for-two.md](M06-picks-for-two.md) | M6 Picks for two | planned |
 | [M07-polish.md](M07-polish.md) | M7 Polish | planned |
 | [M08-casting.md](M08-casting.md) | M8 Casting | planned |
