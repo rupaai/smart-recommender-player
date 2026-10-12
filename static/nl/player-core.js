@@ -12,12 +12,83 @@
  *   p.on("play"|"pause"|"timeupdate"|"ended"|"waiting"|"playing"|"loadedmetadata"|"seeking"|"seeked"
  *        |"volumechange"|"fullscreenchange"|"error", fn);
  *   p.destroy();
+ *
+ *   NLPlayerCore.capabilities(videoEl?) -> {video:[], audio:[], hls:[]}  codecs this browser can decode
+ *   (video h264|hevc|av1|vp9, audio aac|mp3|opus|flac|ac3|eac3); the page sends it so Jellyfin
+ *   copies what the device can play and only converts the rest.
+ *   Errors: {format, server, message}; server = the stream's HTTP 5xx (Jellyfin failed to convert).
  */
 (function (global) {
   "use strict";
 
   var EVENTS = ["play", "pause", "timeupdate", "ended", "waiting", "playing", "loadedmetadata",
     "seeking", "seeked", "volumechange"];
+
+  /* ------------------------------------------------------------- capability probe */
+
+  var VIDEO_PROBES = [ // plain-file playback: [token, canPlayType string]
+    ["h264", 'video/mp4; codecs="avc1.640028"'],
+    ["hevc", 'video/mp4; codecs="hvc1.2.4.L153.B0"'],
+    ["av1", 'video/mp4; codecs="av01.0.08M.10"'],
+    ["vp9", 'video/webm; codecs="vp09.00.10.08"']
+  ];
+  var AUDIO_PROBES = [
+    ["aac", 'audio/mp4; codecs="mp4a.40.2"'],
+    ["mp3", 'audio/mpeg'],
+    ["opus", 'audio/mp4; codecs="opus"'],
+    ["flac", 'audio/mp4; codecs="flac"'],
+    ["ac3", 'audio/mp4; codecs="ac-3"'],
+    ["eac3", 'audio/mp4; codecs="ec-3"']
+  ];
+  var HLS_PROBES = [ // fMP4 through MSE (what hls.js uses)
+    ["h264", 'video/mp4; codecs="avc1.640028"'],
+    ["hevc", 'video/mp4; codecs="hvc1.2.4.L153.B0"'],
+    ["av1", 'video/mp4; codecs="av01.0.08M.10"'],
+    ["aac", 'audio/mp4; codecs="mp4a.40.2"'],
+    ["mp3", 'audio/mp4; codecs="mp4a.69"'],
+    ["opus", 'audio/mp4; codecs="opus"'],
+    ["flac", 'audio/mp4; codecs="flac"'],
+    ["ac3", 'audio/mp4; codecs="ac-3"'],
+    ["eac3", 'audio/mp4; codecs="ec-3"']
+  ];
+  var VIDEO_TOKENS = ["h264", "hevc", "av1", "vp9"];
+
+  function capabilities(videoEl) {
+    var fallback = { video: ["h264"], audio: ["aac", "mp3"], hls: ["h264", "aac"] };
+    try {
+      var el = videoEl || document.createElement("video");
+      var canPlay = function (type) {
+        var r = el.canPlayType(type);
+        return r === "probably" || r === "maybe";
+      };
+      var out = { video: [], audio: [], hls: [] };
+      VIDEO_PROBES.forEach(function (p) { if (canPlay(p[1])) { out.video.push(p[0]); } });
+      AUDIO_PROBES.forEach(function (p) { if (canPlay(p[1])) { out.audio.push(p[0]); } });
+      if (out.audio.indexOf("mp3") < 0 && canPlay('audio/mp4; codecs="mp4a.69"')) { out.audio.push("mp3"); }
+      var MS = global.MediaSource || global.ManagedMediaSource;
+      if (MS && typeof MS.isTypeSupported === "function") {
+        HLS_PROBES.forEach(function (p) { if (MS.isTypeSupported(p[1])) { out.hls.push(p[0]); } });
+      } else if (canPlay("application/vnd.apple.mpegurl")) {
+        // Native HLS (Safari/iOS without MSE): trust the plain-file results.
+        out.video.forEach(function (c) { if (VIDEO_TOKENS.indexOf(c) >= 0 && c !== "vp9") { out.hls.push(c); } });
+        out.audio.forEach(function (c) { out.hls.push(c); });
+      }
+      return out;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function failFast(firstByteMs, loadMs) {
+    return {
+      default: {
+        maxTimeToFirstByteMs: firstByteMs,
+        maxLoadTimeMs: loadMs,
+        timeoutRetry: { maxNumRetry: 2, retryDelayMs: 0, maxRetryDelayMs: 0 },
+        errorRetry: { maxNumRetry: 2, retryDelayMs: 1000, maxRetryDelayMs: 4000 }
+      }
+    };
+  }
 
   function create(video) {
     var hls = null;
@@ -85,11 +156,20 @@
         pendingStart = src.startAt > 0 ? src.startAt : 0;
         if (src.kind === "hls") {
           if (global.Hls && global.Hls.isSupported()) {
-            hls = new global.Hls();
+            hls = new global.Hls({
+              // Give up quickly when Jellyfin's transcode fails (a 500 on every segment).
+              manifestLoadPolicy: failFast(10000, 20000),
+              playlistLoadPolicy: failFast(10000, 20000),
+              fragLoadPolicy: failFast(20000, 60000)
+            });
             hls.on(global.Hls.Events.ERROR, function (_evt, data) {
               if (data && data.fatal) {
+                var code = data.response && data.response.code;
+                var network = data.type === global.Hls.ErrorTypes.NETWORK_ERROR;
+                var server = network && code >= 500 && code < 600;
                 emit("error", {
                   format: data.type === global.Hls.ErrorTypes.MEDIA_ERROR,
+                  server: !!server,
                   message: "Streaming error (" + (data.details || data.type) + ")."
                 });
               }
@@ -180,5 +260,5 @@
     };
   }
 
-  global.NLPlayerCore = { create: create };
+  global.NLPlayerCore = { create: create, capabilities: capabilities };
 })(window);

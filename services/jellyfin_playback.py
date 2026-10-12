@@ -387,6 +387,7 @@ class JellyfinPlayback:
         audio_index: Optional[int] = None,
         subtitle_index: Optional[int] = None,
         start_seconds: float = 0.0,
+        profile: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         sources = item.get("sources") or []
         if not sources:
@@ -395,7 +396,7 @@ class JellyfinPlayback:
         if not jf_id:
             raise ItemNotFound("Jellyfin does not know this file yet.")
 
-        info = self.playback_info(jf_id, None, audio_index, subtitle_index, start_seconds)
+        info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds)
         media_sources = info.get("MediaSources") or []
         if info.get("ErrorCode") or not media_sources:
             raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
@@ -409,14 +410,14 @@ class JellyfinPlayback:
         )
         wants_burn_in = subtitle_index is not None and subtitle_index >= 0
         if (wants_other_audio or wants_burn_in) and not ms.get("TranscodingUrl"):
-            info = self.playback_info(jf_id, None, audio_index, subtitle_index, start_seconds, direct_play=False)
+            info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds, direct_play=False)
             media_sources = info.get("MediaSources") or []
             if info.get("ErrorCode") or not media_sources:
                 raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
             ms = media_sources[0]
             if not ms.get("TranscodingUrl"):
                 info = self.playback_info(
-                    jf_id, None, audio_index, subtitle_index, start_seconds, direct_play=False, direct_stream=False
+                    jf_id, profile, audio_index, subtitle_index, start_seconds, direct_play=False, direct_stream=False
                 )
                 media_sources = info.get("MediaSources") or []
                 if info.get("ErrorCode") or not media_sources:
@@ -465,6 +466,9 @@ class JellyfinPlayback:
             }
 
         ticks = ms.get("RunTimeTicks")
+        video_codec = next(
+            (st.get("Codec") for st in (ms.get("MediaStreams") or []) if st.get("Type") == "Video"), None
+        )
         return {
             "url": url,
             "kind": kind,
@@ -473,6 +477,7 @@ class JellyfinPlayback:
             "media_source_id": source_id,
             "jellyfin_id": jf_id,
             "container": ms.get("Container"),
+            "video_codec": video_codec,
             "duration_seconds": (ticks / _TICKS) if ticks else None,
             "title": title,
             "episode": episode,

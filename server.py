@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
+from services.device_profiles import browser_profile, parse_caps
 from services.jellyfin_playback import (
     ItemNotFound,
     JellyfinPlayback,
@@ -702,6 +703,7 @@ async def nl_play_info(
     audio: Optional[int] = Query(None, ge=0, description="Jellyfin audio stream index"),
     subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
     start: float = Query(0.0, ge=0, description="Start position in seconds"),
+    caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off."""
@@ -709,7 +711,8 @@ async def nl_play_info(
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
     try:
-        return await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start)
+        profile = browser_profile(parse_caps(caps))
+        return await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start, profile)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
