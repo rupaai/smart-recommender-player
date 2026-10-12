@@ -21,6 +21,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
@@ -130,8 +131,13 @@ class PlayerController(
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // The on-screen rewind / forward buttons use the same step as Left / Right.
+            .setSeekBackIncrementMs(req.skipSeconds * 1000L)
+            .setSeekForwardIncrementMs(req.skipSeconds * 1000L)
             .build()
         exo.addListener(listener)
+        // Land on the nearest keyframe: no decoding up to an exact frame, so seeks start sooner.
+        exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)
         if (req.subtitleIndex < 0) setSubtitlesOff(exo)
 
         val subConfigs = req.subtitleTracks

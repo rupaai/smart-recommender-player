@@ -132,7 +132,7 @@ svg .fill { fill: currentColor; stroke: none; }
 
 /* ---- TV (M3): ?tv=1 or inside the Android app. 1920x1080 is the design size (1rem = 16px there),
    text is at least 1.5rem, focus is a ring plus a glow, nothing needs a pointer. */
-html.tv { font-size: calc(min(100vw / 1920, 100vh / 1080) * 16px); }
+html.tv { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; }
 .nl-player.tv { --nl-tap: 5rem; font-size: 1.5rem; }
 .tv .nl-top, .tv .nl-bottom { padding-left: 5rem; padding-right: 5rem; }
 .tv .nl-top { padding-top: 3rem; gap: 1.5rem; }
