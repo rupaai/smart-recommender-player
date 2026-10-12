@@ -231,10 +231,11 @@ class NLBrowse:
             )
         except JellyfinUnavailable:
             return []
-        items = (data or {}).get("Items") or []
+        # Jellyfin keeps files it has not rescanned yet; a moved or deleted file is not resumable.
+        items = [i for i in (data or {}).get("Items") or [] if i.get("Path") and self.pb.file_exists(i["Path"])]
         by_path = self._by_path([i.get("Path") for i in items])
         self._remember(by_path, items)
-        return parse_resume(data, by_path)
+        return parse_resume({"Items": items}, by_path)
 
     def series_id(self, item: Dict[str, Any]) -> Optional[str]:
         """Jellyfin's series id for one of our shows (from any episode's SeriesId; remembered)."""

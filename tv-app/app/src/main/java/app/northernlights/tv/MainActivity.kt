@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
             audioList = findViewById<ListView>(R.id.list_audio),
             subtitleList = findViewById<ListView>(R.id.list_subs),
             skipList = findViewById<ListView>(R.id.list_skip),
+            hintText = findViewById(R.id.player_hint),
+            seekBadge = findViewById(R.id.seek_badge),
             sendEvent = { dispatchToPage(it) },
             onClosed = { webView.requestFocus() },
         )

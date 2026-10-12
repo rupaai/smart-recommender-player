@@ -45,6 +45,8 @@ class PlayerController(
     private val audioList: ListView,
     private val subtitleList: ListView,
     private val skipList: ListView,
+    private val hintText: TextView,
+    private val seekBadge: TextView,
     private val sendEvent: (JSONObject) -> Unit,
     private val onClosed: () -> Unit,
 ) {
@@ -121,7 +123,9 @@ class PlayerController(
             val seconds = SKIP_CHOICES.getOrNull(position) ?: return@setOnItemClickListener
             skipList.setItemChecked(position, true)
             activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY_SKIP, seconds).apply()
+            updateHint()
             closeMenu()
+            showBadge(activity.getString(R.string.seconds, seconds))
         }
     }
 
@@ -200,6 +204,7 @@ class PlayerController(
         titleText.text = req.title
         subtitleText.text = req.subtitle
         subtitleText.visibility = if (req.subtitle.isEmpty()) View.GONE else View.VISIBLE
+        updateHint()
 
         session = MediaSession.Builder(activity, exo).setId("northern-lights-tv").build()
         player = exo
@@ -220,6 +225,8 @@ class PlayerController(
         if (sendStopped) emit("stopped")
         handler.removeCallbacks(progressTick)
         handler.removeCallbacks(seekedTick)
+        handler.removeCallbacks(hideBadge)
+        seekBadge.visibility = View.GONE
         player = null
         playerView.keepScreenOn = false
         playerView.player = null
@@ -409,13 +416,35 @@ class PlayerController(
         var target = p.currentPosition + seconds.toLong() * multiplier * 1000L
         if (target < 0) target = 0
         if (dur != C.TIME_UNSET && dur > 0 && target > dur) target = dur
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastSeekAt > BADGE_MS || (seekDelta > 0) != (seconds > 0)) seekDelta = 0
+        lastSeekAt = now
+        seekDelta += (target - p.currentPosition) / 1000
+        showBadge((if (seekDelta < 0) "−" else "+") + kotlin.math.abs(seekDelta) + " s")
         p.seekTo(target)
         playerView.showController()
         handler.removeCallbacks(seekedTick)
         handler.postDelayed(seekedTick, SEEKED_DEBOUNCE_MS)
     }
 
+    private var seekDelta = 0L
+    private var lastSeekAt = 0L
+    private val hideBadge = Runnable { seekBadge.visibility = View.GONE }
+
+    /** A big "+10 s" / "−30 s" in the middle of the picture; repeated presses add up. */
+    private fun showBadge(text: String) {
+        seekBadge.text = text
+        seekBadge.visibility = View.VISIBLE
+        handler.removeCallbacks(hideBadge)
+        handler.postDelayed(hideBadge, BADGE_MS)
+    }
+
+    private fun updateHint() {
+        hintText.text = activity.getString(R.string.player_hint, skipSeconds())
+    }
+
     companion object {
+        private const val BADGE_MS = 1_200L
         private const val PROGRESS_MS = 10_000L
         private const val SEEKED_DEBOUNCE_MS = 700L
         private const val SUB_ID_PREFIX = "nlsub"
