@@ -3,7 +3,7 @@
 (function () {
   "use strict";
 
-  var SKIP_CHOICES = [10, 15, 30, 60];
+  var SKIP_CHOICES = [5, 10, 15, 30, 60];
   var HIDE_AFTER_MS = 3000;
   var TV_HIDE_AFTER_MS = 5000;
   var PROGRESS_EVERY_MS = 10000;

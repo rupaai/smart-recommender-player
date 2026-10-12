@@ -145,6 +145,22 @@
                 android:layout_height="0dp"
                 android:layout_weight="1"
                 android:divider="@null" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="@string/skip_length"
+                android:textColor="@color/aurora_green"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <ListView
+                android:id="@+id/list_skip"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:divider="@null" />
         </LinearLayout>
     </FrameLayout>
 </FrameLayout>
