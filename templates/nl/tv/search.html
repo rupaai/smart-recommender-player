@@ -1,0 +1,15 @@
+{% extends "nl/tv/base.html" %}
+{% block main %}
+  <section class="tv-section tv-search">
+    <h2>Search</h2>
+    <form id="tv-search-form" class="tv-search-form" role="search" autocomplete="off">
+      <div class="tv-search-row" data-nl-row="query">
+        <label class="tv-visually-hidden" for="tv-q">Search movies, shows and episodes</label>
+        <input id="tv-q" name="q" type="search" data-nl-focus data-nl-input readonly maxlength="100"
+               placeholder="Press OK to type" enterkeyhint="search" inputmode="search">
+      </div>
+    </form>
+    <p class="tv-hint" id="tv-search-hint">Press OK on the box to open the keyboard.</p>
+    <div id="tv-results"></div>
+  </section>
+{% endblock %}
