@@ -28,6 +28,8 @@ adb connect <tv-ip>:5555
 adb install -r app-debug.apk
 ```
 
+`-r` installs over the copy already on the TV and keeps its saved server address. Every build is signed with the committed `app/debug.keystore`, so updates always match. If adb says `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (a copy from before that key), run `adb uninstall app.northernlights.tv` once and install again.
+
 (Newer Google TV builds show a pairing code under Wireless debugging; use `adb pair <tv-ip>:<port>` first, then `adb connect`.)
 
 Alternative without a computer: install the "Downloader" app from the Play Store, allow it under Settings, Apps, Special app access, Install unknown apps, open it and enter the URL of the APK (for example a file served from the Mac), then install.
