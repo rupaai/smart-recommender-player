@@ -35,7 +35,7 @@ from services import verdicts as vd
 from services.taste_runtime import TasteRuntime
 from services.admin_api import build_router as build_admin_router
 from services.vibe_index import VibeIndex
-from services.vibe_popup import PopupSession, SessionStore, should_auto_ask
+from services.vibe_popup import PopupSession, SessionStore, should_auto_ask, skip_reason
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -141,6 +141,17 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def revalidate_static(request: Request, call_next):
+    """Phones (iOS Safari, home-screen apps) otherwise keep an old app.js for days,
+    since StaticFiles sends no Cache-Control. no-cache still allows the cheap
+    ETag check, so an unchanged file costs a 304."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
 
 
@@ -568,7 +579,10 @@ async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
         await asyncio.to_thread(popup.next_question)
     popup.done = popup.current is None
     popup_sessions.put(popup)
-    return await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
+    out = await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
+    if req.ask:
+        out["question_skipped"] = skip_reason(req.query, pool, popup.current is not None)
+    return out
 
 
 @app.post("/api/discover/answer")
@@ -639,7 +653,9 @@ async def feedback_stats() -> Dict[str, Any]:
 async def vibe_status() -> Dict[str, Any]:
     """Whether the vibe index (models/vibe/, built on the Mac) is loaded."""
     index = recommender_service.vibe_index
-    return index.status() if index else {"ready": False}
+    out = index.status() if index else {"ready": False}
+    out["mood_data"] = await asyncio.to_thread(db.get_mood_data_counts)
+    return out
 
 
 @app.get("/api/watch/current")

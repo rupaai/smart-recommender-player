@@ -139,10 +139,23 @@ def test_auto():
           vp.should_auto_ask("slow korean revenge thriller with a devastating ending please", pool))
 
 
+def test_skip_reason():
+    print("Why it didn't appear")
+    pool, bare = make_pool(), make_pool(facets=False)
+    check("asked: no reason", vp.skip_reason("cozy", pool, True) is None)
+    check("no results", vp.skip_reason("cozy", [], False) == "no_results")
+    check("no facets or tags: no_mood_data", vp.skip_reason("cozy", bare, False) == "no_mood_data")
+    check("bare pool never asks a question", vp.PopupSession(1, {}, bare).next_question() is None)
+    check("specific request", vp.skip_reason("slow korean revenge thriller with a devastating ending please",
+                                             pool[:3], False) == "specific_request")
+    check("otherwise nothing worth asking", vp.skip_reason("cozy", pool, False) == "nothing_to_ask")
+
+
 if __name__ == "__main__":
     test_bank()
     test_scoring()
     test_session()
     test_auto()
+    test_skip_reason()
     print(f"\n{'ALL PASSED' if not failures else f'{len(failures)} FAILED'}")
     sys.exit(1 if failures else 0)
