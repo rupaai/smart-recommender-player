@@ -563,7 +563,7 @@ def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str
 
 @app.post("/api/discover/start")
 async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
-    """First results plus, when the request is thin, the first question."""
+    """First results plus, when asking is on, the first question (always)."""
     page_size = req.top_n if req.top_n is not None else req.page_size
     kwargs = _recommend_kwargs(req, page_size)
     res = await asyncio.to_thread(recommender_service.recommend, **{**kwargs, "page": 1}, return_pool=True)
@@ -575,8 +575,8 @@ async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
     )
     popup = PopupSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
                          recommender_service.vibe_index)
-    if req.ask and pool and should_auto_ask(req.query, pool):
-        await asyncio.to_thread(popup.next_question)
+    if req.ask and pool:
+        await asyncio.to_thread(popup.next_question, force=True)
     popup.done = popup.current is None
     popup_sessions.put(popup)
     out = await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
