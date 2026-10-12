@@ -140,6 +140,7 @@ class DatabaseManager:
             self._migrate_v9_pairs(cursor)
             self._migrate_v10_season_ratings(cursor)
             self._migrate_v11_watch_later(cursor)
+            self._migrate_v12_nl_browse(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -691,6 +692,35 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 11;")
             print("[Database] Migration v11 applied: watch_later added, seeded profiles renamed.")
 
+    def _migrate_v12_nl_browse(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M2 (browse).
+
+          media_sources.jellyfin_id   Jellyfin's id for this file, cached so the browse
+                                      pages do not scan Jellyfin on every request
+                                      (filled lazily; re-checked when Jellyfin reports a
+                                      different id for the same path)
+          nl_show_prefs               per-show settings; for now autoplay of the next
+                                      episode (1 = on, the default, 0 = off)
+
+        Idempotent (user_version gate + column-exists check + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {row[1] for row in cursor.execute("PRAGMA table_info(media_sources);").fetchall()}
+        if "jellyfin_id" not in cols:
+            cursor.execute("ALTER TABLE media_sources ADD COLUMN jellyfin_id TEXT;")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_show_prefs (
+                media_item_id  INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
+                autoplay       INTEGER NOT NULL DEFAULT 1,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 12:
+            cursor.execute("PRAGMA user_version = 12;")
+            print("[Database] Migration v12 applied: media_sources.jellyfin_id, nl_show_prefs added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1148,11 +1178,19 @@ class DatabaseManager:
             return item
 
     def get_library_items(self, media_type: str = "movie") -> List[Dict[str, Any]]:
-        """Titles that have at least one source file, for the Northern Lights list."""
+        """Titles that have at least one source file, for the Northern Lights lists.
+
+        Besides the card fields it returns `added_at` (newest file) and, for shows,
+        `seasons` (distinct season numbers among the files)."""
         with self.get_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT mi.id, mi.title, mi.release_year AS year, mi.runtime, mi.poster_url
+                SELECT mi.id, mi.media_type, mi.title, mi.release_year AS year, mi.runtime, mi.poster_url,
+                       (SELECT MAX(ms.created_at) FROM media_sources ms WHERE ms.media_item_id = mi.id) AS added_at,
+                       (SELECT COUNT(DISTINCT ms.season_number) FROM media_sources ms
+                         WHERE ms.media_item_id = mi.id AND ms.season_number IS NOT NULL) AS seasons,
+                       (SELECT ms.jellyfin_id FROM media_sources ms
+                         WHERE ms.media_item_id = mi.id AND ms.jellyfin_id IS NOT NULL LIMIT 1) AS jellyfin_id
                 FROM media_items mi
                 WHERE mi.media_type = ?
                   AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id)
@@ -1161,6 +1199,94 @@ class DatabaseManager:
                 (media_type,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # --- Northern Lights browse (schema v12) -------------------------------------
+
+    def get_nl_title(self, item_id: int) -> Optional[Dict[str, Any]]:
+        """One title for the details page: the catalogue row, its source files in
+        season/episode order, and when the newest file arrived. None if it has no file."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM media_items WHERE id = ?;", (item_id,)).fetchone()
+            if not row:
+                return None
+            item = dict(row)
+            sources = conn.execute(
+                "SELECT * FROM media_sources WHERE media_item_id = ? "
+                "ORDER BY COALESCE(season_number, 0), COALESCE(episode_number, 0), id;",
+                (item_id,),
+            ).fetchall()
+            item["sources"] = [dict(s) for s in sources]
+            if not item["sources"]:
+                return None
+            item["added_at"] = max((s["created_at"] or "") for s in item["sources"]) or None
+            return item
+
+    def get_sources_by_paths(self, paths: List[str]) -> Dict[str, Dict[str, Any]]:
+        """{file_path: source row + media_type/title of its item} for the exact paths given."""
+        paths = [p for p in dict.fromkeys(paths) if p]
+        out: Dict[str, Dict[str, Any]] = {}
+        with self.get_connection() as conn:
+            for i in range(0, len(paths), 400):
+                chunk = paths[i:i + 400]
+                marks = ",".join("?" * len(chunk))
+                for r in conn.execute(
+                    f"""
+                    SELECT ms.id AS source_id, ms.media_item_id, ms.file_path, ms.season_number,
+                           ms.episode_number, ms.jellyfin_id, mi.media_type, mi.title, mi.runtime,
+                           mi.release_year AS year, mi.poster_url
+                    FROM media_sources ms JOIN media_items mi ON mi.id = ms.media_item_id
+                    WHERE ms.file_path IN ({marks});
+                    """,
+                    chunk,
+                ).fetchall():
+                    out[r["file_path"]] = dict(r)
+        return out
+
+    def get_source(self, source_id: int, media_item_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """One media_sources row; when media_item_id is given it must belong to that item."""
+        with self.get_connection() as conn:
+            if media_item_id is None:
+                row = conn.execute("SELECT * FROM media_sources WHERE id = ?;", (source_id,)).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM media_sources WHERE id = ? AND media_item_id = ?;", (source_id, media_item_id)
+                ).fetchone()
+            return dict(row) if row else None
+
+    def set_jellyfin_ids(self, ids: Dict[int, str]) -> int:
+        """Caches {media_sources.id: jellyfin id}. Only rows whose value changes are written."""
+        changed = 0
+        with self.get_connection() as conn:
+            for source_id, jf_id in ids.items():
+                cur = conn.execute(
+                    "UPDATE media_sources SET jellyfin_id = ? WHERE id = ? AND COALESCE(jellyfin_id, '') != ?;",
+                    (jf_id, source_id, jf_id),
+                )
+                changed += cur.rowcount
+        return changed
+
+    def get_show_autoplay(self, media_item_id: int) -> bool:
+        """Autoplay of the next episode for this show; on unless it was switched off."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT autoplay FROM nl_show_prefs WHERE media_item_id = ?;", (media_item_id,)
+            ).fetchone()
+        return True if row is None else bool(row["autoplay"])
+
+    def set_show_autoplay(self, media_item_id: int, autoplay: bool) -> bool:
+        """Stores the per-show autoplay setting. Raises ValueError if the title is not a show."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row or row["media_type"] != "tv":
+                raise ValueError("autoplay is a setting for TV shows")
+            conn.execute(
+                """
+                INSERT INTO nl_show_prefs (media_item_id, autoplay, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(media_item_id) DO UPDATE SET autoplay = excluded.autoplay, updated_at = CURRENT_TIMESTAMP;
+                """,
+                (media_item_id, 1 if autoplay else 0),
+            )
+        return bool(autoplay)
 
     def get_candidates(
         self,

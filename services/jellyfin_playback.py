@@ -17,6 +17,7 @@ import os
 import posixpath
 import re
 import threading
+import time
 from typing import Any, Dict, Optional
 from urllib.parse import unquote
 
@@ -27,6 +28,8 @@ PROXY_PREFIX = "/nl/jf/"
 MAX_STREAMING_BITRATE = 20_000_000
 _KEY_PARAMS = {"api_key", "apikey", "x-emby-token"}
 _URI_ATTR = re.compile(r'URI="([^"]*)"')
+# Read-only artwork: Items/<id>/Images/<kind>[/<index>] and nothing else under Items/ (M2).
+_IMAGE_PATH = re.compile(r"^Items/[A-Za-z0-9-]{1,64}/Images/(Primary|Backdrop|Thumb|Logo|Banner)(/[0-9]{1,2})?$")
 
 
 class JellyfinUnavailable(Exception):
@@ -77,7 +80,8 @@ def rewrite_playlist(text: str) -> str:
 def safe_proxy_path(path: str) -> Optional[str]:
     """Return the path if the proxy may forward it, else None.
 
-    Only paths under videos/ or Videos/ pass. Anything with '..' (also percent-encoded,
+    Only paths under videos/ or Videos/ pass, plus artwork (Items/<id>/Images/<kind>[/<n>],
+    GET only; the proxy route has no other method). Anything with '..' (also percent-encoded,
     or double-encoded), backslashes, control characters or empty segments is refused.
     """
     decoded = path
@@ -96,9 +100,15 @@ def safe_proxy_path(path: str) -> Optional[str]:
         return None
     if posixpath.normpath(decoded) != decoded.rstrip("/"):
         return None
-    if not (decoded.startswith("videos/") or decoded.startswith("Videos/")):
-        return None
-    return path
+    if decoded.startswith("videos/") or decoded.startswith("Videos/"):
+        return path
+    if decoded == path and _IMAGE_PATH.match(path):  # artwork ids are plain, never percent-encoded
+        return path
+    return None
+
+
+def is_image_path(path: str) -> bool:
+    return bool(_IMAGE_PATH.match(path))
 
 
 def proxy_url(jellyfin_path: str) -> str:
@@ -240,6 +250,7 @@ class JellyfinPlayback:
         self._ids: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._resolved_user: Optional[str] = None
+        self._last_refresh = 0.0
 
     def _require(self) -> None:
         if not self.jf.configured or not self.jf.user_id:
@@ -294,6 +305,17 @@ class JellyfinPlayback:
         self._ids = {
             it["Path"]: it["Id"] for it in (data.get("Items") or []) if it.get("Path") and it.get("Id")
         }
+        self._last_refresh = time.monotonic()
+
+    def known_ids(self, paths: Any, max_age: float = 60.0) -> Dict[str, str]:
+        """{path: Jellyfin id} for the given paths. One library scan at most per `max_age`
+        seconds, and only when a path is missing from the cache (a file Jellyfin does not
+        know must not cause a scan on every page view)."""
+        paths = list(paths)
+        with self._lock:
+            if any(p not in self._ids for p in paths) and time.monotonic() - self._last_refresh >= max_age:
+                self._refresh_ids()
+            return {p: self._ids[p] for p in paths if p in self._ids}
 
     def find_item_id(self, file_path: str) -> Optional[str]:
         """Jellyfin id for one of our file paths, or None. Refreshes the cache once on a miss."""

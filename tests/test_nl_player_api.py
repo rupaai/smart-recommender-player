@@ -294,19 +294,20 @@ def run(tmp):
     r = client.get("/api/nl/library?type=movie")
     items = r.json()["items"]
     check("only titles with a file, sorted by title", [i["title"] for i in items] == ["alpha", "Beta"], items)
-    check("fields: id, title, year, runtime, poster_url", items[1] == {"id": 2, "title": "Beta", "year": 2021, "runtime": 95,
-                                                                        "poster_url": "https://img.test/b.jpg"}, items[1])
+    check("card fields: id, title, year, runtime, poster_url, href",
+          all(items[1].get(k) == v for k, v in {"id": 2, "title": "Beta", "year": 2021, "runtime": 95,
+                                                "poster_url": "https://img.test/b.jpg", "href": "/nl/title/2"}.items()), items[1])
     check("default type is movie", client.get("/api/nl/library").json() == r.json())
     check("bad type is 422", client.get("/api/nl/library?type=x").status_code == 422)
 
     # ---- pages
     print("pages")
     r = client.get("/nl/")
-    check("/nl/ serves the list page", r.status_code == 200 and "library.js" in r.text and SECRET not in r.text, r.status_code)
+    check("/nl/ serves the home page", r.status_code == 200 and "home.js" in r.text and SECRET not in r.text, r.status_code)
     r = client.get("/nl/play/1")
     check("player page has the controls and no native controls attribute",
           r.status_code == 200 and "nl-seek" in r.text and "player.js" in r.text and "<video id=\"nl-video\" playsinline>" in r.text, r.text[:200])
-    for f in ("player.js", "player.css", "player-core.js", "library.js", "library.css"):
+    for f in ("player.js", "player.css", "player-core.js", "nl.js", "nl.css"):
         check(f"static/nl/{f} served", client.get(f"/static/nl/{f}").status_code == 200)
 
     # ---- S4: Jellyfin down -> 503 with a plain message (the page shows "Is mars on?")

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e8e6e1">
+  <title>{% block title %}Northern Lights{% endblock %}</title>
+  <link rel="stylesheet" href="/static/nl/nl.css">
+</head>
+<body class="nl-page-{{ active or 'other' }}">
+  <header class="nl-bar">
+    <div class="nl-bar-inner">
+      <a class="nl-brand" href="/nl/" aria-label="Northern Lights home">Northern Lights</a>
+      <nav class="nl-nav" aria-label="Sections">
+        <a href="/nl/"{% if active == 'home' %} aria-current="page"{% endif %}>Home</a>
+        <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
+        <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
+      </nav>
+      <form class="nl-search" id="nl-search-form" role="search" autocomplete="off">
+        <label class="nl-visually-hidden" for="nl-q">Search movies, shows and episodes</label>
+        <input id="nl-q" name="q" type="search" placeholder="Search movies, shows, episodes" enterkeyhint="search"
+               aria-controls="nl-results" aria-expanded="false" maxlength="100">
+      </form>
+    </div>
+    <span class="nl-foil" aria-hidden="true"></span>
+    <div id="nl-results" class="nl-results" hidden></div>
+  </header>
+
+  <main id="nl-main">
+    {% block main %}{% endblock %}
+  </main>
+
+  <nav class="nl-tabbar" aria-label="Sections">
+    <a href="/nl/"{% if active == 'home' %} aria-current="page"{% endif %}>Home</a>
+    <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
+    <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
+  </nav>
+
+  <script src="/static/nl/nl.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

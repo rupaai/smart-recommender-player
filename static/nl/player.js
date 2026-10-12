@@ -16,6 +16,9 @@
   var root = $("nl-player");
   var video = $("nl-video");
   var itemId = document.body.getAttribute("data-item-id");
+  var query = new URLSearchParams(window.location.search);
+  var urlSource = Number(query.get("source")) || null;   // which episode of a show (media_sources.id)
+  var urlResume = query.get("resume");                    // "1" resume, "0" start over: skip the prompt
   var player = NLPlayerCore.create(video);
 
   var S = {
@@ -35,7 +38,9 @@
     progressTimer: null,
     hideTimer: null,
     toastTimer: null,
-    menuOpen: false
+    menuOpen: false,
+    sourceId: urlSource,  // episode being played (null for a movie, or a show's first file)
+    backHref: "/nl/"
   };
 
   /* ---------------------------------------------------------- small helpers */
@@ -344,6 +349,7 @@
     if (params.audio !== undefined && params.audio !== null) { qs.push("audio=" + encodeURIComponent(params.audio)); }
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
+    if (S.sourceId) { qs.push("source=" + encodeURIComponent(S.sourceId)); }
     var url = "/api/nl/play/" + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
     return fetch(url).then(function (resp) {
       return resp.json().catch(function () { return {}; }).then(function (body) {
@@ -405,13 +411,17 @@
     });
   }
 
-  function startFirst() {
+  function startFirst(opts) {
+    opts = opts || {};
     hideError();
     $("nl-buffering").hidden = false;
-    S.retry = startFirst;
+    S.retry = function () { startFirst(opts); };
     fetchPlay({ start: 0 }).then(function (stream) {
       document.title = (stream.title ? stream.title + " - " : "") + "Northern Lights";
       $("nl-title").textContent = stream.title || "";
+      if (stream.source_id) { S.sourceId = stream.media_type === "tv" ? stream.source_id : null; }
+      S.backHref = (stream.media_type === "tv" ? "/nl/show/" : "/nl/title/") + encodeURIComponent(itemId);
+      $("nl-error-back").setAttribute("href", S.backHref);
       var ep = stream.episode;
       if (ep && (ep.season || ep.episode || ep.name)) {
         var bits = [];
@@ -420,10 +430,18 @@
         if (ep.name) { bits.push(ep.name); }
         $("nl-episode").textContent = bits.join(" · ");
         $("nl-episode").hidden = false;
+      } else {
+        $("nl-episode").hidden = true;
       }
       $("nl-buffering").hidden = true;
       var resumeAt = stream.resume_seconds || 0;
-      if (resumeAt > 30 && !stream.played) {
+      var choice = urlResume;
+      urlResume = null;                      // the link only decides the first load
+      if (choice === "0") {
+        begin(stream, 0);
+      } else if (choice === "1" && resumeAt > 0 && !stream.played) {
+        begin(stream, resumeAt);
+      } else if (resumeAt > 30 && !stream.played) {
         $("nl-resume-name").textContent = stream.title || "";
         $("nl-resume-yes").textContent = "Resume from " + fmt(resumeAt);
         $("nl-resume").hidden = false;
@@ -500,7 +518,7 @@
 
   function leave() {
     stopReporting(true);
-    window.location.href = "/nl/";
+    window.location.href = S.backHref;
   }
   window.addEventListener("pagehide", function () { stopReporting(true); });
   document.addEventListener("visibilitychange", function () {

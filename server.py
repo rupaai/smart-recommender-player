@@ -34,12 +34,14 @@ from services.jellyfin_playback import (
     JellyfinPlayback,
     JellyfinUnavailable,
     NotPlayable,
+    is_image_path,
     rewrite_playlist,
     safe_proxy_path,
     valid_jellyfin_id,
     strip_api_key,
 )
 from services.jellyfin_service import JellyfinService
+from services.nl_browse import NLBrowse
 from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
@@ -116,6 +118,7 @@ torrent_downloader = TorrentDownloader(config, db_manager=db)
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
 jellyfin_playback = JellyfinPlayback(jellyfin_service)  # Northern Lights player (M0)
+nl_browse = NLBrowse(db, jellyfin_playback)  # Northern Lights browse (M2); search is wired in below
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -704,26 +707,38 @@ async def nl_play_info(
     subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
     start: float = Query(0.0, ge=0, description="Start position in seconds"),
     caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off."""
-    item = db.get_item_by_id(item_id)
+    item = db.get_nl_title(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
+    chosen = item["sources"][0]
+    if source is not None:
+        chosen = next((s for s in item["sources"] if s["id"] == source), None)
+        if chosen is None:
+            raise HTTPException(status_code=404, detail="That episode isn't in the library.")
+    item = {**item, "sources": [chosen]}
     try:
         profile = browser_profile(parse_caps(caps))
-        return await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start, profile)
+        info = await asyncio.to_thread(jellyfin_playback.stream_for, item, audio, subtitle, start, profile)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except NotPlayable as e:
         raise HTTPException(status_code=415, detail=str(e))
+    info["media_item_id"] = item_id
+    info["media_type"] = item.get("media_type") or "movie"
+    info["source_id"] = chosen["id"]
+    return info
 
 
 @app.get("/nl/jf/{path:path}")
 async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
-    """Streams Jellyfin video and HLS through our app. Only videos/ paths; the API key stays here."""
+    """Streams Jellyfin video, HLS and artwork (Items/<id>/Images/...) through our app. GET only,
+    allowlisted paths only; the API key stays here."""
     clean = safe_proxy_path(path)
     if clean is None:
         raise HTTPException(status_code=404, detail="Not found.")
@@ -766,6 +781,8 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
         )
 
     out_headers = {k: v for k, v in upstream.headers.items() if k.lower() in _PROXY_RESPONSE_HEADERS}
+    if is_image_path(clean) and upstream.status_code == 200:
+        out_headers["Cache-Control"] = "private, max-age=86400"
 
     async def body_iter():
         try:
@@ -827,15 +844,70 @@ async def nl_mark_unplayed(jellyfin_id: str) -> Dict[str, Any]:
 
 @app.get("/api/nl/library")
 async def nl_library(type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
-    """Titles that have a file on disk: the bare list on /nl/ (M2 replaces it)."""
-    items = await asyncio.to_thread(db.get_library_items, type)
+    """Cards for every movie or show that has a file. Movies partly watched carry a progress
+    bar, the latest additions a "New" badge. Works with Jellyfin down (no progress then)."""
+    items = await asyncio.to_thread(nl_browse.library, type)
     return {"items": items}
+
+
+@app.get("/api/nl/home")
+async def nl_home_data() -> Dict[str, Any]:
+    """Home: Continue Watching (Jellyfin Resume) plus the newest movies and shows."""
+    return await asyncio.to_thread(nl_browse.home)
+
+
+@app.get("/api/nl/title/{item_id}")
+async def nl_title_data(item_id: int) -> Dict[str, Any]:
+    data = await asyncio.to_thread(nl_browse.title, item_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    return data
+
+
+@app.get("/api/nl/show/{item_id}")
+async def nl_show_data(item_id: int) -> Dict[str, Any]:
+    """A show's seasons and episodes with watched state, and its Next up episode."""
+    data = await asyncio.to_thread(nl_browse.show, item_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="That show isn't in the library.")
+    return data
+
+
+@app.get("/api/nl/search")
+async def nl_search(q: str = Query("", max_length=100), limit: int = Query(20, ge=1, le=40)) -> Dict[str, Any]:
+    """Movies, shows and episodes matching the text. Each result is Ready (in the library,
+    with a link) or Not in library yet (with a link to the Download tab of the main app)."""
+    results = await asyncio.to_thread(nl_browse.search, q, limit)
+    return {"query": q, "results": results}
 
 
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
-    """Bare poster grid of the movies we can play."""
-    return templates.TemplateResponse(request=request, name="nl/library.html", context={})
+    return templates.TemplateResponse(request=request, name="nl/home.html", context={"active": "home"})
+
+
+@app.get("/nl/movies", response_class=HTMLResponse)
+async def nl_movies_page(request: Request) -> Any:
+    return templates.TemplateResponse(
+        request=request, name="nl/browse.html", context={"active": "movies", "kind": "movie", "heading": "Movies"}
+    )
+
+
+@app.get("/nl/shows", response_class=HTMLResponse)
+async def nl_shows_page(request: Request) -> Any:
+    return templates.TemplateResponse(
+        request=request, name="nl/browse.html", context={"active": "shows", "kind": "tv", "heading": "Shows"}
+    )
+
+
+@app.get("/nl/title/{item_id}", response_class=HTMLResponse)
+async def nl_title_page(item_id: int, request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/title.html", context={"active": "", "item_id": item_id})
+
+
+@app.get("/nl/show/{item_id}", response_class=HTMLResponse)
+async def nl_show_page(item_id: int, request: Request) -> Any:
+    return templates.TemplateResponse(request=request, name="nl/show.html", context={"active": "shows", "item_id": item_id})
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
@@ -1242,6 +1314,7 @@ async def get_inferred_rating_queue(
 
 
 catalogue_search = CatalogueSearch(db)
+nl_browse.catalogue = catalogue_search
 
 
 def _with_co_view(item: Dict[str, Any]) -> Dict[str, Any]:
