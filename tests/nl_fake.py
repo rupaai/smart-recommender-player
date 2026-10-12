@@ -167,7 +167,7 @@ def boot(tmp):
     svc.session = fake
     server.jellyfin_playback._ids = {}
     server.jellyfin_playback._resolved_user = None
-    server.jellyfin_playback._last_refresh = 0.0
+    server.jellyfin_playback._last_refresh = None
     ids = {}
     with db.get_connection() as conn:
         for r in conn.execute("SELECT id, title FROM media_items"):

@@ -346,7 +346,7 @@ def run(tmp):
     print("known_ids: no scan storm")
     pb = ctx["server"].jellyfin_playback
     pb._ids = {}
-    pb._last_refresh = 0.0
+    pb._last_refresh = None
     fake.scans = 0
     pb.known_ids(["/nope.mkv"])
     pb.known_ids(["/nope.mkv"])

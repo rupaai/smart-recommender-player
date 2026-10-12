@@ -250,7 +250,7 @@ class JellyfinPlayback:
         self._ids: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._resolved_user: Optional[str] = None
-        self._last_refresh = 0.0
+        self._last_refresh: Optional[float] = None  # never scanned
 
     def _require(self) -> None:
         if not self.jf.configured or not self.jf.user_id:
@@ -313,7 +313,9 @@ class JellyfinPlayback:
         know must not cause a scan on every page view)."""
         paths = list(paths)
         with self._lock:
-            if any(p not in self._ids for p in paths) and time.monotonic() - self._last_refresh >= max_age:
+            if any(p not in self._ids for p in paths) and (
+                self._last_refresh is None or time.monotonic() - self._last_refresh >= max_age
+            ):
                 self._refresh_ids()
             return {p: self._ids[p] for p in paths if p in self._ids}
 
