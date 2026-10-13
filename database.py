@@ -142,6 +142,7 @@ class DatabaseManager:
             self._migrate_v11_watch_later(cursor)
             self._migrate_v12_nl_browse(cursor)
             self._migrate_v13_nl_people(cursor)
+            self._migrate_v14_nl_picks(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -749,6 +750,37 @@ class DatabaseManager:
         if version < 13:
             cursor.execute("PRAGMA user_version = 13;")
             print("[Database] Migration v13 applied: nl_person_prefs added.")
+
+    def _migrate_v14_nl_picks(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M6 (picks for two).
+
+          watch_later.owner_profile_id   NULL = on the shared watchlist (everyone sees it, the
+                                         default and what every pre-M6 row is); a profile id =
+                                         "Just me": only that person sees it.
+          nl_interest                    yes / maybe / pass per person per title. "Both said yes"
+                                         floats to the top of the watchlist and feeds the picks.
+
+        Idempotent (user_version gate + column-exists check + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {row[1] for row in cursor.execute("PRAGMA table_info(watch_later);").fetchall()}
+        if "owner_profile_id" not in cols:
+            cursor.execute("ALTER TABLE watch_later ADD COLUMN owner_profile_id INTEGER;")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_interest (
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                profile_id     INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                state          TEXT NOT NULL CHECK (state IN ('yes', 'maybe', 'pass')),
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_item_id, profile_id)
+            );
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_nl_interest_profile ON nl_interest(profile_id, state);")
+        if version < 14:
+            cursor.execute("PRAGMA user_version = 14;")
+            print("[Database] Migration v14 applied: watch_later.owner_profile_id, nl_interest added.")
 
     def register_source_file(
         self,
@@ -1772,9 +1804,24 @@ class DatabaseManager:
     # Watch later (shared list, one row per person per title)
     # ------------------------------------------------------------------
 
-    def _watch_later_entry(self, cursor: sqlite3.Cursor, media_item_id: int) -> Optional[Dict[str, Any]]:
-        """Builds the grouped list entry for one title (all people), or None."""
-        entries = self._watch_later_entries(cursor, "wl.media_item_id = ?", (media_item_id,), include_done=True)
+    @staticmethod
+    def _wl_visible(personal_of: Optional[List[int]]) -> Tuple[str, list]:
+        """SQL for which watch_later rows a reader may see: the shared ones (owner NULL) and, when
+        `personal_of` names profiles, those profiles' "Just me" rows. None / [] = shared only, which
+        is all the pre-M6 UI ever sees."""
+        ids = [int(i) for i in (personal_of or [])]
+        if not ids:
+            return "wl.owner_profile_id IS NULL", []
+        return f"(wl.owner_profile_id IS NULL OR wl.owner_profile_id IN ({','.join('?' * len(ids))}))", ids
+
+    def _watch_later_entry(
+        self, cursor: sqlite3.Cursor, media_item_id: int, personal_of: Optional[List[int]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Builds the grouped list entry for one title (all visible people), or None."""
+        vis, vparams = self._wl_visible(personal_of)
+        entries = self._watch_later_entries(
+            cursor, f"wl.media_item_id = ? AND {vis}", (media_item_id, *vparams), include_done=True
+        )
         return entries[0] if entries else None
 
     def _watch_later_entries(
@@ -1783,7 +1830,7 @@ class DatabaseManager:
         """Groups watch_later rows (filtered by `where`) into one entry per title."""
         rows = cursor.execute(
             f"""
-            SELECT wl.media_item_id, wl.profile_id, wl.added_at, wl.done_at, wl.done_reason,
+            SELECT wl.media_item_id, wl.profile_id, wl.added_at, wl.done_at, wl.done_reason, wl.owner_profile_id,
                    p.name AS profile_name,
                    m.title, m.release_year, m.media_type, m.poster_url, m.genres,
                    m.runtime, m.rating, m.overview,
@@ -1818,11 +1865,15 @@ class DatabaseManager:
                     "first_added_at": r["added_at"],
                     "done_at": r["done_at"],
                     "done_reason": r["done_reason"],
+                    "personal": r["owner_profile_id"] is not None,
+                    "owner_profile_id": r["owner_profile_id"],
                     "_all_done": True,
                 }
             e["added_by"].append(
                 {"profile_id": r["profile_id"], "name": r["profile_name"], "added_at": r["added_at"]}
             )
+            if r["owner_profile_id"] is None:
+                e["personal"], e["owner_profile_id"] = False, None   # any shared row makes the title shared
             if r["added_at"] and (not e["first_added_at"] or r["added_at"] < e["first_added_at"]):
                 e["first_added_at"] = r["added_at"]
             if r["done_at"] is None:
@@ -1842,24 +1893,37 @@ class DatabaseManager:
         out.sort(key=lambda e: (max(a["added_at"] or "" for a in e["added_by"]), e["media_item_id"]), reverse=True)
         return out
 
-    def add_to_watch_later(self, media_item_id: int, profile_id: int) -> Dict[str, Any]:
-        """Adds a title to the shared list for one person (reopens it if already done)."""
+    def add_to_watch_later(
+        self, media_item_id: int, profile_id: int, owner_profile_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Adds a title to the list for one person (reopens it if already done).
+
+        Shared by default. `owner_profile_id` makes it "Just me": only that person sees it. Adding
+        a title shared that the person had kept to themselves shares it; adding "Just me" what is
+        already shared leaves it shared."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             if not cursor.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
                 raise ValueError(f"Unknown media_item_id {media_item_id}")
             if not cursor.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
                 raise ValueError(f"Unknown profile_id {profile_id}")
+            if owner_profile_id is not None and owner_profile_id != profile_id:
+                raise ValueError("A 'Just me' add belongs to the person who adds it")
             cursor.execute(
                 """
-                INSERT INTO watch_later (media_item_id, profile_id) VALUES (?, ?)
+                INSERT INTO watch_later (media_item_id, profile_id, owner_profile_id) VALUES (?, ?, ?)
                 ON CONFLICT(media_item_id, profile_id) DO UPDATE SET
-                    added_at = CURRENT_TIMESTAMP, done_at = NULL, done_reason = NULL
-                WHERE watch_later.done_at IS NOT NULL;
+                    added_at = CASE WHEN watch_later.done_at IS NOT NULL THEN CURRENT_TIMESTAMP ELSE watch_later.added_at END,
+                    done_at = NULL,
+                    done_reason = NULL,
+                    owner_profile_id = CASE WHEN excluded.owner_profile_id IS NULL THEN NULL
+                                            ELSE watch_later.owner_profile_id END;
                 """,
-                (media_item_id, profile_id),
+                (media_item_id, profile_id, owner_profile_id),
             )
-            return self._watch_later_entry(cursor, media_item_id)
+            return self._watch_later_entry(
+                cursor, media_item_id, [owner_profile_id] if owner_profile_id is not None else None
+            )
 
     def remove_from_watch_later(self, media_item_id: int, profile_id: int) -> bool:
         """Deletes one person's row for a title; True when a row was removed."""
@@ -1875,9 +1939,14 @@ class DatabaseManager:
         include_done: bool = False,
         media_type: Optional[str] = None,
         added_by: Optional[int] = None,
+        personal_of: Optional[List[int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Lists the shared list grouped by title, newest add first; done titles only if asked."""
-        clauses, params = ["1=1"], []
+        """Lists the shared list grouped by title, newest add first; done titles only if asked.
+        "Just me" rows stay hidden unless `personal_of` names their owner."""
+        clauses, params = [], []
+        vis, vparams = self._wl_visible(personal_of)
+        clauses.append(vis)
+        params.extend(vparams)
         if media_type:
             clauses.append("m.media_type = ?")
             params.append(media_type)
@@ -1891,23 +1960,134 @@ class DatabaseManager:
                 conn.cursor(), " AND ".join(clauses), tuple(params), include_done
             )
 
-    def get_watch_later_ids(self, media_item_ids: List[int]) -> Dict[int, List[int]]:
-        """Maps media_item_id -> profile_ids with an open (not done) row, in one query."""
+    def get_watch_later_ids(
+        self, media_item_ids: List[int], personal_of: Optional[List[int]] = None
+    ) -> Dict[int, List[int]]:
+        """Maps media_item_id -> profile_ids with an open (not done) row, in one query.
+        "Just me" rows count only for the profiles in `personal_of`."""
         ids = [int(i) for i in media_item_ids if i is not None]
         if not ids:
             return {}
         out: Dict[int, List[int]] = {}
+        vis, vparams = self._wl_visible(personal_of)
         with self.get_connection() as conn:
             for start in range(0, len(ids), 500):
                 chunk = ids[start:start + 500]
                 marks = ",".join("?" * len(chunk))
                 for r in conn.execute(
-                    f"SELECT media_item_id, profile_id FROM watch_later "
-                    f"WHERE done_at IS NULL AND media_item_id IN ({marks}) ORDER BY id;",
-                    chunk,
+                    f"SELECT wl.media_item_id, wl.profile_id FROM watch_later wl "
+                    f"WHERE wl.done_at IS NULL AND {vis} AND wl.media_item_id IN ({marks}) ORDER BY wl.id;",
+                    [*vparams, *chunk],
                 ):
                     out.setdefault(r["media_item_id"], []).append(r["profile_id"])
         return out
+
+    def remove_from_watchlist(self, media_item_id: int, profile_ids: List[int]) -> int:
+        """Takes a title off the watchlist for the people at the screen: every shared row (the
+        list is shared, so it leaves for both) and the "Just me" rows these profiles own. Other
+        people's "Just me" rows are never touched. Returns rows removed."""
+        ids = [int(i) for i in profile_ids]
+        clause, params = "owner_profile_id IS NULL", []
+        if ids:
+            clause = f"(owner_profile_id IS NULL OR owner_profile_id IN ({','.join('?' * len(ids))}))"
+            params = ids
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                f"DELETE FROM watch_later WHERE media_item_id = ? AND {clause};", (media_item_id, *params)
+            )
+            return cur.rowcount
+
+    # --- Northern Lights picks for two (schema v14) --------------------------------
+
+    def set_interest(self, media_item_id: int, profile_id: int, state: Optional[str]) -> Optional[str]:
+        """Sets one person's yes / maybe / pass on a title; None clears it. Returns the new state."""
+        if state is not None and state not in ("yes", "maybe", "pass"):
+            raise ValueError("state must be yes, maybe or pass")
+        with self.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError(f"Unknown media_item_id {media_item_id}")
+            if not conn.execute("SELECT 1 FROM profiles WHERE id = ?;", (profile_id,)).fetchone():
+                raise ValueError(f"Unknown profile_id {profile_id}")
+            if state is None:
+                conn.execute(
+                    "DELETE FROM nl_interest WHERE media_item_id = ? AND profile_id = ?;", (media_item_id, profile_id)
+                )
+                return None
+            conn.execute(
+                """
+                INSERT INTO nl_interest (media_item_id, profile_id, state) VALUES (?, ?, ?)
+                ON CONFLICT(media_item_id, profile_id) DO UPDATE SET state = excluded.state,
+                                                                   updated_at = CURRENT_TIMESTAMP;
+                """,
+                (media_item_id, profile_id, state),
+            )
+            return state
+
+    def get_interest(self, media_item_ids: Optional[List[int]] = None) -> Dict[int, Dict[int, str]]:
+        """{media_item_id: {profile_id: state}} for the given titles (all titles when None)."""
+        out: Dict[int, Dict[int, str]] = {}
+        with self.get_connection() as conn:
+            if media_item_ids is None:
+                for r in conn.execute("SELECT media_item_id, profile_id, state FROM nl_interest;").fetchall():
+                    out.setdefault(r["media_item_id"], {})[r["profile_id"]] = r["state"]
+                return out
+            ids = [int(i) for i in media_item_ids if i is not None]
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                for r in conn.execute(
+                    f"SELECT media_item_id, profile_id, state FROM nl_interest WHERE media_item_id IN ({marks});", chunk
+                ):
+                    out.setdefault(r["media_item_id"], {})[r["profile_id"]] = r["state"]
+        return out
+
+    def get_items_by_ids(self, media_item_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """Catalogue rows (title, genres, rating, votes, runtime, poster ...) for the given ids."""
+        ids = [int(i) for i in media_item_ids if i is not None]
+        out: Dict[int, Dict[str, Any]] = {}
+        with self.get_connection() as conn:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ",".join("?" * len(chunk))
+                for r in conn.execute(
+                    f"SELECT id, media_type, title, release_year, genres, rating, vote_count, runtime, poster_url, overview "
+                    f"FROM media_items WHERE id IN ({marks});", chunk
+                ):
+                    out[r["id"]] = dict(r)
+        return out
+
+    def get_seen_item_ids(self, profile_ids: List[int]) -> set:
+        """Titles any of these profiles has marked seen (rated or not)."""
+        ids = [int(i) for i in profile_ids]
+        if not ids:
+            return set()
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT media_item_id FROM watch_history "
+                f"WHERE status = 'seen' AND profile_id IN ({','.join('?' * len(ids))});", ids
+            ).fetchall()
+        return {r["media_item_id"] for r in rows}
+
+    def get_profile_ratings(self, profile_ids: List[int]) -> List[Dict[str, Any]]:
+        """Every seen-and-rated title of these profiles: media_item_id, title, genres, profile_id,
+        rating (the latest rating where one title was rated twice)."""
+        ids = [int(i) for i in profile_ids]
+        if not ids:
+            return []
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT wh.media_item_id, wh.profile_id, wh.user_rating AS rating, m.title, m.genres
+                FROM watch_history wh JOIN media_items m ON m.id = wh.media_item_id
+                WHERE wh.status = 'seen' AND wh.user_rating IS NOT NULL
+                  AND wh.profile_id IN ({','.join('?' * len(ids))})
+                ORDER BY wh.id;
+                """, ids
+            ).fetchall()
+        latest: Dict[tuple, Dict[str, Any]] = {}
+        for r in rows:
+            latest[(r["media_item_id"], r["profile_id"])] = dict(r)
+        return list(latest.values())
 
     def mark_watch_later_done(self, media_item_id: int, reason: str) -> int:
         """Marks every open row for a title done ('rated' | 'watched'); returns rows changed."""

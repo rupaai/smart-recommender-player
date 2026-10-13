@@ -101,6 +101,8 @@
     if (item.progress) { label += ", " + item.progress + " percent watched"; } else if (item.badge) { label += ", " + item.badge; }
     a.setAttribute("aria-label", label);
     li.appendChild(a);
+    // M6: "+" for the watchlist, beside the link (a button inside a link is not valid markup).
+    if (window.NLWatch && item.id) { li.appendChild(window.NLWatch.iconButton(item.id, item.title)); }
     return li;
   }
 
@@ -142,6 +144,7 @@
   function resultRow(r) {
     var ready = r.ready && r.href;
     var row = el(ready ? "a" : "div", "nl-result" + (ready ? "" : " is-away"));
+    var wrap = null;
     if (ready) { row.href = r.href; }
     var thumb = el("div", "nl-thumb");
     fillImage(thumb, [r.poster_url], r.title.slice(0, 1));
@@ -159,7 +162,13 @@
       dl.setAttribute("aria-label", "Find a copy of " + r.title + " in the Download tab");
       row.appendChild(dl);
     }
-    return row;
+    // M6: add a movie or show to the watchlist from the search results, ready or not.
+    if (window.NLWatch && r.kind !== "episode" && r.id) {
+      wrap = el("div", "nl-result-wrap");
+      wrap.appendChild(row);
+      wrap.appendChild(window.NLWatch.iconButton(r.id, r.title));
+    }
+    return wrap || row;
   }
 
   function showResults(results) {

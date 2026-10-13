@@ -117,7 +117,7 @@ def test_migration(tmp):
     with fresh.get_connection() as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(media_sources)")}
         prefs = {r[1] for r in conn.execute("PRAGMA table_info(nl_show_prefs)")}
-    check("fresh DB is at schema 13", fresh.get_schema_version() == 13, fresh.get_schema_version())
+    check("fresh DB is at schema 14", fresh.get_schema_version() == 14, fresh.get_schema_version())
     check("fresh DB has media_sources.jellyfin_id", "jellyfin_id" in cols)
     check("fresh DB has nl_show_prefs", {"media_item_id", "autoplay", "updated_at"} <= prefs, prefs)
 
@@ -133,11 +133,11 @@ def test_migration(tmp):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(media_sources)")}
         row = conn.execute("SELECT file_path, jellyfin_id FROM media_sources").fetchone()
         has_prefs = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'nl_show_prefs'").fetchone()
-    check("v11 DB upgrades to 13 (12 then 13)", upgraded.get_schema_version() == 13, upgraded.get_schema_version())
+    check("v11 DB upgrades to 14 (12, 13, then 14)", upgraded.get_schema_version() == 14, upgraded.get_schema_version())
     check("existing rows kept, new column empty", row and row[0].endswith("X.mp4") and row[1] is None, tuple(row) if row else row)
     check("v11 DB gains the column and the table", "jellyfin_id" in cols and has_prefs is not None)
     DatabaseManager(path)
-    check("running again is harmless", DatabaseManager(path).get_schema_version() == 13)
+    check("running again is harmless", DatabaseManager(path).get_schema_version() == 14)
 
     print("jellyfin_id cache and show prefs (database)")
     sid = upgraded.get_library_items("movie")[0]["id"]

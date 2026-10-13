@@ -84,7 +84,12 @@
       });
       actions.appendChild(find);
     }
+    if (window.NLWatch) {
+      // M6: the watchlist, and each person's yes / maybe / pass.
+      actions.appendChild(window.NLWatch.fullControl(t.id, t.title));
+    }
     info.appendChild(actions);
+    if (window.NLWatch) { info.appendChild(window.NLWatch.interestControl(t.id)); }
     info.appendChild(subNote);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = NL.el("div", "nl-detail-progress");
