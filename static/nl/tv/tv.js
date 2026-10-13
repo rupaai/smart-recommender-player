@@ -99,6 +99,7 @@
       var data = r[0];
       var any = false;
       any = fillRow("tv-continue", "tv-continue-list", data.continue_watching, wideCard) || any;
+      initPicks();
       any = fillRow("tv-movies", "tv-movies-list", (r[1] && r[1].items) || data.movies, posterCard) || any;
       any = fillRow("tv-shows", "tv-shows-list", (r[2] && r[2].items) || data.shows, posterCard) || any;
       setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
@@ -135,6 +136,31 @@
     var ul = el("ul", "tv-genres");
     (list || []).forEach(function (g) { ul.appendChild(el("li", null, g)); });
     return ul;
+  }
+
+  /* M6: one focusable button per person; OK steps that person's answer through yes, maybe, pass, none. */
+  function addInterest(parent, id) {
+    if (!window.NLWatch) { return; }
+    var row = el("div", "tv-interest");
+    row.setAttribute("data-nl-row", "interest");
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", "Would you watch this?");
+    parent.appendChild(row);
+    window.NLWatch.load().then(function (st) {
+      if (!st) { return; }
+      st.people.forEach(function (p) {
+        if (!p.mine) {
+          var read = el("span", "tv-wl-read", "");
+          row.appendChild(read);
+          var a = window.NLWatch.answers(id).filter(function (x) { return x.person === p.id; })[0];
+          read.textContent = p.name + ": " + (a && a.state ? a.state.charAt(0).toUpperCase() + a.state.slice(1) : "Not yet");
+          return;
+        }
+        var b = window.NLWatch.cycleButton(id, p.id, "tv-btn");
+        b.setAttribute("data-nl-focus", "");
+        row.appendChild(b);
+      });
+    });
   }
 
   function renderTitle(t) {
@@ -195,8 +221,10 @@
       });
       actions.appendChild(find);
     }
+    if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(t.id, t.title, "tv-btn")); }
     h.info.appendChild(actions);
     h.info.appendChild(subNote);
+    addInterest(h.info, t.id);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = el("div", "tv-detail-progress");
       p.appendChild(NL.progressBar(t.progress));
@@ -316,7 +344,9 @@
     actions.setAttribute("data-nl-row", "actions");
     if (s.next_up) { actions.appendChild(button(s.next_up.text, s.next_up.href, true)); }
     actions.appendChild(autoplaySwitch());
+    if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title, "tv-btn")); }
     h.info.appendChild(actions);
+    addInterest(h.info, s.id);
     if (!s.jellyfin) {
       h.info.appendChild(el("p", "tv-meta", "Watched ticks and Next up need Jellyfin, which isn’t answering right now."));
     }
@@ -479,6 +509,168 @@
     on.addEventListener("click", function () { if (prefs) { save({ subtitles_on: !prefs.subtitles_on }); } });
   }
 
+  /* ----------------------------------------- picks for two (M6): home row */
+
+  function pickCard(item) {
+    var li = el("li", "tv-item tv-item-pick");
+    var a = el("a", "tv-card");
+    a.href = tvHref(item.href);
+    a.setAttribute("data-nl-focus", "");
+    var art = el("div", "tv-art tv-poster");
+    NL.fillImage(art, [item.poster_url, item.image_fallback], item.title);
+    a.appendChild(art);
+    a.appendChild(el("div", "tv-name", item.title));
+    a.appendChild(el("div", "tv-meta", NL.metaLine(item)));
+    a.appendChild(el("p", "tv-reason", item.reason || ""));
+    a.setAttribute("aria-label", item.title + (item.year ? " (" + item.year + ")" : "") + ". " + (item.reason || ""));
+    li.appendChild(a);
+    return li;
+  }
+
+  function initPicks() {
+    var section = document.getElementById("tv-picks");
+    if (!section) { return; }
+    var list = document.getElementById("tv-picks-list");
+    var chipsRow = document.getElementById("tv-picks-chips");
+    var heading = document.getElementById("tv-picks-h");
+    var note = document.getElementById("tv-picks-note");
+    var chipsBox = null;
+    var value = window.NLWatch ? window.NLWatch.savedRuntime() : null;
+    var seq = 0;
+
+    function render(data) {
+      heading.textContent = data.title || "For both of us";
+      note.textContent = data.note || "";
+      list.textContent = "";
+      var items = data.items || [];
+      items.forEach(function (it) { list.appendChild(pickCard(it)); });
+      if (!chipsBox && window.NLWatch) {
+        chipsBox = window.NLWatch.chips({
+          chips: data.chips, value: value, cls: "tv-pill", focusable: true, groupClass: "tv-chips-inner",
+          onChange: function (v) { value = v; load(true); }
+        });
+        chipsRow.appendChild(chipsBox);
+      }
+      section.hidden = !items.length && !value;
+      list.hidden = !items.length;
+    }
+
+    function load(refocus) {
+      var mine = ++seq;
+      var url = "/api/nl/picks" + (value ? "?max_runtime=" + encodeURIComponent(value) : "");
+      NL.fetchJSON(url).then(function (data) {
+        if (mine !== seq) { return; }
+        var f = document.activeElement;
+        var keep = refocus && f && f.getAttribute ? f.getAttribute("data-minutes") : null;
+        render(data);
+        if (keep) {
+          var again = chipsRow.querySelector('[data-minutes="' + keep + '"]');
+          if (again) { window.NLFocus.focus(again); }
+        }
+      }).catch(function () { if (mine === seq) { section.hidden = true; } });
+    }
+    load(false);
+  }
+
+  /* --------------------------------------------- watchlist page (M6) */
+
+  function initWatchlist() {
+    var chipsRow = document.getElementById("tv-wl-chips");
+    var listBox = document.getElementById("tv-wl-list");
+    var chipsBox = null;
+    var value = window.NLWatch ? window.NLWatch.savedRuntime() : null;
+    var seq = 0;
+    window.NLFocus.remember(false);
+
+    function fact(c) {
+      var bits = [];
+      if (c.both_yes) { bits.push("You both said yes"); }
+      bits.push(c.ready ? "Ready" : "Not in library yet");
+      if (c.personal) { bits.push("Just me"); }
+      return bits.join(" · ");
+    }
+
+    function item(c) {
+      var li = el("li", "tv-wl-item");
+      var info = el("div", "tv-wl-info");
+      info.appendChild(el("h3", "tv-wl-title", c.title));
+      info.appendChild(el("p", "tv-meta", [NL.metaLine({ year: c.year, runtime: c.runtime, media_type: c.media_type }), fact(c)].filter(Boolean).join(" · ")));
+      li.appendChild(info);
+      var acts = el("div", "tv-wl-actions");
+      acts.setAttribute("data-nl-row", "wl-" + c.id);
+      if (c.ready && c.href) {
+        var open = el("a", "tv-btn is-primary", "Open");
+        open.href = tvHref(c.href);
+        open.setAttribute("data-nl-focus", "");
+        open.setAttribute("aria-label", "Open " + c.title);
+        acts.appendChild(open);
+      }
+      (c.interest || []).forEach(function (p) {
+        if (!p.mine) {
+          acts.appendChild(el("span", "tv-wl-read", p.name + ": " + (p.state ? p.state.charAt(0).toUpperCase() + p.state.slice(1) : "Not yet")));
+          return;
+        }
+        var b = window.NLWatch.cycleButton(c.id, p.person, "tv-btn");
+        b.setAttribute("data-nl-focus", "");
+        acts.appendChild(b);
+      });
+      var rm = el("button", "tv-btn", "Remove");
+      rm.type = "button";
+      rm.setAttribute("data-nl-focus", "");
+      rm.setAttribute("aria-label", "Remove " + c.title + " from the watchlist");
+      rm.addEventListener("click", function () {
+        var next = li.nextElementSibling || li.previousElementSibling;
+        window.NLWatch.remove(c.id, c.title).then(function () {
+          li.remove();
+          var target = next && next.querySelector("[data-nl-focus]");
+          if (target) { window.NLFocus.focus(target); } else { empty(); }
+        }).catch(function () {});
+      });
+      acts.appendChild(rm);
+      li.appendChild(acts);
+      return li;
+    }
+
+    function empty() {
+      if (!listBox.children.length) {
+        setStatus(value ? "Nothing on the watchlist fits that length." : "Nothing here yet. Open a title and choose + Watchlist.");
+        var first = chipsRow.querySelector("[data-nl-focus]");
+        if (first) { window.NLFocus.focus(first); }
+      }
+    }
+
+    function render(data) {
+      listBox.textContent = "";
+      if (!chipsBox) {
+        chipsBox = window.NLWatch.chips({
+          chips: data.chips, value: value, cls: "tv-pill", focusable: true, groupClass: "tv-chips-inner",
+          onChange: function (v) { value = v; load(); }
+        });
+        chipsRow.appendChild(chipsBox);
+      }
+      (data.items || []).forEach(function (c) { listBox.appendChild(item(c)); });
+      setStatus("");
+      empty();
+    }
+
+    function load() {
+      var mine = ++seq;
+      var f = document.activeElement;
+      var keep = f && f.getAttribute ? f.getAttribute("data-minutes") : null;
+      var url = "/api/nl/watchlist" + (value ? "?max_runtime=" + encodeURIComponent(value) : "");
+      NL.fetchJSON(url).then(function (data) {
+        if (mine !== seq) { return; }
+        render(data);
+        if (keep) {
+          var again = chipsRow.querySelector('[data-minutes="' + keep + '"]');
+          if (again) { window.NLFocus.focus(again); return; }
+        }
+        window.NLFocus.start();
+      }).catch(function () { setStatus("Could not load the watchlist. Is the app running?"); window.NLFocus.start(); });
+    }
+    load();
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -487,4 +679,5 @@
   else if (page === "search") { initSearch(); }
   else if (page === "who") { initWho(); }
   else if (page === "me") { initMe(); }
+  else if (page === "watchlist") { initWatchlist(); }
 })();

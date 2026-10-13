@@ -44,6 +44,7 @@ from services.jellyfin_playback import (
 )
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
+from services.nl_picks import NLPicks, PicksError, parse_max_runtime
 from services.nl_people import (
     BOTH,
     COOKIE_MAX_AGE,
@@ -142,6 +143,9 @@ except PeopleConfigError as _e:
     raise SystemExit(f"[Northern Lights] bad people configuration: {_e}")
 if nl_people.configured and not jellyfin_service.user_id:
     jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
+
+# Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
+nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -1203,6 +1207,72 @@ async def nl_search(request: Request, q: str = Query("", max_length=100), limit:
     return {"query": q, "results": results}
 
 
+# --- Northern Lights picks for two (M6) ---
+class NLWatchlistAdd(BaseModel):
+    media_item_id: int
+    scope: str = "shared"   # "shared" (default) or "me" (Just me)
+
+
+class NLInterestBody(BaseModel):
+    state: Optional[str] = None   # yes | maybe | pass | null (clear)
+    person: Optional[str] = None  # whose answer; needed on "Both of us"
+
+
+def _picks_error(e: PicksError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail=str(e))
+
+
+@app.get("/api/nl/watchlist")
+async def nl_watchlist(request: Request, max_runtime: Optional[str] = None) -> Dict[str, Any]:
+    """The watchlist for the viewer: titles both said yes to first, then one yes, then the rest, passed
+    last. `max_runtime` (minutes, 90 or 120 in the chips) hides longer movies and shows."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_picks.watchlist, viewer, parse_max_runtime(max_runtime))
+
+
+@app.get("/api/nl/watchlist/state")
+async def nl_watchlist_state(request: Request) -> Dict[str, Any]:
+    """What a card needs to paint its watchlist button and yes / maybe / pass: listed titles and each
+    person's answers, plus who the people are and whether "Just me" is offered."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_picks.state, viewer)
+
+
+@app.post("/api/nl/watchlist")
+async def nl_watchlist_add(body: NLWatchlistAdd, request: Request) -> Dict[str, Any]:
+    """Adds a title: shared by default (credited to everyone at the screen), or scope "me" for Just me."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_picks.add, viewer, body.media_item_id, body.scope)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.delete("/api/nl/watchlist/{item_id}")
+async def nl_watchlist_remove(item_id: int, request: Request) -> Dict[str, Any]:
+    """Takes a title off the watchlist (the shared list for both, plus the viewer's own Just me)."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_picks.remove, viewer, item_id)
+
+
+@app.put("/api/nl/interest/{item_id}")
+async def nl_interest_set(item_id: int, body: NLInterestBody, request: Request) -> Dict[str, Any]:
+    """One person's yes / maybe / pass on a title (state null clears it)."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_picks.set_interest, viewer, item_id, body.state, body.person)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.get("/api/nl/picks")
+async def nl_picks_row(request: Request, max_runtime: Optional[str] = None) -> Dict[str, Any]:
+    """The home row "For both of us" ("Picks for you" with one person): the recommender in co-view mode
+    for the viewer(s), library titles only, with a one-line reason per card."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_picks.picks, viewer, parse_max_runtime(max_runtime))
+
+
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
     return _nl_page(request, "nl/home.html", {"active": "home"})
@@ -1226,6 +1296,11 @@ async def nl_title_page(item_id: int, request: Request) -> Any:
 @app.get("/nl/show/{item_id}", response_class=HTMLResponse)
 async def nl_show_page(item_id: int, request: Request) -> Any:
     return _nl_page(request, "nl/show.html", {"active": "shows", "item_id": item_id})
+
+
+@app.get("/nl/watchlist", response_class=HTMLResponse)
+async def nl_watchlist_page(request: Request) -> Any:
+    return _nl_page(request, "nl/watchlist.html", {"active": "watchlist"})
 
 
 @app.get("/nl/me", response_class=HTMLResponse)
@@ -1252,6 +1327,11 @@ async def nl_tv_title(item_id: int, request: Request) -> Any:
 @app.get("/nl/tv/show/{item_id}", response_class=HTMLResponse)
 async def nl_tv_show(item_id: int, request: Request) -> Any:
     return _nl_page(request, "nl/tv/show.html", {"page": "show", "item_id": item_id}, tv=True)
+
+
+@app.get("/nl/tv/watchlist", response_class=HTMLResponse)
+async def nl_tv_watchlist(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, tv=True)
 
 
 @app.get("/nl/tv/me", response_class=HTMLResponse)

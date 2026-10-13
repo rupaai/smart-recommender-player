@@ -1,0 +1,12 @@
+{% extends "nl/base.html" %}
+{% block title %}Watchlist - Northern Lights{% endblock %}
+{% block main %}
+  <div class="nl-page-head">
+    <h1>Watchlist</h1>
+    <p id="nl-count" class="nl-sub"></p>
+  </div>
+  <div id="nl-chips" class="nl-chips-host"></div>
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <ul id="nl-watchlist" class="nl-watchlist"></ul>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/watchlist.js"></script>{% endblock %}

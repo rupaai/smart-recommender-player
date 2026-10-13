@@ -129,7 +129,9 @@
       n.href = s.next_up.href;
       actions.appendChild(n);
     }
+    if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title)); }
     info.appendChild(actions);
+    if (window.NLWatch) { info.appendChild(window.NLWatch.interestControl(s.id)); }
     if (s.next_up && s.next_up.name && s.next_up.name.indexOf("Episode ") !== 0) {
       info.appendChild(NL.el("p", "nl-meta nl-next-name", s.next_up.name));
     }

@@ -123,3 +123,25 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .tv-pill, .tv-btn, .tv-art { transition: none; }
 }
+
+/* ---- M6: picks for two, watchlist, yes / maybe / pass, runtime chips */
+.tv-picks-note { margin: 0.5rem var(--side) 0; color: var(--text-2); }
+.tv-picks-note:empty { display: none; }
+.tv-chips { padding: 1.5rem var(--side) 0; }
+.tv-chips-inner { display: flex; gap: 1.25rem; padding: 0.75rem 0.5rem; }
+.tv-item-pick { width: 20rem; }
+.tv-reason { margin: 0.5rem 0 0; font-size: 1.5rem; line-height: 1.3; color: var(--text-2); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
+.tv-card:focus .tv-reason { color: var(--text); }
+.nl-watch-full { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 1.5rem; }
+.nl-watch-note { color: var(--text-2); font-size: 1.5rem; }
+.nl-watch-note:empty { display: none; }
+.tv-interest { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem; margin: 1.5rem 0 0; padding: 0.75rem 0.5rem; }
+.tv-wl-read { color: var(--text-2); font-weight: 700; }
+.tv-watchlist { padding-bottom: 2rem; }
+.tv-wl-list { padding: 1.5rem var(--side) 0; display: grid; gap: 1rem; }
+.tv-wl-item { display: flex; align-items: center; justify-content: space-between; gap: 3rem; padding: 0.5rem 0; border-top: 0.2rem dashed var(--line); }
+.tv-wl-info { min-width: 0; flex: 1; }
+.tv-wl-title { margin: 0; font-family: var(--font-display); font-stretch: 72%; font-weight: 800; text-transform: uppercase; font-size: 2.5rem; line-height: 1.1; }
+.tv-wl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1.25rem; padding: 0.75rem 0.5rem; }
+.nl-toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 40; max-width: 70%; background: var(--text); color: var(--bg);
+  padding: 1rem 2rem; border-radius: 1rem; font-size: 1.5rem; font-weight: 800; }
