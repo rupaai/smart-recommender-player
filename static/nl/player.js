@@ -12,6 +12,16 @@
   var CONVERT_FAILED = "The server couldn’t convert this video.";
   var CONVERT_DETAIL = "Jellyfin failed to transcode it. Check Jellyfin’s FFmpeg log.";
   var UNPLAYABLE = "This video’s format can’t play in this browser.";
+  // M10c, P20: say which format it is when the stream says (HEVC video, DTS sound), and what to try.
+  function unplayableText() {
+    var f = (S.stream && S.stream.conversion && S.stream.conversion.formats) || {};
+    var named = [];
+    if (f.video) { named.push(f.video + " video"); }
+    if (f.audio) { named.push(f.audio + " sound"); }
+    var device = isNative ? "This TV" : "This browser";
+    if (!named.length) { return UNPLAYABLE; }
+    return device + " can’t play this format (" + named.join(", ") + "). Try Picture, then Quality, and choose a lower setting: the server then converts it.";
+  }
   var NEXT_CARD_SECONDS = 30;   // the next-episode card appears this long before the end (P11)
   var COUNTDOWN_SECONDS = 10;   // and counts down for this long before starting the episode
   var DELAY_STEP = 0.25;        // subtitle delay buttons (P16)
@@ -88,6 +98,9 @@
     segFocused: {},       // segments whose button already took the remote's focus
     segCur: null,         // the segment the button is showing for
     speed: 1,             // P17
+    quality: null,        // M10c, P19: this viewing's quality: null = the person's default, 0 = Auto, else kbit/s
+    fit: "fit",           // M10c, P18: fit | fill | original (this viewing; the default is a setting)
+    convertNoted: "",     // the conversion note already shown for this film
     thumbTimer: null,
     pointerType: "mouse",
     quietUntil: 0,
@@ -185,6 +198,13 @@
     menu.appendChild(h);
     items.forEach(function (it) {
       if (it.kind === "stepper") { menu.appendChild(stepperRow(it)); return; }
+      if (it.kind === "note") {
+        var n = document.createElement("div");
+        n.className = "nl-menu-note";
+        n.textContent = it.text;
+        menu.appendChild(n);
+        return;
+      }
       var b = document.createElement("button");
       b.type = "button";
       var tick = document.createElement("span");
@@ -416,6 +436,73 @@
         renderProgress();
       } };
     }));
+  }
+
+  /* ------------------------------------------- picture size and quality (M10c: P18, P19, P20) */
+
+  var FIT_LABELS = { fit: "Fit", fill: "Fill", original: "Original size" };
+  var FIT_ORDER = ["fit", "fill", "original"];
+  function applyFit() {
+    // The Android app draws the picture itself behind this page, so the page can't resize it there.
+    FIT_ORDER.forEach(function (f) { root.classList.toggle("fit-" + f, !isNative && S.fit === f); });
+  }
+  function setFit(fit, announce) {
+    S.fit = FIT_ORDER.indexOf(fit) >= 0 ? fit : "fit";
+    applyFit();
+    if (announce) { toast("Picture: " + FIT_LABELS[S.fit]); }
+  }
+  function cycleFit() { setFit(FIT_ORDER[(FIT_ORDER.indexOf(S.fit) + 1) % FIT_ORDER.length], false); }
+
+  function qualityInfo() { return (S.stream && S.stream.quality) || {}; }
+  function qualityLabelFor(kbps) {
+    var opts = qualityInfo().options || [];
+    for (var i = 0; i < opts.length; i++) { if ((opts[i].kbps || null) === (kbps || null)) { return opts[i].label; } }
+    return kbps ? kbps / 1000 + " Mbps" : "Auto (original quality)";
+  }
+  function setQuality(kbps) {
+    var now = qualityInfo().applied_kbps || null;
+    if ((kbps || null) === now) { return; }
+    S.quality = kbps || 0;
+    S.convertNoted = "";   // a new choice may need a new note
+    toast("Quality: " + qualityLabelFor(kbps));
+    reloadStream({});      // same place, same tracks, new stream
+  }
+  function openQualityMenu() {
+    var q = qualityInfo();
+    var applied = q.applied_kbps || null;
+    var dflt = q.default_kbps || null;
+    var items = [];
+    var note = q.source_kbps ? "This file is about " + (q.source_kbps >= 1000 ? (q.source_kbps / 1000).toFixed(1) + " Mbps" : q.source_kbps + " kbps") + ". A lower choice makes the server convert it." : "A lower choice makes the server convert the picture to fit.";
+    items.push({ kind: "note", text: note });
+    (q.options || []).forEach(function (o) {
+      items.push({
+        label: o.label + (dflt && o.kbps === dflt ? " (your default)" : ""),
+        selected: (o.kbps || null) === applied,
+        onSelect: function () { setQuality(o.kbps); }
+      });
+    });
+    openMenu("Quality", items);
+  }
+  function conversionText() {
+    var c = (S.stream && S.stream.conversion) || null;
+    if (!c || c.state !== "converting") { return "Playing as it is: no conversion."; }
+    return c.note + (c.detail ? " (" + c.detail + ")" : "");
+  }
+  function openPictureMenu() {
+    if (!S.stream) { return; }
+    var items = [{ kind: "note", text: conversionText() }];
+    if (!isNative) {
+      items.push({ kind: "cycle", getLabel: function () { return "Picture size: " + FIT_LABELS[S.fit]; }, onSelect: cycleFit });
+    }
+    items.push({ kind: "action", label: "Quality: " + qualityLabelFor(qualityInfo().applied_kbps || null) + " …", onSelect: openQualityMenu });
+    openMenu("Picture", items);
+  }
+  // A short, friendly line when Jellyfin is converting the stream (once per film, or again after a quality change).
+  function noteConversion(stream) {
+    var c = stream && stream.conversion;
+    if (!c || c.state !== "converting" || !c.note || S.convertNoted === c.note) { return; }
+    S.convertNoted = c.note;
+    toast(c.note, 6000);
   }
 
   // P17: speed.
@@ -820,6 +907,7 @@
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
     if (S.sourceId) { qs.push("source=" + encodeURIComponent(S.sourceId)); }
+    if (!casting() && S.quality !== null) { qs.push("max_kbps=" + encodeURIComponent(S.quality)); }
     var url = (casting() ? "/api/nl/cast/play/" : "/api/nl/play/") + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
     return fetch(url).then(function (resp) {
       return resp.json().catch(function () { return {}; }).then(function (body) {
@@ -852,6 +940,8 @@
     applyTextTracks();
     applySubStyle();
     applySpeed();
+    applyFit();
+    noteConversion(stream);
   }
   // What the native player needs besides the stream (see the NorthernLightsNative contract in player-core.js).
   function nativeMeta(stream) {
@@ -1096,7 +1186,7 @@
     if (S.errors <= 2) {
       reloadStream({});
     } else {
-      showError(e && e.format ? UNPLAYABLE : UNREACHABLE);
+      showError(e && e.format ? unplayableText() : UNREACHABLE);
     }
   });
 
@@ -1231,6 +1321,7 @@
   $("nl-mute").addEventListener("click", toggleMute);
   $("nl-chapters").addEventListener("click", function () { S.menuOpen ? closeMenu() : openChaptersMenu(); });
   $("nl-speed").addEventListener("click", function () { S.menuOpen ? closeMenu() : openSpeedMenu(); });
+  $("nl-picture").addEventListener("click", function () { S.menuOpen ? closeMenu() : openPictureMenu(); });
   $("nl-seg-go").addEventListener("click", useSeg);
   $("nl-seg-always").addEventListener("click", toggleSkipIntro);
 
@@ -1529,6 +1620,7 @@
     castBtn.setAttribute("aria-label", on ? "Casting to " + castKit.cast.deviceName : "Cast to a TV");
     castBtn.setAttribute("aria-pressed", on ? "true" : "false");
     root.classList.toggle("casting", on);
+    $("nl-picture").hidden = on;   // picture size and quality are for the screen you are holding
     castPanel.hidden = !on;
     if (on) {
       $("nl-cast-device").textContent = "Casting to " + castKit.cast.deviceName;
@@ -1649,6 +1741,14 @@
 
   var savedSkip = Number(lsGet("nl.skipSeconds"));
   S.skip = SKIP_CHOICES.indexOf(savedSkip) >= 0 ? savedSkip : 10;
+  // M10c, H5: the person's defaults (skip length, picture size) are read before the first stream starts. Quality and
+  // autoplay defaults are applied by the server. A change in the player is for this film only.
+  function applyPrefs(prefs) {
+    if (prefs && SKIP_CHOICES.indexOf(prefs.skip_seconds) >= 0) { S.skip = prefs.skip_seconds; }
+    if (prefs && FIT_ORDER.indexOf(prefs.picture_fit) >= 0) { S.fit = prefs.picture_fit; }
+    renderSkip();
+    applyFit();
+  }
   var savedVol = parseFloat(lsGet("nl.volume"));
   if (isFinite(savedVol)) { player.volume = savedVol; }
   player.muted = lsGet("nl.muted") === "1";
@@ -1659,5 +1759,9 @@
   renderPlayState();
   renderProgress();
   $("nl-mute-icon").innerHTML = ICONS.vol;
-  startFirst();
+  if (window.NLPrefs) {
+    window.NLPrefs.get().then(applyPrefs, function () {}).then(function () { startFirst(); });
+  } else {
+    startFirst();
+  }
 })();

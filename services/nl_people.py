@@ -25,6 +25,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from services import nl_settings
+
 COOKIE_NAME = "nl_viewer"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 BOTH = "both"
@@ -306,6 +308,26 @@ def clean_prefs(patch: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None and not isinstance(v, bool):
             raise ValueError("hide_spoilers must be true or false.")
         out["hide_spoilers"] = v
+    if "skip_seconds" in patch:
+        v = patch["skip_seconds"]
+        if v is not None and not nl_settings.valid_skip(v):
+            raise ValueError("skip_seconds must be 10, 15, 30 or 60.")
+        out["skip_seconds"] = v
+    if "autoplay" in patch:
+        v = patch["autoplay"]
+        if v is not None and not isinstance(v, bool):
+            raise ValueError("autoplay must be true or false.")
+        out["autoplay"] = v
+    if "quality_kbps" in patch:
+        v = patch["quality_kbps"]
+        if v is not None and not nl_settings.valid_quality(v):
+            raise ValueError("quality_kbps must be null (Auto), 8000, 4000, 2000 or 1000.")
+        out["quality_kbps"] = v
+    if "picture_fit" in patch:
+        v = patch["picture_fit"]
+        if v is not None and not nl_settings.valid_fit(v):
+            raise ValueError("picture_fit must be fit, fill or original.")
+        out["picture_fit"] = v
     if "sub_style" in patch:
         v = patch["sub_style"]
         if v is None:
@@ -329,12 +351,17 @@ def _is_commentary(track: Dict[str, Any]) -> bool:
     return "commentary" in str(track.get("label") or track.get("display_title") or "").lower()
 
 
+def _is_special_audio(track: Dict[str, Any]) -> bool:
+    """A commentary or an audio-description (P24) track: never the default pick for a language."""
+    return _is_commentary(track) or bool(track.get("is_audio_description"))
+
+
 def pick_audio_index(tracks: Iterable[Dict[str, Any]], lang: Optional[str]) -> Optional[int]:
     """The audio track in the preferred language (not a commentary; the file's default one first), or None."""
     want = lang_key(lang)
     if not want:
         return None
-    matches = [t for t in tracks if lang_key(t.get("language")) == want and not _is_commentary(t)]
+    matches = [t for t in tracks if lang_key(t.get("language")) == want and not _is_special_audio(t)]
     if not matches:
         return None
     matches.sort(key=lambda t: (not t.get("is_default"), -(t.get("channels") or 0)))
@@ -364,6 +391,10 @@ class Prefs:
     sub_style: Optional[Dict[str, Any]] = None
     search_lang: Optional[str] = None
     hide_spoilers: bool = False
+    skip_seconds: Optional[int] = None        # M10c: None = the device's own choice
+    autoplay: bool = True                     # M10c: default for shows with no switch of their own
+    quality_kbps: Optional[int] = None        # M10c: None = Auto
+    picture_fit: str = "fit"                  # M10c
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def public(self) -> Dict[str, Any]:
@@ -374,6 +405,10 @@ class Prefs:
             "sub_style": self.sub_style,
             "search_lang": self.search_lang,
             "hide_spoilers": bool(self.hide_spoilers),
+            "skip_seconds": self.skip_seconds,
+            "autoplay": bool(self.autoplay),
+            "quality_kbps": self.quality_kbps,
+            "picture_fit": self.picture_fit,
         }
 
     @classmethod
@@ -386,4 +421,8 @@ class Prefs:
             sub_style=row.get("sub_style") or None,
             search_lang=row.get("search_lang") or None,
             hide_spoilers=bool(row.get("hide_spoilers")),
+            skip_seconds=row.get("skip_seconds") if nl_settings.valid_skip(row.get("skip_seconds")) else None,
+            autoplay=True if row.get("autoplay") is None else bool(row.get("autoplay")),
+            quality_kbps=row.get("quality_kbps") if nl_settings.valid_quality(row.get("quality_kbps")) else None,
+            picture_fit=row.get("picture_fit") if nl_settings.valid_fit(row.get("picture_fit")) else "fit",
         )

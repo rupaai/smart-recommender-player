@@ -250,3 +250,9 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 
 /* M9c: "How was it?" after finishing (W10) */
 .nl-react-options { display: flex; flex-direction: column; gap: 12px; }
+
+/* ---- M10c: picture size (P18), the menu's notes */
+.nl-player.fit-fill video { object-fit: cover; }
+.nl-player.fit-original video { object-fit: none; }
+.nl-menu-note { padding: 6px 12px 8px; max-width: 22rem; font-size: 0.85rem; line-height: 1.35; color: var(--nl-ink-2); }
+.tv .nl-menu-note { font-size: 1.5rem; max-width: 36rem; padding: 0.5rem 1.25rem 0.75rem; }

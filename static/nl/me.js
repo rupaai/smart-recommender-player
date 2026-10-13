@@ -1,5 +1,6 @@
-/* Northern Lights "me" page (M4, U3): the person's audio / subtitle language and "subtitles on by default".
- * Saved per person through NLPrefs (/api/nl/prefs). Language names are fixed strings from prefs.js. */
+/* Northern Lights "me" page (M4, U3; M10c, H5): the person's playback defaults (languages, subtitles on, skip length,
+ * autoplay, quality) and display settings (picture size, hide spoilers). Saved per person through NLPrefs
+ * (/api/nl/prefs). Names and choices are fixed strings from prefs.js. */
 (function () {
   "use strict";
   var audio = document.getElementById("nl-pref-audio");
@@ -7,6 +8,21 @@
   var on = document.getElementById("nl-pref-on");
   var status = document.getElementById("nl-pref-status");
   var spoilers = document.getElementById("nl-pref-spoilers");
+  var skip = document.getElementById("nl-pref-skip");
+  var autoplay = document.getElementById("nl-pref-autoplay");
+  var quality = document.getElementById("nl-pref-quality");
+  var fit = document.getElementById("nl-pref-fit");
+
+  function fillChoices(select, pairs, current, none) {
+    select.textContent = "";
+    pairs.forEach(function (pair) {
+      var o = document.createElement("option");
+      o.value = pair[0] === null ? "" : String(pair[0]);
+      o.textContent = pair[1];
+      select.appendChild(o);
+    });
+    select.value = current === null || current === undefined ? (none || "") : String(current);
+  }
 
   function fill(select, current) {
     select.textContent = "";
@@ -36,6 +52,18 @@
     fill(sub, p.subtitle_lang);
     on.setAttribute("aria-checked", String(!!p.subtitles_on));
     spoilers.setAttribute("aria-checked", String(!!p.hide_spoilers));
+    fillChoices(skip, [[null, "My device's own choice"]].concat(window.NLPrefs.skipChoices.map(function (v) { return [v, v + " seconds"]; })), p.skip_seconds);
+    fillChoices(quality, window.NLPrefs.qualityChoices, p.quality_kbps);
+    fillChoices(fit, window.NLPrefs.fitChoices, p.picture_fit, "fit");
+    autoplay.setAttribute("aria-checked", String(p.autoplay !== false));
+  });
+  skip.addEventListener("change", function () { save({ skip_seconds: skip.value ? Number(skip.value) : null }); });
+  quality.addEventListener("change", function () { save({ quality_kbps: quality.value ? Number(quality.value) : null }); });
+  fit.addEventListener("change", function () { save({ picture_fit: fit.value || "fit" }); });
+  autoplay.addEventListener("click", function () {
+    var next = autoplay.getAttribute("aria-checked") !== "true";
+    autoplay.setAttribute("aria-checked", String(next));
+    save({ autoplay: next });
   });
   spoilers.addEventListener("click", function () {
     var next = spoilers.getAttribute("aria-checked") !== "true";

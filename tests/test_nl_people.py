@@ -478,7 +478,7 @@ def run(tmp):
 
     print("per-person prefs API")
     r = client.get("/api/nl/prefs", headers=cookie("labiba"))
-    check("empty to start", r.status_code == 200 and r.json()["prefs"] == {"audio_lang": None, "subtitle_lang": None, "subtitles_on": False, "sub_style": None, "search_lang": None, "hide_spoilers": False} and r.json()["saved"] is False, r.text)
+    check("empty to start", r.status_code == 200 and r.json()["prefs"] == {"audio_lang": None, "subtitle_lang": None, "subtitles_on": False, "sub_style": None, "search_lang": None, "hide_spoilers": False, "skip_seconds": None, "autoplay": True, "quality_kbps": None, "picture_fit": "fit"} and r.json()["saved"] is False, r.text)
     style = {"size": "L", "background": "shadow", "raise": 1}
     r = client.put("/api/nl/prefs", json={"audio_lang": "jpn", "subtitle_lang": "eng", "subtitles_on": True, "sub_style": style, "search_lang": "fra"}, headers=cookie("labiba"))
     check("save", r.status_code == 200 and r.json()["prefs"]["audio_lang"] == "jpn" and r.json()["prefs"]["sub_style"] == style and r.json()["saved"], r.text)

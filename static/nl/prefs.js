@@ -6,6 +6,10 @@
  *   NLPrefs.peek()         the prefs once loaded, else a localStorage-only guess (never throws)
  *   NLPrefs.save(patch)    Promise; updates the cache at once and the server in the background
  *   NLPrefs.languages      [[code, name], ...] for pickers
+ *   NLPrefs.skipChoices / qualityChoices / fitChoices   the values the settings pages and the player offer (M10c)
+ *
+ * M10c adds four more settings, all per person: skip_seconds (null = this device's own choice), autoplay (the default
+ * for shows without a switch of their own), quality_kbps (null = Auto) and picture_fit (fit | fill | original).
  *
  * localStorage is the fallback and the migration source: M5 saved the look in nl.subStyle and the
  * search language in nl.subLang per device. The first time a person loads their prefs and has none of
@@ -28,6 +32,10 @@
     ["vie", "Vietnamese"], ["ind", "Indonesian"]
   ];
 
+  var SKIP_CHOICES = [10, 15, 30, 60];
+  var QUALITY_CHOICES = [[null, "Auto (original quality)"], [8000, "High (8 Mbps)"], [4000, "Medium (4 Mbps)"], [2000, "Low (2 Mbps)"], [1000, "Lowest (1 Mbps)"]];
+  var FIT_CHOICES = [["fit", "Fit"], ["fill", "Fill"], ["original", "Original size"]];
+
   var cache = null;
   var loading = null;
 
@@ -49,7 +57,10 @@
     return v && /^[a-z]{3}$/.test(v) ? v : null;
   }
   function blank() {
-    return { audio_lang: null, subtitle_lang: null, subtitles_on: false, sub_style: null, search_lang: null, hide_spoilers: false };
+    return {
+      audio_lang: null, subtitle_lang: null, subtitles_on: false, sub_style: null, search_lang: null, hide_spoilers: false,
+      skip_seconds: null, autoplay: true, quality_kbps: null, picture_fit: "fit"
+    };
   }
   function fromLocal() {
     var p = blank();
@@ -104,5 +115,8 @@
     });
   }
 
-  global.NLPrefs = { get: get, peek: peek, save: save, languages: LANGUAGES };
+  global.NLPrefs = {
+    get: get, peek: peek, save: save, languages: LANGUAGES,
+    skipChoices: SKIP_CHOICES, qualityChoices: QUALITY_CHOICES, fitChoices: FIT_CHOICES
+  };
 })(window);

@@ -694,6 +694,12 @@
     var on = document.getElementById("tv-pref-on");
     var status = document.getElementById("tv-pref-status");
     var spoilers = document.getElementById("tv-pref-spoilers");
+    var skip = document.getElementById("tv-pref-skip");
+    var autoplay = document.getElementById("tv-pref-autoplay");
+    var quality = document.getElementById("tv-pref-quality");
+    var fit = document.getElementById("tv-pref-fit");
+    // The Android app draws the picture itself (behind this page), so the page cannot resize it: no picture size there.
+    if (window.NorthernLightsNative && typeof window.NorthernLightsNative.play === "function") { document.getElementById("tv-pref-fit-row").hidden = true; }
     setStatus("");
     var vetoes = document.getElementById("tv-vetoes");
     if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, true); }   // M9b: bring back what was vetoed
@@ -709,6 +715,22 @@
       spoilers.appendChild(document.createTextNode("Hide spoilers in episode lists "));
       spoilers.appendChild(el("span", "tv-switch-state", prefs.hide_spoilers ? "On" : "Off"));
       spoilers.setAttribute("aria-checked", String(!!prefs.hide_spoilers));
+      skip.textContent = "Skip length: " + (prefs.skip_seconds ? prefs.skip_seconds + " seconds" : "Device's own choice");
+      autoplay.textContent = "";
+      autoplay.appendChild(document.createTextNode("Play the next episode by itself "));
+      autoplay.appendChild(el("span", "tv-switch-state", prefs.autoplay !== false ? "On" : "Off"));
+      autoplay.setAttribute("aria-checked", String(prefs.autoplay !== false));
+      quality.textContent = "Quality: " + choiceLabel(window.NLPrefs.qualityChoices, prefs.quality_kbps);
+      fit.textContent = "Picture size: " + choiceLabel(window.NLPrefs.fitChoices, prefs.picture_fit || "fit");
+    }
+    function choiceLabel(pairs, value) {
+      for (var i = 0; i < pairs.length; i++) { if (pairs[i][0] === (value === undefined ? null : value)) { return pairs[i][1]; } }
+      return String(value);
+    }
+    function nextChoice(pairs, value) {
+      var at = 0;
+      for (var i = 0; i < pairs.length; i++) { if (pairs[i][0] === (value === undefined ? null : value)) { at = i; } }
+      return pairs[(at + 1) % pairs.length][0];
     }
     function save(patch) {
       Object.assign(prefs, patch);
@@ -725,6 +747,15 @@
     sub.addEventListener("click", function () { if (prefs) { save({ subtitle_lang: nextLang(prefs.subtitle_lang) || null }); } });
     on.addEventListener("click", function () { if (prefs) { save({ subtitles_on: !prefs.subtitles_on }); } });
     spoilers.addEventListener("click", function () { if (prefs) { save({ hide_spoilers: !prefs.hide_spoilers }); } });
+    skip.addEventListener("click", function () {
+      if (!prefs) { return; }
+      var order = [null].concat(window.NLPrefs.skipChoices);
+      var at = order.indexOf(prefs.skip_seconds || null);
+      save({ skip_seconds: order[(at + 1) % order.length] });
+    });
+    autoplay.addEventListener("click", function () { if (prefs) { save({ autoplay: prefs.autoplay === false }); } });
+    quality.addEventListener("click", function () { if (prefs) { save({ quality_kbps: nextChoice(window.NLPrefs.qualityChoices, prefs.quality_kbps) }); } });
+    fit.addEventListener("click", function () { if (prefs) { save({ picture_fit: nextChoice(window.NLPrefs.fitChoices, prefs.picture_fit || "fit") }); } });
   }
 
   /* ----------------------------------------- picks for two (M6): home row */
