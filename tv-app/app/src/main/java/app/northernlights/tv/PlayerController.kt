@@ -46,6 +46,7 @@ class PlayerController(
     private var pendingSubtitleIndex: Int? = null
     private var ticks = 0
     private var subtitleStyleJson: String? = null
+    private var speed = 1.0 // bridge v4: kept across streams, a new ExoPlayer would start at 1x
 
     val isActive: Boolean get() = player != null
 
@@ -118,6 +119,7 @@ class PlayerController(
             )
             .build()
         exo.addListener(listener)
+        if (speed != 1.0) exo.setPlaybackSpeed(speed.toFloat())
         // Land on the nearest keyframe: no decoding up to an exact frame, so seeks start sooner.
         exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)
         if (req.subtitleIndex < 0) setSubtitlesOff(exo)
@@ -194,6 +196,13 @@ class PlayerController(
         p.seekTo(target)
         handler.removeCallbacks(seekedTick)
         handler.postDelayed(seekedTick, SEEKED_DEBOUNCE_MS)
+    }
+
+    /** Bridge v4: playback speed (0.75x .. 2x from the page's menu). Also applies to the streams that follow. */
+    fun setSpeed(rate: Double) {
+        if (rate.isNaN() || rate.isInfinite() || rate <= 0.0) return
+        speed = rate
+        player?.setPlaybackSpeed(rate.toFloat())
     }
 
     /** Select a side-loaded text track by the page's track index; -1 = off. */

@@ -564,8 +564,8 @@ def run(tmp):
     check("Users/ and Sessions/ are still refused", safe_proxy_path(f"Users/{LAB}/Items") is None and safe_proxy_path("Sessions/Playing") is None)
 
     print("database")
-    check("schema version is 14", db.get_schema_version() == 14, db.get_schema_version())
-    check("running the migration again changes nothing", (db.init_db() or True) and db.get_schema_version() == 14 and db.get_person_prefs("labiba") is not None)
+    check("schema version is 15", db.get_schema_version() == 15, db.get_schema_version())
+    check("running the migration again changes nothing", (db.init_db() or True) and db.get_schema_version() == 15 and db.get_person_prefs("labiba") is not None)
 
     server.nl_people = no_people
 

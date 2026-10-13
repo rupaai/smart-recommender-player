@@ -110,6 +110,7 @@
     var subDelay = 0;         // seconds added to every cue of the shown track (P16)
     var cueLevel = 0;         // 0 normal, 1 raised, 2 high (P15)
     var styleEl = null;
+    var volumeProbe = null;   // can the page set the volume? (see canSetVolume)
     var CUE_LINES = [null, -3, -6];   // cue.line: negative counts lines up from the bottom
     var CUE_SIZES = { S: 90, M: 115, L: 150, XL: 200 };   // percent of the browser's default cue size
 
@@ -261,6 +262,29 @@
       set volume(v) { video.volume = Math.max(0, Math.min(1, v)); },
       get muted() { return video.muted; },
       set muted(m) { video.muted = !!m; },
+      // Can the page set the volume at all? iPhones ignore video.volume (the hardware buttons own it), so the
+      // swipe-for-volume gesture is only offered where a probe value sticks (M7a). Asked once.
+      get canSetVolume() {
+        if (volumeProbe === null) {
+          try {
+            var before = video.volume;
+            var probe = before > 0.5 ? 0.4 : 0.6;
+            video.volume = probe;
+            volumeProbe = Math.abs(video.volume - probe) < 0.01;
+            video.volume = before;
+          } catch (e) { volumeProbe = false; }
+        }
+        return volumeProbe;
+      },
+      // Playback speed (M7a). defaultPlaybackRate keeps the choice when a new stream is loaded into the element.
+      canChangeSpeed: true,
+      get playbackRate() { return video.playbackRate; },
+      set playbackRate(r) {
+        r = Number(r);
+        if (!(r >= 0.25 && r <= 4)) { return; }
+        video.defaultPlaybackRate = r;
+        video.playbackRate = r;
+      },
 
       setTextTracks: function (list) {
         clearTextTracks();
@@ -359,8 +383,10 @@
    *   NorthernLightsNative.setSubtitle(i)   show the side-loaded text track with the page's index i, -1 = off
    *   NorthernLightsNative.setSubtitleStyle(json)   (version 3) json = {size: S|M|L|XL, background: none|shadow|box,
    *                                         raise: 0|1|2}; styles the subtitles Media3 draws (works before and during playback)
+   *   NorthernLightsNative.setSpeed(rate)   (version 4) playback speed as a string, "0.75" ... "2" (Media3 setPlaybackSpeed);
+   *                                         the page re-sends it after every "started" because a new stream starts at 1x
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
-   *   NorthernLightsNative.version()        "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *   NorthernLightsNative.version()        "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
    *                                         setSubtitle and with its own native controls: the web
    *                                         controls then stay hidden and seek() restarts the stream
    *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
@@ -390,6 +416,8 @@
   function createNative() {
     var v2 = Number(nativeVersion()) >= 2;
     var v3 = Number(nativeVersion()) >= 3;
+    var v4 = Number(nativeVersion()) >= 4;
+    var rate = 1;
     var listeners = {};
     var pos = 0;
     var dur = 0;
@@ -453,6 +481,7 @@
           ready = true;
           waiting = false;
           paused = false;
+          if (v4 && rate !== 1) { call("setSpeed", String(rate)); }   // a new native stream starts at 1x
           startTick();
           emit("loadedmetadata");
           emit("play");
@@ -562,7 +591,7 @@
 
     return {
       native: true,
-      nativeVersion: v3 ? 3 : (v2 ? 2 : 1),
+      nativeVersion: v4 ? 4 : (v3 ? 3 : (v2 ? 2 : 1)),
       load: function (src) {
         lastSrc = src;
         dur = 0;
@@ -604,6 +633,16 @@
       set volume(v) { /* the TV's own volume */ },
       get muted() { return false; },
       set muted(m) { /* the TV's own volume */ },
+      canSetVolume: false,
+      // Speed needs an app with bridge version 4; older apps keep playing at 1x and the page hides the speed menu.
+      canChangeSpeed: v4,
+      get playbackRate() { return rate; },
+      set playbackRate(r) {
+        r = Number(r);
+        if (!v4 || !(r >= 0.25 && r <= 4)) { return; }
+        rate = r;
+        if (ready && !closed) { call("setSpeed", String(rate)); }
+      },
       setTextTracks: function () { /* the native player loads them from the play() json */ },
       showTextTrack: function (id) {
         if (v2) { call("setSubtitle", id === null || id === undefined ? -1 : Number(id)); }
