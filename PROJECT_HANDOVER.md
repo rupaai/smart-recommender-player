@@ -6,8 +6,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 
 ## Branches and open work
 - `main`: the original app (ticket-look UI, recommender v2, Watch later, deployment). Schema **v11**. Also has the mood-based questions pop-up (vibe-questions T0-T4, §10.10), which the Northern Lights branch does not have yet.
-- `northern-lights-player-app`: long-lived branch for the new player and TV app (§14). Milestone PRs merge into it, not into `main`. It has milestones M0 to M5 merged (schema v13). It does not have `main`'s T1-T4 mood work; merging the two will need the schema migrations and this file reconciled.
-- **Open, pending review (stacked, merge in order into `northern-lights-player-app`):** #54 M6, #55 M7a, #56 M7b, #57 M8a, #58 M8b, #59 M9a, #60 M9b, #61 M9c, #62 M10a, #63 M10b, #64 M10c. The top of the stack (#64) is schema **v20**.
+- `northern-lights-player-app`: long-lived branch for the new player and TV app (§14). Milestone PRs merge into it, not into `main`. It has every milestone from M0 to M10c merged (schema **v20**). Nothing is open. It does not have `main`'s T1-T4 mood work; merging the two will need the schema migrations and this file reconciled.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
@@ -93,21 +92,21 @@ Live on `mars`. Docker Compose stack in `/srv/couchcinema` (app + Jellyfin + Pro
 
 ## 14. Northern Lights player and TV app
 Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H, D) are in `docs/northern-lights/`. Pages: web `/nl/…`, TV `/nl/tv/…`, player `/nl/play/{id}` (`?source=` for an episode, `?tv=1` for the remote).
-- **M0-M1 Player** (merged into the branch): `jellyfin_playback.py`, `device_profiles.py` (browser profile from probed codecs), `static/nl/player-core.js` (the only file touching hls.js, the `<video>` or the native bridge), `player.js`. Audio and subtitle menus, resume, skip-length chip, progress reports.
+- **M0-M1 Player** (merged): `jellyfin_playback.py`, `device_profiles.py` (browser profile from probed codecs), `static/nl/player-core.js` (the only file touching hls.js, the `<video>` or the native bridge), `player.js`. Audio and subtitle menus, resume, skip-length chip, progress reports.
 - **M2 Browse** (merged): `nl_browse.py`, home with Continue Watching, Movies, Shows, title and show pages, search, next-episode card and per-show autoplay. Titles whose files are gone are hidden.
 - **M3 TV** (merged): TV pages with `static/nl/tv/focus.js`; Android app in `tv-app/` (WebView in front of a headless Media3 player, bridge `window.NorthernLightsNative`, now **v4**); APK built by `.github/workflows/tv-app.yml`, debug-signed with the committed keystore.
 - **M5 Subtitles** (merged): search and download through Jellyfin's OpenSubtitles plugin, appearance (size, background, position), delay (web only).
 - **M4 Who's watching** (merged): people in `northern_lights.people` config, cookie `nl_viewer` (a person or "Both of us"), per-person Jellyfin user, progress written for each viewer, per-person prefs (`/api/nl/prefs`), finishes rated to the right profiles.
-- **M6 Picks for two** (PR #54, `nl_picks.py`): watchlist with shared and "Just me" titles, yes / maybe / pass, a "For both of us" row from the existing recommender, runtime chips.
-- **M7a Player polish** (PR #55, `nl_player_extras.py`): trickplay thumbnails, chapters, skip intro / credits, phone gestures, speed.
-- **M7b Browse polish** (PR #56, `nl_polish_b.py`): Recently added / watched, Unwatched only, hide from home, cast and crew, trailer, tech details, More like this.
-- **M8 Casting**: M8a (PR #57, `nl_cast.py`): Chromecast sender, receiver page, cast profile, signed stream tokens, hand-back to the phone. M8b (PR #58, `nl_type.py`): type TV searches on the phone via a code and QR.
-- **M9a Together** (PR #59, `nl_together.py`): seen-together marks, watch-together pact, mark unwatched for one person.
-- **M9b Choosing** (PR #60, `nl_choose.py`): Choose for us, weekday and time-of-day defaults, Not tonight / Never vetoes, rotating chooser.
-- **M9c Reactions and spoilers** (PR #61, `nl_reactions.py`): "How was it?" after a film or a show's last episode (writes verdicts), spoiler-hidden episode lists.
-- **M10a Downloads** (PR #62, `nl_downloads.py`): download states, plain-words errors, Retry.
-- **M10b Status and admin** (PR #63, `nl_health.py`): header status (Jellyfin, disk, queue), web-only `/nl/admin`.
-- **M10c Settings and picture** (PR #64, `nl_settings.py`, `nl_picture.py`): per-person skip length, autoplay, quality cap, picture size; conversion notes; audio-description labels.
+- **M6 Picks for two** (merged, `nl_picks.py`): watchlist with shared and "Just me" titles, yes / maybe / pass, a "For both of us" row from the existing recommender, runtime chips.
+- **M7a Player polish** (merged, `nl_player_extras.py`): trickplay thumbnails, chapters, skip intro / credits, phone gestures, speed.
+- **M7b Browse polish** (merged, `nl_polish_b.py`): Recently added / watched, Unwatched only, hide from home, cast and crew, trailer, tech details, More like this.
+- **M8 Casting**: M8a (merged, `nl_cast.py`): Chromecast sender, receiver page, cast profile, signed stream tokens, hand-back to the phone. M8b (merged, `nl_type.py`): type TV searches on the phone via a code and QR.
+- **M9a Together** (merged, `nl_together.py`): seen-together marks, watch-together pact, mark unwatched for one person.
+- **M9b Choosing** (merged, `nl_choose.py`): Choose for us, weekday and time-of-day defaults, Not tonight / Never vetoes, rotating chooser.
+- **M9c Reactions and spoilers** (merged, `nl_reactions.py`): "How was it?" after a film or a show's last episode (writes verdicts), spoiler-hidden episode lists.
+- **M10a Downloads** (merged, `nl_downloads.py`): download states, plain-words errors, Retry.
+- **M10b Status and admin** (merged, `nl_health.py`): header status (Jellyfin, disk, queue), web-only `/nl/admin`.
+- **M10c Settings and picture** (merged, `nl_settings.py`, `nl_picture.py`): per-person skip length, autoplay, quality cap, picture size; conversion notes; audio-description labels.
 - Nothing in M0-M10 has been checked against a real Jellyfin with two users, a real TV running the current APK, or a real Chromecast; each milestone was checked in headless Chromium with a fake Jellyfin.
 
 ## 15. Waiting on Labiba (by hand)
