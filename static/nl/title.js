@@ -37,6 +37,11 @@
       facts.push(NL.fmtRuntime(t.runtime));
     }
     head.appendChild(NL.el("p", "nl-facts", facts.join(" · ")));
+    if (t.together && window.NLCouple) {
+      var seen = window.NLCouple.togetherBadge(false);
+      seen.classList.add("nl-together-detail");
+      head.appendChild(seen);   // M9a
+    }
     if (t.genres && t.genres.length) {
       var gl = NL.el("ul", "nl-genres");
       t.genres.forEach(function (g) { gl.appendChild(NL.el("li", null, g)); });

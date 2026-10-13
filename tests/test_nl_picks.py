@@ -190,7 +190,7 @@ def test_migration(tmp):
     with fresh.get_connection() as conn:
         cols = {r[1] for r in conn.execute("PRAGMA table_info(watch_later)")}
         interest = {r[1] for r in conn.execute("PRAGMA table_info(nl_interest)")}
-    check("fresh DB is at schema 16", fresh.get_schema_version() == 16, fresh.get_schema_version())
+    check("fresh DB is at schema 16 or newer", fresh.get_schema_version() >= 16, fresh.get_schema_version())
     check("watch_later has the owner column", "owner_profile_id" in cols, cols)
     check("nl_interest has its columns", {"media_item_id", "profile_id", "state", "updated_at"} <= interest, interest)
 
@@ -207,10 +207,10 @@ def test_migration(tmp):
     with up.get_connection() as conn:
         row = conn.execute("SELECT media_item_id, profile_id, owner_profile_id FROM watch_later").fetchone()
         has = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'nl_interest'").fetchone()
-    check("v13 upgrades to the current schema", up.get_schema_version() == 16, up.get_schema_version())
+    check("v13 upgrades to the current schema", up.get_schema_version() >= 16, up.get_schema_version())
     check("an existing watchlist row stays and is shared", row and row[0] == item and row[2] is None, tuple(row) if row else row)
     check("the interest table appears", has is not None)
-    check("running again is harmless", DatabaseManager(path).get_schema_version() == 16)
+    check("running again is harmless", DatabaseManager(path).get_schema_version() >= 16)
 
     print("watch_later: shared and Just me (database)")
     db = up

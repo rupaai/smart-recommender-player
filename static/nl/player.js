@@ -553,7 +553,12 @@
       position_seconds: Math.max(0, player.currentTime || 0),
       paused: player.paused,
       event: event,
-      play_method: st.play_method || "DirectPlay"
+      play_method: st.play_method || "DirectPlay",
+      // M9: which title this is and how far it got, so the server can tell "finished" (seen together).
+      media_item_id: Number(itemId) || undefined,
+      source_id: S.sourceId || undefined,
+      duration_seconds: duration() || undefined,
+      ended: !!S.ended
     };
   }
   function report(event, beacon) {
@@ -926,6 +931,37 @@
       var note = opts.fromNext ? "" : (stream.resume_note || "");   // M4: "You're at 42:10, Sam is at 38:00"
       var choice = opts.fromNext ? "0" : urlResume;
       urlResume = null;                      // the link only decides the first load
+      if (stream.together_prompt) {
+        // M9a (U5): the show is "watch together" and one person is about to start the episode alone.
+        var ask = stream.together_prompt;
+        $("nl-resume-name").textContent = ask.text + (ask.note ? "\n" + ask.note : "");
+        $("nl-resume-yes").textContent = ask.yes || "Watch anyway";
+        $("nl-resume-no").textContent = ask.no || "Not now";
+        $("nl-resume").hidden = false;
+        showControls();
+        $("nl-resume-yes").focus();
+        $("nl-resume-yes").onclick = function () {
+          $("nl-resume").hidden = true;
+          stream.together_prompt = null;
+          proceed(stream, choice, resumeAt, note);
+        };
+        $("nl-resume-no").onclick = function () {
+          $("nl-resume").hidden = true;
+          $("nl-resume-no").textContent = "Start over";
+          leave();
+        };
+        return;
+      }
+      proceed(stream, choice, resumeAt, note);
+    }).catch(function (err) {
+      S.advancing = false;
+      $("nl-buffering").hidden = true;
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
+    });
+  }
+  // Starts a loaded stream: straight away when the link already chose, else after the Resume question.
+  function proceed(stream, choice, resumeAt, note) {
+    try {
       if (choice === "0") {
         begin(stream, 0);
       } else if (choice === "1" && resumeAt > 0 && !stream.played) {
@@ -944,11 +980,9 @@
         begin(stream, 0);
       }
       if (note) { toast(note, 6000); }
-    }).catch(function (err) {
-      S.advancing = false;
-      $("nl-buffering").hidden = true;
-      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
-    });
+    } catch (err) {
+      showError(err.message);
+    }
   }
   function begin(stream, at) {
     if (isNativeV1 && S.nextPromise) {
@@ -1087,7 +1121,9 @@
   player.on("ended", function () {
     renderPlayState();
     showControls();
+    S.ended = true;
     stopReporting(false);
+    S.ended = false;
     if (S.next && S.next.autoplay && !S.nextCancelled) { advanceToNext(); }
   });
   // Events only the native adapter emits (the Android app's player, see player-core.js).

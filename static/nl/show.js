@@ -41,7 +41,32 @@
     a.setAttribute("aria-label", (e.code ? e.code + ", " : "") + e.name + (e.played ? ", watched" : "") +
       (e.progress && !e.played ? ", " + e.progress + " percent watched" : ""));
     li.appendChild(a);
+    if (e.together && window.NLCouple) { text.appendChild(window.NLCouple.togetherBadge(false)); }   // M9a
+    if (window.NLCouple && (e.played || e.progress)) { unwatchButtons(li, e); }
     return li;
+  }
+
+  // U6: "Mark unwatched for me" (one button per person on "Both of us"), beside the episode link.
+  function unwatchButtons(li, e) {
+    window.NLCouple.unwatchLabels(show.unwatch_people).forEach(function (entry) {
+      var b = NL.el("button", "nl-unwatch", entry.label);
+      b.type = "button";
+      b.addEventListener("click", function () {
+        b.disabled = true;
+        window.NLCouple.unwatch(id, e.source_id, entry.person).then(function () {
+          e.played = false;
+          e.progress = 0;
+          e.resume_seconds = 0;
+          e.together = false;
+          NL.setStatus("Marked unwatched.");
+          showSeason(season);
+        }).catch(function () {
+          b.disabled = false;
+          NL.setStatus("Couldn\u2019t mark that unwatched. Is Jellyfin reachable?");
+        });
+      });
+      li.appendChild(b);
+    });
   }
 
   function showSeason(number) {
@@ -136,6 +161,14 @@
       info.appendChild(NL.el("p", "nl-meta nl-next-name", s.next_up.name));
     }
     info.appendChild(autoplaySwitch());
+    if (window.NLCouple) {
+      var pactBox = window.NLCouple.pactSwitch(s.id, s.pact);   // M9a: only with two people configured
+      if (pactBox) { pactBox.classList.add("nl-pact"); info.appendChild(pactBox); }
+      if (s.together_count) {
+        info.appendChild(NL.el("p", "nl-meta nl-together-count", "Watched together: " + s.together_count +
+          (s.together_count === 1 ? " episode" : " episodes")));
+      }
+    }
     if (!s.jellyfin) {
       info.appendChild(NL.el("p", "nl-meta nl-note", "Watched ticks and Next up need Jellyfin, which isn’t answering right now."));
     }

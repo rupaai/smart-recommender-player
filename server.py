@@ -57,6 +57,7 @@ from services.jellyfin_playback import (
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
+from services import nl_together
 from services.nl_people import (
     BOTH,
     COOKIE_MAX_AGE,
@@ -936,8 +937,9 @@ async def _nl_play(
         info = await asyncio.to_thread(
             _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer
         )
+        states: Dict[str, Dict[str, Any]] = {}
         if nl_people.configured and info.get("jellyfin_id"):
-            await asyncio.to_thread(_apply_resume_rule, viewer, info)
+            states = await asyncio.to_thread(_apply_resume_rule, viewer, info)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
@@ -947,7 +949,19 @@ async def _nl_play(
     info["media_item_id"] = item_id
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
+    info["together_prompt"] = await asyncio.to_thread(_pact_prompt_for, viewer, item_id, item, chosen, states)
     return info
+
+
+def _pact_prompt_for(viewer: Viewer, item_id: int, item: Dict[str, Any], chosen: Dict[str, Any], states) -> Optional[Dict[str, Any]]:
+    """U5: the "You said you'd watch this together" question for this play, or None."""
+    if item.get("media_type") != "tv" or not nl_together.together_possible(nl_people.people) or viewer.is_both:
+        return None
+    if not db.get_pact(item_id):
+        return None
+    return nl_together.pact_prompt(
+        viewer, nl_people.people, states or {}, True, chosen["id"] in db.get_seen_together(item_id)
+    )
 
 
 @app.get("/api/nl/cast/config")
@@ -985,10 +999,11 @@ def _stream_for_viewer(item, audio, subtitle, start, profile, prefer):
     return jellyfin_playback.stream_for(item, audio, subtitle, start, profile)
 
 
-def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> None:
+def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Resume from the viewer's own progress; for Both the further of the two. Adds `resume_note`
     ("You're at 42:10, Sam is at 38:00") when they differ by more than two minutes. Jellyfin trouble
-    for the other person never blocks playback."""
+    for the other person never blocks playback. Returns each person's {position, played} (the pact question
+    reads it too)."""
     primary = viewer.primary
     states: Dict[str, Dict[str, Any]] = {}
     if primary is not None:
@@ -1011,6 +1026,7 @@ def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> None:
         info["resume_seconds"] = summary["resume_seconds"]
         info["played"] = summary["played"]
     info["resume_note"] = summary["note"]
+    return states
 
 
 def _nl_subtitle_item(item_id: int, source: Optional[int]) -> Dict[str, Any]:
@@ -1154,6 +1170,11 @@ class NLProgressRequest(BaseModel):
     paused: bool = False
     event: Literal["start", "progress", "stop"]
     play_method: str = "DirectPlay"
+    # M9: which title this is (the page knows), the length and whether the player reached the end.
+    media_item_id: Optional[int] = Field(None, ge=1)
+    source_id: Optional[int] = Field(None, ge=1)
+    duration_seconds: Optional[float] = Field(None, ge=0)
+    ended: bool = False
 
 
 def _report_to_users(users: List[Optional[str]], call) -> None:
@@ -1191,6 +1212,12 @@ async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any
         )
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
+    # M9a: "Both of us" finishing a title is the one thing that marks it as seen together.
+    if (
+        req.event == "stop" and req.media_item_id and viewer.is_both and nl_together.together_possible(nl_people.people)
+        and nl_together.is_finished(req.position_seconds, req.duration_seconds, req.ended)
+    ):
+        await asyncio.to_thread(db.mark_seen_together, req.media_item_id, req.source_id)
     return {"success": True}
 
 
@@ -1270,6 +1297,8 @@ async def nl_title_data(item_id: int, request: Request) -> Dict[str, Any]:
     if not data:
         raise HTTPException(status_code=404, detail="That title isn't in the library.")
     data["hidden"] = item_id in await asyncio.to_thread(db.get_hidden_ids, viewer.key)
+    together = nl_together.together_possible(nl_people.people)
+    data["together"] = bool(together and data.get("media_type") != "tv" and 0 in await asyncio.to_thread(db.get_seen_together, item_id))
     return data
 
 
@@ -1303,7 +1332,84 @@ async def nl_show_data(item_id: int, request: Request) -> Dict[str, Any]:
     data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.show, item_id)
     if not data:
         raise HTTPException(status_code=404, detail="That show isn't in the library.")
+    await asyncio.to_thread(_add_together_to_show, data, item_id, viewer)
     return data
+
+
+def _add_together_to_show(data: Dict[str, Any], item_id: int, viewer: Viewer) -> None:
+    """M9a: the pact switch, the episodes seen together and (for the person-specific "Mark unwatched")
+    who can be reset. With fewer than two people configured none of it is offered."""
+    possible = nl_together.together_possible(nl_people.people)
+    seen = db.get_seen_together(item_id) if possible else set()
+    for season in data.get("seasons") or []:
+        for ep in season.get("episodes") or []:
+            ep["together"] = ep["source_id"] in seen
+    data["together_count"] = len(seen)
+    data["pact"] = {"available": possible, "together": bool(possible and db.get_pact(item_id))}
+    data["unwatch_people"] = _unwatch_choices(viewer)
+
+
+def _unwatch_choices(viewer: Viewer) -> List[Dict[str, str]]:
+    """Whom "Mark unwatched" can reset from this screen: the one person, or each of the two on "Both of us".
+    Empty list = the implicit single viewer (no person to name)."""
+    return [{"id": p.id, "name": p.name} for p in viewer.people]
+
+
+class NLPactBody(BaseModel):
+    together: bool
+
+
+@app.get("/api/nl/show/{item_id}/pact")
+async def nl_show_pact_get(item_id: int) -> Dict[str, Any]:
+    """Is "We watch this together" on for this show? Only offered with two or more people configured."""
+    possible = nl_together.together_possible(nl_people.people)
+    return {"available": possible, "together": bool(possible and await asyncio.to_thread(db.get_pact, item_id))}
+
+
+@app.put("/api/nl/show/{item_id}/pact")
+async def nl_show_pact_set(item_id: int, body: NLPactBody) -> Dict[str, Any]:
+    """Switches the watch-together pact for a show on or off (it belongs to the pair, not to one person)."""
+    if not nl_together.together_possible(nl_people.people):
+        raise HTTPException(status_code=400, detail="Watching together needs two people in the config.")
+    try:
+        value = await asyncio.to_thread(db.set_pact, item_id, body.together)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"available": True, "together": value}
+
+
+class NLUnwatchBody(BaseModel):
+    source_id: Optional[int] = None   # which episode of a show
+    person: Optional[str] = None      # whose data; needed on "Both of us"
+
+
+@app.post("/api/nl/unwatch/{item_id}")
+async def nl_unwatch(item_id: int, body: NLUnwatchBody, request: Request) -> Dict[str, Any]:
+    """U6, "Mark unwatched for me": resets the played flag and resume position of ONE person's Jellyfin
+    user for an episode or movie. On "Both of us" `person` says whose; nobody else's data is touched. The
+    together mark of that title goes too, since it is no longer seen by both."""
+    viewer = _nl_viewer_or_default(request)
+    if viewer.implicit:
+        person_user: Optional[str] = None
+        person_id = None
+    else:
+        wanted = (body.person or "").strip().lower() or (viewer.primary.id if not viewer.is_both else "")
+        if not wanted:
+            raise HTTPException(status_code=400, detail="Say whose watched state to reset.")
+        person = next((p for p in viewer.people if p.id == wanted), None)
+        if person is None:
+            raise HTTPException(status_code=403 if nl_people.get(wanted) else 400, detail="That person isn't at the screen.")
+        person_user, person_id = person.jellyfin_user_id, person.id
+    item = _nl_subtitle_item(item_id, body.source_id)
+    try:
+        jf_id = await asyncio.to_thread(jellyfin_playback._subtitle_item_id, item)
+        await asyncio.to_thread(_as_user, person_user, jellyfin_playback.reset_user_data, jf_id)
+    except ItemNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except JellyfinUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    await asyncio.to_thread(db.clear_seen_together, item_id, item["sources"][0]["id"] if item.get("media_type") == "tv" else 0)
+    return {"success": True, "person": person_id}
 
 
 class NLShowPrefs(BaseModel):

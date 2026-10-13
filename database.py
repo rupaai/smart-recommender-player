@@ -145,6 +145,7 @@ class DatabaseManager:
             self._migrate_v14_nl_picks(cursor)
             self._migrate_v15_nl_polish_a(cursor)
             self._migrate_v16_nl_polish_b(cursor)
+            self._migrate_v17_nl_together(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -832,6 +833,38 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 16;")
             print("[Database] Migration v16 applied: nl_hidden_titles added.")
 
+    def _migrate_v17_nl_together(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9a (couple extras).
+
+          nl_seen_together   a title (or one episode: source_id) "Both of us" finished. Movies use
+                             source_id 0. One row per title / episode, whoever it was played with.
+          nl_pacts           "We watch this together" for a show; a row means the pact is on.
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_seen_together (
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                source_id      INTEGER NOT NULL DEFAULT 0,
+                seen_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_item_id, source_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_pacts (
+                media_item_id  INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 17:
+            cursor.execute("PRAGMA user_version = 17;")
+            print("[Database] Migration v17 applied: nl_seen_together, nl_pacts added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1431,6 +1464,78 @@ class DatabaseManager:
                 (media_item_id, viewer_key, 1 if skip_intro else 0),
             )
         return bool(skip_intro)
+
+    # ------------------------------------------------------------------ Northern Lights couple extras (M9a)
+
+    def _together_changed(self) -> None:
+        self._together_cache = None
+
+    def mark_seen_together(self, media_item_id: int, source_id: Optional[int] = None) -> bool:
+        """Records that both of them finished this movie / episode. Movies are stored with source_id 0.
+        Returns False for an unknown title or an episode that is not one of its files."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row:
+                return False
+            sid = 0
+            if row["media_type"] == "tv":
+                if not source_id or not conn.execute(
+                    "SELECT 1 FROM media_sources WHERE id = ? AND media_item_id = ?;", (source_id, media_item_id)
+                ).fetchone():
+                    return False
+                sid = int(source_id)
+            conn.execute(
+                "INSERT INTO nl_seen_together (media_item_id, source_id) VALUES (?, ?) "
+                "ON CONFLICT(media_item_id, source_id) DO UPDATE SET seen_at = CURRENT_TIMESTAMP;",
+                (media_item_id, sid),
+            )
+        self._together_changed()
+        return True
+
+    def clear_seen_together(self, media_item_id: int, source_id: Optional[int] = None) -> None:
+        """Takes the together mark off (one of them watched it again from the start, or reset it)."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM nl_seen_together WHERE media_item_id = ? AND source_id = ?;",
+                (media_item_id, int(source_id or 0)),
+            )
+        self._together_changed()
+
+    def get_seen_together(self, media_item_id: int) -> set:
+        """source ids of the episodes seen together (0 = the movie itself)."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT source_id FROM nl_seen_together WHERE media_item_id = ?;", (media_item_id,)).fetchall()
+        return {int(r["source_id"]) for r in rows}
+
+    def get_together_counts(self) -> Dict[int, int]:
+        """{media_item_id: how many of its files were seen together}. Cached until the next write: every
+        poster card asks."""
+        cache = getattr(self, "_together_cache", None)
+        if cache is None:
+            with self.get_connection() as conn:
+                rows = conn.execute("SELECT media_item_id, COUNT(*) AS n FROM nl_seen_together GROUP BY media_item_id;").fetchall()
+            cache = {int(r["media_item_id"]): int(r["n"]) for r in rows}
+            self._together_cache = cache
+        return cache
+
+    def get_pact(self, media_item_id: int) -> bool:
+        with self.get_connection() as conn:
+            return conn.execute("SELECT 1 FROM nl_pacts WHERE media_item_id = ?;", (media_item_id,)).fetchone() is not None
+
+    def set_pact(self, media_item_id: int, on: bool) -> bool:
+        """"We watch this together" for one show. Raises ValueError if it is not a show."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row or row["media_type"] != "tv":
+                raise ValueError("a watch-together pact is for TV shows")
+            if on:
+                conn.execute(
+                    "INSERT INTO nl_pacts (media_item_id) VALUES (?) ON CONFLICT(media_item_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP;",
+                    (media_item_id,),
+                )
+            else:
+                conn.execute("DELETE FROM nl_pacts WHERE media_item_id = ?;", (media_item_id,))
+        return bool(on)
 
     # ------------------------------------------------------------------ Northern Lights browse polish (M7b)
 

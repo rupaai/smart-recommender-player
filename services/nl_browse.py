@@ -359,6 +359,7 @@ class NLBrowse:
             "image_fallback": self._movie_fallback(row),
             "badge": badge,
             "progress": progress or None,
+            "together": self.db.get_together_counts().get(row["id"], 0) > 0,   # M9a: seen together
             "href": f"/nl/{'show' if is_show else 'title'}/{row['id']}",
         }
 

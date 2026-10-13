@@ -53,11 +53,13 @@
     } else if (item.badge) {
       art.appendChild(el("span", "tv-badge", item.badge));
     }
+    if (item.together && window.NLCouple) { art.appendChild(window.NLCouple.togetherBadge(true)); }   // M9a
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", item.title));
     a.appendChild(el("div", "tv-meta", NL.metaLine(item)));
     var label = item.title + (item.year ? " (" + item.year + ")" : "");
     if (item.progress) { label += ", " + item.progress + " percent watched"; } else if (item.badge) { label += ", " + item.badge; }
+    if (item.together) { label += ", watched together"; }
     a.setAttribute("aria-label", label);
     li.appendChild(a);
     return li;
@@ -327,15 +329,24 @@
   var show = null;
   var episodesBox = null;
   var seasonRow = null;
+  var curSeason = null;
+  var unwatchMode = null;        // M9a: {person, label} while "Mark unwatched" waits for an episode
+  var unwatchHint = null;
 
   function episodeCard(e) {
     var li = el("li", "tv-item tv-item-wide");
     var a = el("a", "tv-card" + (e.played ? " is-played" : ""));
     a.href = tvHref(e.href);
     a.setAttribute("data-nl-focus", "");
+    a.addEventListener("click", function (ev) {
+      if (!unwatchMode) { return; }
+      ev.preventDefault();
+      markUnwatched(e);
+    });
     var art = el("div", "tv-art tv-still");
     NL.fillImage(art, [e.image], e.code || ("E" + (e.episode || "")));
     if (e.progress) { art.appendChild(NL.progressBar(e.progress)); }
+    if (e.together && window.NLCouple) { art.appendChild(window.NLCouple.togetherBadge(true)); }   // M9a
     if (e.played) {
       var tick = el("span", "tv-tick", "✓");
       tick.setAttribute("role", "img");
@@ -354,7 +365,81 @@
     return li;
   }
 
+  function setUnwatchMode(mode) {
+    unwatchMode = mode;
+    if (unwatchHint) {
+      unwatchHint.hidden = !mode;
+      unwatchHint.textContent = mode ? "Pick the episode, then press OK. " + mode.label + ". Back cancels." : "";
+    }
+  }
+
+  function markUnwatched(e) {
+    var mode = unwatchMode;
+    if (!e.played && !e.progress) {
+      unwatchHint.textContent = "That episode isn\u2019t marked as watched. Pick another, or press Back.";
+      return;
+    }
+    setUnwatchMode(null);
+    unwatchHint.hidden = false;
+    unwatchHint.textContent = "Working\u2026";
+    window.NLCouple.unwatch(itemId, e.source_id, mode.person).then(function () {
+      e.played = false; e.progress = 0; e.resume_seconds = 0; e.together = false;
+      unwatchHint.textContent = "Marked unwatched.";
+      var col = episodesBox._nlCol;
+      showSeason(curSeason);
+      var again = episodesBox.querySelectorAll("[data-nl-focus]")[Math.min(col, episodesBox.children.length - 1)];
+      if (again) { window.NLFocus.focus(again); }
+    }).catch(function () {
+      unwatchHint.textContent = "Couldn\u2019t mark that unwatched. Is Jellyfin reachable?";
+    });
+  }
+
+  // U6: one button per person who can be reset ("Mark unwatched for me", or each name on Both of us).
+  function unwatchButtons(actions) {
+    unwatchHint = el("p", "tv-unwatch-hint");
+    unwatchHint.setAttribute("role", "status");
+    unwatchHint.hidden = true;
+    window.NLCouple.unwatchLabels(show.unwatch_people).forEach(function (entry) {
+      var b = el("button", "tv-btn", entry.label);
+      b.type = "button";
+      b.setAttribute("data-nl-focus", "");
+      b.addEventListener("click", function () {
+        setUnwatchMode(unwatchMode && unwatchMode.person === entry.person ? null : entry);
+        if (unwatchMode) {
+          var first = episodesBox.querySelector("[data-nl-focus]");
+          if (first) { window.NLFocus.focus(first); }
+        }
+      });
+      actions.appendChild(b);
+    });
+  }
+
+  // M9a: "We watch this together", only with two people configured.
+  function pactSwitch() {
+    var pact = show.pact;
+    if (!pact || !pact.available) { return null; }
+    var box = document.createElement("button");
+    box.type = "button";
+    box.className = "tv-btn tv-switch";
+    box.setAttribute("data-nl-focus", "");
+    box.setAttribute("role", "switch");
+    var state = el("span", "tv-switch-state");
+    box.appendChild(el("span", "tv-switch-label", "We watch this together"));
+    box.appendChild(state);
+    function paint(on) { box.setAttribute("aria-checked", String(!!on)); state.textContent = on ? "On" : "Off"; }
+    paint(pact.together);
+    box.addEventListener("click", function () {
+      var want = box.getAttribute("aria-checked") !== "true";
+      paint(want);
+      NL.fetchJSON("/api/nl/show/" + encodeURIComponent(itemId) + "/pact", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ together: want })
+      }).then(function (r) { pact.together = r.together; paint(r.together); }).catch(function () { paint(!want); });
+    });
+    return box;
+  }
+
   function showSeason(number) {
+    curSeason = number;
     lsSet("nl.season." + itemId, number);
     episodesBox.textContent = "";
     episodesBox._nlCol = 0;
@@ -416,9 +501,14 @@
     actions.setAttribute("data-nl-row", "actions");
     if (s.next_up) { actions.appendChild(button(s.next_up.text, s.next_up.href, true)); }
     actions.appendChild(autoplaySwitch());
+    var pact = window.NLCouple ? pactSwitch() : null;
+    if (pact) { actions.appendChild(pact); }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title, "tv-btn")); }
     h.info.appendChild(actions);
     addInterest(h.info, s.id);
+    if (s.together_count) {
+      h.info.appendChild(el("p", "tv-meta", "Watched together: " + s.together_count + (s.together_count === 1 ? " episode" : " episodes")));
+    }
     if (!s.jellyfin) {
       h.info.appendChild(el("p", "tv-meta", "Watched ticks and Next up need Jellyfin, which isn’t answering right now."));
     }
@@ -446,6 +536,13 @@
     }
     episodesBox = el("ul", "tv-row");
     episodesBox.setAttribute("data-nl-row", "episodes");
+    if (window.NLCouple && s.seasons.some(function (sn) { return sn.episodes.some(function (x) { return x.played || x.progress; }); })) {
+      var tools = el("div", "tv-seasons");
+      tools.setAttribute("data-nl-row", "episode-tools");
+      unwatchButtons(tools);
+      section.appendChild(tools);
+      section.appendChild(unwatchHint);
+    }
     section.appendChild(episodesBox);
     root.appendChild(section);
 
@@ -457,6 +554,11 @@
     root.hidden = false;
     setStatus("");
     window.NLFocus.start();
+    window.NLFocus.onBack(function () {
+      if (!unwatchMode) { return false; }
+      setUnwatchMode(null);
+      return true;
+    });
   }
 
   function initShow() {
