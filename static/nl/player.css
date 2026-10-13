@@ -233,3 +233,17 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 @media (max-width: 640px) {
   #nl-chapters, #nl-speed { padding: 0 6px; }
 }
+
+/* Casting (M8): the phone is the remote. The empty <video> sits behind; the controls stay up, the card sits between the bars. */
+.nl-player.casting { background: radial-gradient(120% 90% at 50% 40%, #1d1b29 0%, #000 70%); }
+.nl-player.casting::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: linear-gradient(90deg, #08714d, #0a6378, #4a30bd, #9c1f6b, #2fc495); z-index: 3; pointer-events: none; }
+.nl-cast-panel { position: absolute; left: 0; right: 0; top: 72px; bottom: 168px; z-index: 2; display: flex; align-items: center;
+  justify-content: center; padding: 0 24px; pointer-events: none; }
+.nl-cast-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: center; pointer-events: auto; }
+.nl-cast-device { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.nl-cast-panel .nl-hint { margin: 0 0 8px; color: var(--nl-ink-2); font-size: 0.9rem; }
+.nl-cast-panel .nl-secondary { min-height: 48px; }
+.casting .nl-center { display: none; }
+#nl-cast.on { color: var(--nl-accent); }
+.casting .nl-player video, .nl-player.casting video { visibility: hidden; }

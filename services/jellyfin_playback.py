@@ -82,18 +82,31 @@ def strip_api_key(url: str) -> str:
     return out + (hash_sep + fragment if hash_sep else "")
 
 
-def rewrite_playlist(text: str) -> str:
+def append_token(url: str, token: str) -> str:
+    """Adds t=<token> (a cast stream token, M8) to a URL's query, before any #fragment."""
+    base, hash_sep, fragment = url.partition("#")
+    out = f"{base}{'&' if '?' in base else '?'}t={quote(token, safe='')}"
+    return out + (hash_sep + fragment if hash_sep else "")
+
+
+def rewrite_playlist(text: str, token: Optional[str] = None) -> str:
     """Strip API keys from an .m3u8 body: URI lines, and URI="..." attributes in # tags.
-    Other tag lines are left alone."""
+    Other tag lines are left alone. With a cast `token` (M8) every URI also gets t=<token>: the
+    Chromecast fetches the segments itself and a relative URI does not inherit the playlist's query."""
+
+    def fix(uri: str) -> str:
+        uri = strip_api_key(uri)
+        return append_token(uri, token) if token and not uri.lower().startswith("data:") else uri
+
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             lines.append(line)
         elif stripped.startswith("#"):
-            lines.append(_URI_ATTR.sub(lambda m: 'URI="%s"' % strip_api_key(m.group(1)), line))
+            lines.append(_URI_ATTR.sub(lambda m: 'URI="%s"' % fix(m.group(1)), line))
         else:
-            lines.append(strip_api_key(stripped))
+            lines.append(fix(stripped))
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 

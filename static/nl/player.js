@@ -29,7 +29,7 @@
   var query = new URLSearchParams(window.location.search);
   var urlSource = Number(query.get("source")) || null;   // which episode of a show (media_sources.id)
   var urlResume = query.get("resume");                    // "1" resume, "0" start over: skip the prompt
-  var player = NLPlayerCore.create(video);
+  var localPlayer = NLPlayerCore.create(video);
   // On a TV (?tv=1, or inside the Android app) everything works with a remote; phones and laptops are untouched.
   var isNative = NLPlayerCore.isNative();          // the Android app decodes through Media3 behind this transparent page
   // Bridge v2 (pause/resume/seekTo/setSubtitle + "time" events): the web controls drive the native player.
@@ -47,6 +47,11 @@
   }
   if (isNativeV1) { root.classList.add("native-v1"); }
   var TV_ROOT = "/nl/tv/";
+  // M8 casting: `player` is the <video> adapter, or the Chromecast while one is connected (cast.js swaps it).
+  // Phones and laptops only; the TV app never casts.
+  var castKit = window.NLCast ? NLCast.attach(window, localPlayer, !isTv) : null;
+  var player = castKit ? castKit.player : localPlayer;
+  function casting() { return !!(castKit && castKit.active()); }
 
   var S = {
     stream: null,
@@ -137,7 +142,7 @@
     return !$("nl-resume").hidden || !$("nl-error").hidden || !$("nl-help").hidden || !$("nl-subfind").hidden;
   }
   function canHide() {
-    return !player.paused && !S.menuOpen && !S.scrubbing && !screenOpen();
+    return !player.paused && !S.menuOpen && !S.scrubbing && !screenOpen() && !casting();
   }
   function showControls() {
     root.classList.add("controls-visible");
@@ -775,12 +780,12 @@
       if (!found.added) {
         throw new Error("Saved, but Jellyfin hasn’t listed it yet. Look in the Subtitles menu in a moment.");
       }
-      if (isNative) {
+      if (isNative || casting()) {   // the TV reads side-loaded tracks only when a stream starts
         S.textIndex = found.added.index;
         stopReporting(false);
         $("nl-buffering").hidden = false;
         applyStream(found.stream, pos);
-        if (resume) { playNow(); }
+        if (resume && !casting()) { playNow(); }
         toast("Subtitles: " + found.added.label);
         return;
       }
@@ -804,12 +809,13 @@
 
   function fetchPlay(params) {
     // The Android app decodes far more than a browser: it asks for the TV profile instead of sending caps.
-    var qs = [isNative ? "client=tv" : "caps=" + encodeURIComponent(capsString())];
+    // While casting the Chromecast is what plays: the cast endpoint answers with the cast profile and LAN URLs.
+    var qs = casting() ? [] : [isNative ? "client=tv" : "caps=" + encodeURIComponent(capsString())];
     if (params.audio !== undefined && params.audio !== null) { qs.push("audio=" + encodeURIComponent(params.audio)); }
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
     if (S.sourceId) { qs.push("source=" + encodeURIComponent(S.sourceId)); }
-    var url = "/api/nl/play/" + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
+    var url = (casting() ? "/api/nl/cast/play/" : "/api/nl/play/") + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
     return fetch(url).then(function (resp) {
       return resp.json().catch(function () { return {}; }).then(function (body) {
         if (!resp.ok) {
@@ -828,13 +834,16 @@
   }
 
   function applyStream(stream, startAt) {
+    // A stream fetched for the browser while a TV is connected (a lookup that was still in flight): fetch the TV's.
+    if (casting() && !stream.cast) { S.stream = stream; castReload(startAt); return; }
     S.stream = stream;
     S.started = false;
     S.stopped = true;
     S.audioIndex = stream.audio_index;
     S.burnIndex = stream.subtitle_index >= 0 ? stream.subtitle_index : -1;
     renderTrackButtons();
-    player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined });
+    player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined,
+      cast: casting() ? stream : undefined });
     applyTextTracks();
     applySubStyle();
     applySpeed();
@@ -925,6 +934,7 @@
         $("nl-resume-name").textContent = (stream.title || "") + (note ? "\n" + note : "");
         note = "";
         $("nl-resume-yes").textContent = "Resume from " + fmt(resumeAt);
+        $("nl-resume-no").textContent = "Start over";
         $("nl-resume").hidden = false;
         showControls();
         $("nl-resume-yes").focus();
@@ -952,7 +962,7 @@
     if (stream.default_subtitle_index >= 0 && !S.defaultSubDone) { S.textIndex = stream.default_subtitle_index; }
     S.defaultSubDone = true;
     applyStream(stream, at);
-    playNow();
+    if (!casting()) { playNow(); }   // the Chromecast starts by itself when the load request arrives
     showControls();
   }
 
@@ -968,6 +978,7 @@
     var forSource = stream.source_id;
     S.nextPromise = fetchNext(forSource).then(function (n) {
       if (n && n.has_next && S.sourceId === forSource) { S.next = n; }
+      renderCast();
     }).catch(function () { /* no card without the lookup; the episode still plays */ });
   }
   function nextLabel(n) {
@@ -1089,14 +1100,16 @@
     var index = e && typeof e.index === "number" ? e.index : -1;
     if (index !== currentSubtitleIndex()) { chooseSubtitle(index); }
   });
-  player.on("volumechange", function () {
+  function renderVolume() {
     $("nl-volume").value = player.muted ? 0 : player.volume;
     $("nl-mute-icon").innerHTML = (player.muted || player.volume === 0) ? ICONS.muted : ICONS.vol;
     $("nl-mute").setAttribute("aria-label", player.muted ? "Unmute" : "Mute");
-  });
+  }
+  player.on("volumechange", renderVolume);
 
   function leave() {
     stopReporting(true);
+    if (casting()) { castKit.cast.end(true); }   // leaving the player stops the TV too (no remote page to control it)
     // On the TV, go back through the history when we came from one of its screens, so Back
     // from the title page does not land on the player again. Otherwise replace this page.
     if (isTv) {
@@ -1111,12 +1124,12 @@
     window.location.href = S.backHref;
   }
   window.addEventListener("pagehide", function () {
-    stopReporting(true);
+    if (casting()) { if (S.started && !S.stopped) { report("progress", true); } } else { stopReporting(true); }   // the TV keeps playing
     if (isNative) { player.destroy(); }   // stop the native player when the page goes away
   });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") {
-      stopReporting(true);
+      if (!casting()) { stopReporting(true); }   // a locked phone is still the remote: progress keeps going
     } else if (S.started && S.stopped && !video.ended && !player.paused) {
       S.stopped = false;
       report("start");
@@ -1422,6 +1435,139 @@
   document.addEventListener("keyup", function (e) {
     if (e.key === " " && ($("nl-help").hidden)) { e.preventDefault(); }
   });
+
+  /* ------------------------------------------------------------------ casting (M8) */
+  /* While a Chromecast is connected, `player` is the TV (cast.js). Everything above keeps working against it: play,
+   * pause, skip by the skip length, seek, audio and subtitle tracks (a new stream at the same position), next episode,
+   * volume. Progress still goes to /api/nl/progress, so the server reports it to Jellyfin for the viewer(s). */
+
+  var castBtn = $("nl-cast");
+  var castPanel = $("nl-cast-panel");
+
+  function renderCast() {
+    if (!castKit) { return; }
+    var state = castKit.cast.state;
+    var on = casting();
+    castBtn.hidden = !(on || state === "ready" || state === "connecting" || state === "connected");
+    castBtn.classList.toggle("on", on);
+    castBtn.setAttribute("aria-label", on ? "Casting to " + castKit.cast.deviceName : "Cast to a TV");
+    castBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    root.classList.toggle("casting", on);
+    castPanel.hidden = !on;
+    if (on) {
+      $("nl-cast-device").textContent = "Casting to " + castKit.cast.deviceName;
+      $("nl-cast-next").hidden = !S.next;
+      root.classList.add("controls-visible");
+      clearTimeout(S.hideTimer);
+    }
+  }
+  // Speed, subtitle look and the volume slider belong to whichever player is in charge.
+  function refreshPlayerUi() {
+    renderSpeed();
+    applySubStyle();
+    renderVolume();
+    renderPlayState();
+    renderProgress();
+  }
+
+  // The stream for the TV at `pos`: the cast profile, LAN URLs, a token. Used when casting starts and after
+  // an audio or picture-subtitle change.
+  function castReload(pos) {
+    if (!casting()) { return; }
+    S.switching = true;
+    $("nl-buffering").hidden = false;
+    S.retry = function () { hideError(); castReload(pos); };
+    fetchPlay({ audio: S.audioIndex, subtitle: S.burnIndex >= 0 ? S.burnIndex : null, start: pos }).then(function (stream) {
+      S.switching = false;
+      if (casting()) { applyStream(stream, pos); }
+    }).catch(function (err) {
+      S.switching = false;
+      $("nl-buffering").hidden = true;
+      toast(err.unreachable ? UNREACHABLE : err.message, 5000);
+      castKit.cast.end(true);   // back to this screen, with the "Continue here" card
+    });
+  }
+
+  function startCasting(ev) {
+    if (!castKit || casting()) { return; }
+    var pos;
+    if (ev.resumed) {
+      // This tab was reloaded while the TV is playing: take the remote back only for the same title.
+      if (!ev.item || String(ev.item.item_id) !== String(itemId) || (urlSource && Number(ev.item.source_id) !== urlSource)) {
+        renderCast();
+        return;
+      }
+      pos = ev.position || 0;
+    } else {
+      pos = localPlayer.currentTime || 0;
+    }
+    stopReporting(false);          // the browser's own Jellyfin play session ends here
+    localPlayer.pause();
+    castKit.activate();
+    S.errors = 0;
+    renderCast();
+    refreshPlayerUi();
+    if (S.stream) { castReload(pos); }   // else: the first stream is still being fetched; applyStream hands it over
+  }
+
+  // C4: the TV session ended (Stop, the TV's own button, or the phone left it). Put the picture back on this
+  // screen at the TV's position and offer to carry on here.
+  function endCasting() {
+    if (!casting()) { renderCast(); return; }
+    var finished = castKit.remote.lastState.ended;
+    var pos = player.currentTime || 0;
+    stopReporting(false);          // "stop" at the TV's position, still with the cast play session
+    castKit.deactivate();
+    S.switching = false;
+    hideNextCard();
+    renderCast();
+    refreshPlayerUi();
+    if (finished) { leave(); return; }
+    S.retry = function () { handBack(pos); };
+    handBack(pos);
+  }
+
+  function handBack(pos) {
+    hideError();
+    $("nl-buffering").hidden = false;
+    fetchPlay({ audio: S.audioIndex, subtitle: S.burnIndex >= 0 ? S.burnIndex : null, start: pos }).then(function (stream) {
+      $("nl-buffering").hidden = true;
+      applyStream(stream, pos);   // loaded and paused: "Continue here" only has to press play
+      $("nl-resume-name").textContent = "Casting stopped";
+      $("nl-resume-yes").textContent = "Continue here from " + fmt(pos);
+      $("nl-resume-no").textContent = "Back to the list";
+      $("nl-resume").hidden = false;
+      showControls();
+      $("nl-resume-yes").focus();
+      $("nl-resume-yes").onclick = function () { $("nl-resume").hidden = true; $("nl-resume-no").textContent = "Start over"; playNow(); };
+      $("nl-resume-no").onclick = function () { $("nl-resume").hidden = true; $("nl-resume-no").textContent = "Start over"; leave(); };
+    }).catch(function (err) {
+      $("nl-buffering").hidden = true;
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
+    });
+  }
+
+  function stopCasting() { if (casting()) { castKit.cast.end(true); } }
+
+  if (castKit) {
+    castKit.cast.on("state", renderCast);
+    castKit.cast.on("connected", startCasting);
+    castKit.cast.on("ended", endCasting);
+    castBtn.addEventListener("click", function () {
+      if (casting()) {
+        S.menuOpen ? closeMenu() : openMenu("Casting to " + castKit.cast.deviceName, [
+          { kind: "action", label: "Stop casting", onSelect: stopCasting }
+        ]);
+      } else {
+        castKit.cast.request();
+      }
+    });
+    $("nl-cast-stop").addEventListener("click", stopCasting);
+    $("nl-cast-next").addEventListener("click", advanceToNext);
+    fetch("/api/nl/cast/config").then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+      if (cfg) { castKit.cast.init(cfg); }
+    }).catch(function () { /* no casting without the config */ });
+  }
 
   /* -------------------------------------------------------------------- init */
 
