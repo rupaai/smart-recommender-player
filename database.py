@@ -3045,6 +3045,17 @@ class DatabaseManager:
                 pass
         return pick_vibe_questions(facets, tags)
 
+    def get_mood_data_counts(self) -> Dict[str, int]:
+        """How much of the catalogue the Discover questions pop-up can use: films with
+        mood dials (Mac build) or LLM mood tags. Zero of both means it never opens."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*), "
+                "SUM(CASE WHEN facets IS NOT NULL AND facets NOT IN ('', '{}') THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN vibe_tags IS NOT NULL AND vibe_tags NOT IN ('', '{}') THEN 1 ELSE 0 END) "
+                "FROM media_items").fetchone()
+        return {"titles": row[0] or 0, "with_facets": row[1] or 0, "with_mood_tags": row[2] or 0}
+
     def get_inferred_rating_queue(self, profile_id: int, media_type: str = "movie", limit: int = 100) -> List[Dict[str, Any]]:
         """Films this person rated before verdicts existed and hasn't confirmed:
         the "Sort out my 7s" round. 7s first, then 8s, then the rest."""

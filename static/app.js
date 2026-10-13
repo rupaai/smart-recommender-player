@@ -582,9 +582,11 @@ async function fetchRecommendations() {
   try {
     state.recPage = 1;
     state.recSessionId = null; // a new search is a new session
+    state.vibeMoods = null;
     const data = state.askQuestions ? await startVibeSession() : await requestRecommendations(1);
     showRecommendationPage(data);
     if (data.question) openVibeQuestion(data.question);
+    else noteSkippedQuestions(data.question_skipped);
   } catch (err) {
     console.error('Error fetching recommendations:', err);
     header.innerHTML = '';
@@ -623,6 +625,7 @@ async function loadMoreRecommendations() {
 }
 
 function showRecommendationPage(data) {
+  if (Array.isArray(data.moods)) state.vibeMoods = data.moods;
   state.recHasMore = !!data.has_more;
   renderRecommendations(data.items || [], data.engine, data.total_results);
   updateLoadMoreButton();
@@ -644,6 +647,15 @@ async function startVibeSession() {
   const data = await res.json();
   state.recSessionId = data.session_id || null;
   return data;
+}
+
+// The switch is on but the server had nothing to ask. Only one reason is worth
+// telling the person about: the server's catalogue has no mood data yet, so
+// questions can never appear there (they would on a machine that has it).
+function noteSkippedQuestions(reason) {
+  if (reason !== 'no_mood_data' || state.moodDataNoted) return;
+  state.moodDataNoted = true;
+  showToast("No vibe questions yet: this server doesn't have the films' mood data. It arrives with the Mac's nightly build.");
 }
 
 function openVibeQuestion(q) {
@@ -814,6 +826,15 @@ function appendRecommendations(movies, engine) {
   updateLoadMoreButton();
 }
 
+// "Tonight: Cosy and comforting · A good cry": the two likeliest moods of the
+// active questions session. Empty when there is no session or no moods.
+function tonightLineHtml() {
+  const moods = state.recSessionId && Array.isArray(state.vibeMoods) ? state.vibeMoods : [];
+  if (!moods.length) return '';
+  const names = moods.slice(0, 2).map(m => escapeHtml(m.label)).join(' · ');
+  return `<p class="mood-tonight" id="moodTonight"><span class="mood-tonight-key">Tonight:</span> ${names}</p>`;
+}
+
 function renderRecommendations(movies, engine, total) {
   const container = document.getElementById('resultsContainer');
   const header = document.getElementById('resultsHeader');
@@ -835,7 +856,7 @@ function renderRecommendations(movies, engine, total) {
   const engineNote = engine === 'generative'
     ? '<span class="engine-note generative" title="Ranked by the model trained on your ratings">Learning your taste</span>'
     : '<span class="engine-note" title="Ranked by rating and your favourite genres — rate a few more to unlock the learning model">Picked by rating &amp; genre</span>';
-  header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}`;
+  header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}${tonightLineHtml()}`;
 
   movies.forEach((m, i) => container.appendChild(buildMovieCard(m, engine, i, i + 1)));
 }

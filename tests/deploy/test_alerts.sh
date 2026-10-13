@@ -83,8 +83,8 @@ teardown
 echo "== diskcheck"
 setup
 printf 'torrent:\n  max_media_gb: 1\n' >"$CC_ROOT/config.server.yaml"
-# The media checks point the root-filesystem check at a missing path, so a nearly full
-# CI runner disk can't add a second alert to the count.
+# The media checks skip the root-filesystem check (df on a missing path prints nothing):
+# the 900M file sits on the runner's real disk and can push it past 85 % too.
 ROOT_FS_PATH=/nonexistent "$DC"; assert_eq "$(alerts)" 0 "empty media folder: quiet"
 if fallocate -l 900M "$T/media/film.mkv" 2>/dev/null; then
   ROOT_FS_PATH=/nonexistent "$DC"

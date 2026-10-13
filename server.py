@@ -83,7 +83,9 @@ from services import verdicts as vd
 from services.taste_runtime import TasteRuntime
 from services.admin_api import build_router as build_admin_router
 from services.vibe_index import VibeIndex
-from services.vibe_popup import PopupSession, SessionStore, should_auto_ask
+from services import vibe_moods
+from services.mood_popup import MoodSession
+from services.vibe_popup import PopupSession, SessionStore, should_auto_ask, skip_reason  # noqa: F401 - PopupSession kept, unused by /api/discover/*
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -236,8 +238,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.middleware("http")
 async def revalidate_static(request: Request, call_next):
-    # Without this, browsers (the TV app's WebView especially) keep using an old CSS/JS file for
-    # a while after a deploy. no-cache still caches, but checks the ETag on every use.
+    """Phones (iOS Safari, home-screen apps) and the TV app's WebView otherwise keep an old app.js for days,
+    since StaticFiles sends no Cache-Control. no-cache still allows the cheap
+    ETag check, so an unchanged file costs a 304."""
     response = await call_next(request)
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
@@ -637,9 +640,23 @@ def _with_on_list(items: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[s
     return items
 
 
-def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+_MOOD_LABELS = {m["id"]: m["label"] for m in vibe_moods.MOODS}
+
+
+def _mood_list(popup: Any, n: int = 3) -> Optional[List[Dict[str, Any]]]:
+    """Top moods as [{id, label, p}] for the UI; None for sessions without a mood belief."""
+    top = getattr(popup, "top_moods", None)
+    if top is None:
+        return None
+    return [{"id": m, "label": _MOOD_LABELS.get(m, m), "p": round(p, 2)} for m, p in top(n)]
+
+
+def _popup_response(popup: Any, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     results = recommender_service.finalize(popup.ranked(), 1, page_size)
     results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
+    moods = _mood_list(popup)
+    if moods is not None:
+        results["moods"] = moods
     _with_on_list(results.get("items"))
     if vibe is not None:
         results["vibe"] = vibe
@@ -654,7 +671,7 @@ def _popup_response(popup: PopupSession, page_size: int, vibe: Optional[Dict[str
 
 @app.post("/api/discover/start")
 async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
-    """First results plus, when the request is thin, the first question."""
+    """First results plus, when asking is on, the first question (always)."""
     page_size = req.top_n if req.top_n is not None else req.page_size
     kwargs = _recommend_kwargs(req, page_size)
     res = await asyncio.to_thread(recommender_service.recommend, **{**kwargs, "page": 1}, return_pool=True)
@@ -664,13 +681,17 @@ async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
         request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
         engine="legacy+popup",
     )
-    popup = PopupSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
-                         recommender_service.vibe_index)
-    if req.ask and pool and should_auto_ask(req.query, pool):
-        await asyncio.to_thread(popup.next_question)
+    popup = MoodSession(session_id, {**kwargs, "kwargs": kwargs}, pool, _cluster_labels(),
+                        recommender_service.vibe_index, mood_weight=recommender_cfg.get("mood_weight"))
+    if req.ask and pool:
+        await asyncio.to_thread(popup.next_question, force=True)
     popup.done = popup.current is None
     popup_sessions.put(popup)
-    return await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
+    out = await asyncio.to_thread(_popup_response, popup, page_size, res.get("vibe"))
+    if req.ask:
+        # MoodSession always asks A3 when there is a pool, so only an empty pool skips.
+        out["question_skipped"] = None if popup.current is not None else ("no_results" if not pool else None)
+    return out
 
 
 @app.post("/api/discover/answer")
@@ -684,12 +705,8 @@ async def discover_answer(req: DiscoverAnswerRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     kwargs = popup.request["kwargs"]
-    new_profile = popup.belief.get("profile")
-    if new_profile and new_profile != kwargs.get("profile"):
-        # "Who's on the sofa?" changes whose taste counts: rebuild the pool.
-        kwargs = {**kwargs, "profile": new_profile}
-        popup.request["kwargs"] = kwargs
-        popup.set_pool(await asyncio.to_thread(_pool_for, kwargs))
+    # (PopupSession's D1 "who's on the sofa" pool rebuild has no MoodSession equivalent: the mood
+    # bank has no profile question, so the pool never changes during a mood session.)
     if popup.should_stop():
         popup.done = True
     else:
@@ -741,7 +758,9 @@ async def feedback_stats() -> Dict[str, Any]:
 async def vibe_status() -> Dict[str, Any]:
     """Whether the vibe index (models/vibe/, built on the Mac) is loaded."""
     index = recommender_service.vibe_index
-    return index.status() if index else {"ready": False}
+    out = index.status() if index else {"ready": False}
+    out["mood_data"] = await asyncio.to_thread(db.get_mood_data_counts)
+    return out
 
 
 @app.get("/api/watch/current")

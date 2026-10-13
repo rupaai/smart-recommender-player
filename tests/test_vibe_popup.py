@@ -138,11 +138,41 @@ def test_auto():
     check("long text over a scattered pool still asks",
           vp.should_auto_ask("slow korean revenge thriller with a devastating ending please", pool))
 
+    s = vp.PopupSession(5, {"query": "slow korean revenge thriller with a devastating ending please"},
+                        make_pool(), {c: f"cluster {c}" for c in range(1, 8)})
+    q = s.next_question(force=True)
+    check("always asks a first question", q is not None and len(q["options"]) >= 2, q and q["id"])
+
+    s = vp.PopupSession(6, {"query": "x"}, make_pool(), {})
+    vp_min = vp.MIN_VALUE
+    vp.MIN_VALUE = 99.0           # nothing passes: the forced pick falls back to the best below the bar
+    try:
+        check("without force, nothing below the bar is asked", s.next_question() is None)
+        q = s.next_question(force=True)
+        check("with force, the best question below the bar is asked", q is not None and q["id"] in ABOUT_YOU,
+              q and q["id"])
+    finally:
+        vp.MIN_VALUE = vp_min
+
+
+def test_skip_reason():
+    print("Why it didn't appear")
+    pool, bare = make_pool(), make_pool(facets=False)
+    check("asked: no reason", vp.skip_reason("cozy", pool, True) is None)
+    check("no results", vp.skip_reason("cozy", [], False) == "no_results")
+    check("no facets or tags: no_mood_data", vp.skip_reason("cozy", bare, False) == "no_mood_data")
+    check("bare pool never asks a question", vp.PopupSession(1, {}, bare).next_question() is None)
+    check("a specific request is no longer a reason (first question is forced)",
+          vp.skip_reason("slow korean revenge thriller with a devastating ending please", pool[:3], False)
+          == "nothing_to_ask")
+    check("otherwise nothing worth asking", vp.skip_reason("cozy", pool, False) == "nothing_to_ask")
+
 
 if __name__ == "__main__":
     test_bank()
     test_scoring()
     test_session()
     test_auto()
+    test_skip_reason()
     print(f"\n{'ALL PASSED' if not failures else f'{len(failures)} FAILED'}")
     sys.exit(1 if failures else 0)

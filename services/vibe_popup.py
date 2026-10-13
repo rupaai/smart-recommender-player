@@ -436,14 +436,14 @@ class PopupSession:
             return 0
         return sum(1 for lo, hi in bands if sum(lo <= y <= hi for y in years) / len(years) >= 0.1)
 
-    def _eligible(self) -> List[Dict[str, Any]]:
+    def _eligible(self, any_first: bool = False) -> List[Dict[str, Any]]:
         asked = self.asked_ids
         n = self.answered_count
         out = []
         for qid, q in BY_ID.items():
             if qid in asked or any(qid in alt and alt & asked for alt in ALTS):
                 continue
-            if n == 0 and qid not in ABOUT_YOU:
+            if n == 0 and qid not in ABOUT_YOU and not any_first:
                 continue
             if qid in CLOSERS and n < 4:
                 continue
@@ -523,28 +523,39 @@ class PopupSession:
             total += 1 - overlap
         return total / len(opts)
 
-    def next_question(self) -> Optional[Dict[str, Any]]:
+    def next_question(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """Picks the most useful next question. With force, a question is
+        returned whenever any has live options, even below MIN_VALUE (used
+        for the first question, so the pop-up opens on every search)."""
         if self.done or self.answered_count >= MAX_QUESTIONS:
             self.current = None
             return None
         scored = self.scored()
         now10, now50 = top_ids(scored, 10), top_ids(scored, 50)
-        best = None
+        best = fallback = None
         avoid_due = self.answered_count == 3 and not (self.asked_ids & AVOID)
-        for q in self._eligible():
-            opts = self._live(q, self._generated_options(q, scored), scored, now50)
-            if len(opts) < (2 if q["id"] in CLOSERS else 3):
-                continue
-            raw = self._value(opts, now10)
-            if raw < MIN_VALUE:
-                continue
-            group_penalty = 0.5 if any(BY_ID[a]["group"] == q["group"] for a in self.asked_ids
-                                       if a in BY_ID) else 1.0
-            value = raw * FUN.get(q["id"], 1.0) * group_penalty
-            if avoid_due and q["id"] in AVOID:
-                value += 100              # fixed slot: one avoid question by question 4
-            if best is None or value > best[0]:
-                best = (value, q, opts)
+        tries = [False, True] if force and self.answered_count == 0 else [False]
+        for any_first in tries:
+            for q in self._eligible(any_first):
+                opts = self._live(q, self._generated_options(q, scored), scored, now50)
+                if len(opts) < (2 if q["id"] in CLOSERS else 3):
+                    continue
+                raw = self._value(opts, now10)
+                if fallback is None or raw > fallback[0]:
+                    fallback = (raw, q, opts)
+                if raw < MIN_VALUE:
+                    continue
+                group_penalty = 0.5 if any(BY_ID[a]["group"] == q["group"] for a in self.asked_ids
+                                           if a in BY_ID) else 1.0
+                value = raw * FUN.get(q["id"], 1.0) * group_penalty
+                if avoid_due and q["id"] in AVOID:
+                    value += 100              # fixed slot: one avoid question by question 4
+                if best is None or value > best[0]:
+                    best = (value, q, opts)
+            if best is not None or fallback is not None:
+                break
+        if best is None and force:
+            best = fallback
         if best is None:
             self.current = None
             return None
@@ -613,6 +624,26 @@ def should_auto_ask(query: Optional[str], pool: List[Dict[str, Any]]) -> bool:
         return True
     clusters = {features(it)["cluster"] for it in pool[:20] if features(it)["cluster"] is not None}
     return len(clusters) >= 6
+
+
+def has_mood_data(pool: List[Dict[str, Any]]) -> bool:
+    """True when some film in the pool has mood dials or LLM tags. Without them
+    (no Mac build or mood-tag run on this server's catalogue) no dial question can
+    split the pool, so the pop-up never appears."""
+    return any(features(it)["facets"] or features(it)["tagged"] for it in pool[:POOL_TOP])
+
+
+def skip_reason(query: Optional[str], pool: List[Dict[str, Any]], asked: bool) -> Optional[str]:
+    """Why a requested pop-up didn't open, for the UI and the logs; None when it did."""
+    if asked:
+        return None
+    if not pool:
+        return "no_results"
+    if not has_mood_data(pool):
+        return "no_mood_data"
+    # The first question is forced (next_question(force=True)), so a specific
+    # request no longer stops it: what's left is no question with live options.
+    return "nothing_to_ask"
 
 
 class SessionStore:
