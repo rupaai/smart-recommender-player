@@ -94,10 +94,10 @@ torrent_ranking:
 # (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
 # fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, deploy.
 # profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
-#northern_lights:
-#  people:
-#    - {id: labiba,  name: Labiba,          jellyfin_user_id: PASTE_USER_ID_OR_NAME, profile_id: 1}
-#    - {id: partner, name: PARTNER_NAME,    jellyfin_user_id: PASTE_USER_ID_OR_NAME, profile_id: 2}
+northern_lights:
+ people:
+   - {id: labibakanij,  name: Labiba,          jellyfin_user_id: c07f6a015a284420a5931235097df58f, profile_id: 1}
+   - {id: gabstevens, name: Gabriele,    jellyfin_user_id: 89576f27230e419ead0664b1486376bd, profile_id: 2}
 
 # libtorrent configuration
 torrent:
