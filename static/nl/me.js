@@ -6,6 +6,7 @@
   var sub = document.getElementById("nl-pref-sub");
   var on = document.getElementById("nl-pref-on");
   var status = document.getElementById("nl-pref-status");
+  var spoilers = document.getElementById("nl-pref-spoilers");
 
   function fill(select, current) {
     select.textContent = "";
@@ -34,6 +35,12 @@
     fill(audio, p.audio_lang);
     fill(sub, p.subtitle_lang);
     on.setAttribute("aria-checked", String(!!p.subtitles_on));
+    spoilers.setAttribute("aria-checked", String(!!p.hide_spoilers));
+  });
+  spoilers.addEventListener("click", function () {
+    var next = spoilers.getAttribute("aria-checked") !== "true";
+    spoilers.setAttribute("aria-checked", String(next));
+    save({ hide_spoilers: next });   // M9c: per viewer, kept on the server
   });
   audio.addEventListener("change", function () { save({ audio_lang: audio.value || null }); });
   sub.addEventListener("change", function () { save({ subtitle_lang: sub.value || null }); });

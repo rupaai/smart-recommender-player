@@ -13,10 +13,28 @@
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, String(v)); } catch (e) { /* private mode */ } }
 
+  // M9c (W11): with spoiler hiding on, an episode this viewer has not started shows no picture and no synopsis
+  // until it is tapped once (the second tap opens it). Played or started episodes are never hidden.
+  function spoilerHidden(e) {
+    return !!show.hide_spoilers && !e.played && !e.progress && !e.revealed;
+  }
+
   function episodeCard(e) {
     var li = NL.el("li");
-    var a = NL.el("a", "nl-episode" + (e.played ? " is-played" : ""));
+    var hidden = spoilerHidden(e);
+    var a = NL.el("a", "nl-episode" + (e.played ? " is-played" : "") + (hidden ? " is-spoiler" : ""));
     a.href = e.href;
+    if (hidden) {
+      a.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        e.revealed = true;
+        var fresh = episodeCard(e);
+        li.replaceWith(fresh);
+        var again = fresh.querySelector("a");
+        if (again) { again.focus(); }
+        NL.setStatus("Details shown.");
+      });
+    }
     var still = NL.el("div", "nl-still");
     NL.fillImage(still, [e.image], e.code || ("E" + (e.episode || "")));
     if (e.progress) { still.appendChild(NL.progressBar(e.progress)); }
@@ -30,7 +48,8 @@
     if (e.runtime_minutes) { meta.push(NL.fmtRuntime(e.runtime_minutes)); }
     if (e.progress && !e.played) { meta.push(e.progress + "% watched"); }
     text.appendChild(NL.el("div", "nl-meta", meta.join(" · ")));
-    if (e.overview) { text.appendChild(NL.el("p", "nl-episode-overview", e.overview)); }
+    if (hidden) { text.appendChild(NL.el("p", "nl-episode-overview nl-spoiler-note", "Details hidden. Tap to reveal.")); }
+    else if (e.overview) { text.appendChild(NL.el("p", "nl-episode-overview", e.overview)); }
     a.appendChild(text);
     if (e.played) {
       var tick = NL.el("span", "nl-tick", "✓");
@@ -39,7 +58,7 @@
       a.appendChild(tick);
     }
     a.setAttribute("aria-label", (e.code ? e.code + ", " : "") + e.name + (e.played ? ", watched" : "") +
-      (e.progress && !e.played ? ", " + e.progress + " percent watched" : ""));
+      (e.progress && !e.played ? ", " + e.progress + " percent watched" : "") + (hidden ? ", details hidden, tap to reveal" : ""));
     li.appendChild(a);
     if (e.together && window.NLCouple) { text.appendChild(window.NLCouple.togetherBadge(false)); }   // M9a
     if (window.NLCouple && (e.played || e.progress)) { unwatchButtons(li, e); }

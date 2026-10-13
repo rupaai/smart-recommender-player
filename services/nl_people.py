@@ -301,6 +301,11 @@ def clean_prefs(patch: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None and not isinstance(v, bool):
             raise ValueError("subtitles_on must be true or false.")
         out["subtitles_on"] = v
+    if "hide_spoilers" in patch:
+        v = patch["hide_spoilers"]
+        if v is not None and not isinstance(v, bool):
+            raise ValueError("hide_spoilers must be true or false.")
+        out["hide_spoilers"] = v
     if "sub_style" in patch:
         v = patch["sub_style"]
         if v is None:
@@ -358,6 +363,7 @@ class Prefs:
     subtitles_on: bool = False
     sub_style: Optional[Dict[str, Any]] = None
     search_lang: Optional[str] = None
+    hide_spoilers: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def public(self) -> Dict[str, Any]:
@@ -367,6 +373,7 @@ class Prefs:
             "subtitles_on": bool(self.subtitles_on),
             "sub_style": self.sub_style,
             "search_lang": self.search_lang,
+            "hide_spoilers": bool(self.hide_spoilers),
         }
 
     @classmethod
@@ -378,4 +385,5 @@ class Prefs:
             subtitles_on=bool(row.get("subtitles_on")),
             sub_style=row.get("sub_style") or None,
             search_lang=row.get("search_lang") or None,
+            hide_spoilers=bool(row.get("hide_spoilers")),
         )

@@ -49,7 +49,7 @@
     return v && /^[a-z]{3}$/.test(v) ? v : null;
   }
   function blank() {
-    return { audio_lang: null, subtitle_lang: null, subtitles_on: false, sub_style: null, search_lang: null };
+    return { audio_lang: null, subtitle_lang: null, subtitles_on: false, sub_style: null, search_lang: null, hide_spoilers: false };
   }
   function fromLocal() {
     var p = blank();

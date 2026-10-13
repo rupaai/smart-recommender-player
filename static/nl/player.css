@@ -247,3 +247,6 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .casting .nl-center { display: none; }
 #nl-cast.on { color: var(--nl-accent); }
 .casting .nl-player video, .nl-player.casting video { visibility: hidden; }
+
+/* M9c: "How was it?" after finishing (W10) */
+.nl-react-options { display: flex; flex-direction: column; gap: 12px; }

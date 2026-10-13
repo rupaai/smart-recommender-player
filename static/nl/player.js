@@ -139,7 +139,7 @@
   /* -------------------------------------------------------- control hiding */
 
   function screenOpen() {
-    return !$("nl-resume").hidden || !$("nl-error").hidden || !$("nl-help").hidden || !$("nl-subfind").hidden;
+    return !$("nl-resume").hidden || !$("nl-react").hidden || !$("nl-error").hidden || !$("nl-help").hidden || !$("nl-subfind").hidden;
   }
   function canHide() {
     return !player.paused && !S.menuOpen && !S.scrubbing && !screenOpen() && !casting();
@@ -1125,7 +1125,46 @@
     stopReporting(false);
     S.ended = false;
     if (S.next && S.next.autoplay && !S.nextCancelled) { advanceToNext(); }
+    else if (!S.next) { askReaction(); }   // M9c: after the film, or the last episode, "How was it?"
   });
+
+  /* --------------------------------------------- after finishing: how was it (M9c, W10) */
+
+  // The answer becomes one of the existing verdicts for whoever is watching (server side, /api/nl/react).
+  function reactOpen() { return !$("nl-react").hidden; }
+  function closeReaction() {
+    $("nl-react").hidden = true;
+    showControls();
+  }
+  function askReaction() {
+    if (casting() || S.reactAsked === itemId + ":" + S.sourceId) { return; }
+    S.reactAsked = itemId + ":" + S.sourceId;
+    fetch("/api/nl/react/" + encodeURIComponent(itemId)).then(function (r) { return r.ok ? r.json() : null; }).then(function (q) {
+      if (!q || !q.ask || !(q.options || []).length) { return; }
+      $("nl-react-text").textContent = q.text || "How was it?";
+      var box = $("nl-react-options");
+      box.textContent = "";
+      q.options.forEach(function (o) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "nl-primary";
+        b.textContent = o.label;
+        b.addEventListener("click", function () {
+          box.querySelectorAll("button").forEach(function (x) { x.disabled = true; });
+          fetch("/api/nl/react/" + encodeURIComponent(itemId), {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reaction: o.id })
+          }).then(function (r) { toast(r.ok ? "Thanks, saved" : "Couldn\u2019t save that"); }).catch(function () { toast("Couldn\u2019t save that"); });
+          closeReaction();
+        });
+        box.appendChild(b);
+      });
+      $("nl-react").hidden = false;
+      showControls();
+      var first = box.querySelector("button");
+      if (first) { first.focus(); }
+    }).catch(function () { /* no question without the lookup */ });
+  }
+  $("nl-react-skip").addEventListener("click", closeReaction);
   // Events only the native adapter emits (the Android app's player, see player-core.js).
   player.on("progress", function () { if (S.started && !S.stopped && !player.paused) { report("progress"); } });
   player.on("stopped", leave);   // Back in the native player: leave like the web player's back button
@@ -1372,7 +1411,7 @@
 
     // Back: close what is open, else leave.
     if (back) {
-      if (S.menuOpen) { closeMenu(); } else if (nextCardVisible()) { cancelNext(); } else if (segVisible()) { dismissSeg(); } else { leave(); }
+      if (S.menuOpen) { closeMenu(); } else if (reactOpen()) { closeReaction(); } else if (nextCardVisible()) { cancelNext(); } else if (segVisible()) { dismissSeg(); } else { leave(); }
       return true;
     }
 
@@ -1391,6 +1430,7 @@
     var screen = null;
     if (S.menuOpen) { screen = menu; }
     else if (!$("nl-resume").hidden) { screen = $("nl-resume"); }
+    else if (reactOpen()) { screen = $("nl-react"); }
     else if (!$("nl-error").hidden) { screen = $("nl-error"); }
     else if (nextCardVisible()) { screen = $("nl-next"); }
     if (screen) {
@@ -1442,10 +1482,10 @@
     if (isTv && tvKey(e)) { return; }
     var key = e.key;
     if (key === "Escape") {
-      if (S.menuOpen) { e.preventDefault(); closeMenu(); } else if (nextCardVisible()) { e.preventDefault(); cancelNext(); }
+      if (S.menuOpen) { e.preventDefault(); closeMenu(); } else if (reactOpen()) { e.preventDefault(); closeReaction(); } else if (nextCardVisible()) { e.preventDefault(); cancelNext(); }
       return;
     }
-    if (!$("nl-resume").hidden || !$("nl-error").hidden) { showControls(); return; }
+    if (!$("nl-resume").hidden || reactOpen() || !$("nl-error").hidden) { showControls(); return; }
     showControls();
     var handled = true;
     switch (key) {
