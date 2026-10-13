@@ -143,6 +143,7 @@ class DatabaseManager:
             self._migrate_v12_nl_browse(cursor)
             self._migrate_v13_nl_people(cursor)
             self._migrate_v14_nl_picks(cursor)
+            self._migrate_v15_nl_polish_a(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -782,6 +783,31 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 14;")
             print("[Database] Migration v14 applied: watch_later.owner_profile_id, nl_interest added.")
 
+    def _migrate_v15_nl_polish_a(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M7a (player polish).
+
+          nl_show_viewer_prefs   per show AND per viewer key (a person's id, "both" or "default"):
+                                 skip_intro = 1 means "always skip the intro" for that viewer.
+                                 (nl_show_prefs stays show-wide: it holds the autoplay switch.)
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_show_viewer_prefs (
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                viewer_key     TEXT NOT NULL,
+                skip_intro     INTEGER NOT NULL DEFAULT 0,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_item_id, viewer_key)
+            );
+            """
+        )
+        if version < 15:
+            cursor.execute("PRAGMA user_version = 15;")
+            print("[Database] Migration v15 applied: nl_show_viewer_prefs added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1355,6 +1381,32 @@ class DatabaseManager:
                 (media_item_id, 1 if autoplay else 0),
             )
         return bool(autoplay)
+
+    def get_show_skip_intro(self, media_item_id: int, viewer_key: str) -> bool:
+        """Does this viewer always skip the intro of this show? Off unless they switched it on."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT skip_intro FROM nl_show_viewer_prefs WHERE media_item_id = ? AND viewer_key = ?;",
+                (media_item_id, viewer_key),
+            ).fetchone()
+        return False if row is None else bool(row["skip_intro"])
+
+    def set_show_skip_intro(self, media_item_id: int, viewer_key: str, skip_intro: bool) -> bool:
+        """Stores the viewer's "always skip intro" for one show. Raises ValueError if it is not a show."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row or row["media_type"] != "tv":
+                raise ValueError("skip intro is a setting for TV shows")
+            conn.execute(
+                """
+                INSERT INTO nl_show_viewer_prefs (media_item_id, viewer_key, skip_intro, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(media_item_id, viewer_key)
+                DO UPDATE SET skip_intro = excluded.skip_intro, updated_at = CURRENT_TIMESTAMP;
+                """,
+                (media_item_id, viewer_key, 1 if skip_intro else 0),
+            )
+        return bool(skip_intro)
 
     # ------------------------------------------------------------------ Northern Lights people (M4)
 

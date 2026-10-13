@@ -29,6 +29,7 @@ from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.device_profiles import profile_for
+from services.nl_player_extras import empty_extras, player_extras
 from services.jellyfin_playback import (
     ItemNotFound,
     JellyfinPlayback,
@@ -1189,6 +1190,58 @@ async def nl_show_prefs_set(item_id: int, prefs: NLShowPrefs) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"autoplay": value}
+
+
+class NLSkipIntro(BaseModel):
+    skip_intro: bool
+
+
+@app.get("/api/nl/show/{item_id}/skip-intro")
+async def nl_show_skip_intro_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """Does this viewer always skip this show's intro? (per viewer, off by default)"""
+    viewer = _nl_viewer_or_default(request)
+    return {"skip_intro": await asyncio.to_thread(db.get_show_skip_intro, item_id, viewer.key)}
+
+
+@app.put("/api/nl/show/{item_id}/skip-intro")
+async def nl_show_skip_intro_set(item_id: int, body: NLSkipIntro, request: Request) -> Dict[str, Any]:
+    """The per-show "always skip intro" switch of the person at the screen (Both of us has its own)."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        value = await asyncio.to_thread(db.set_show_skip_intro, item_id, viewer.key, body.skip_intro)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"skip_intro": value}
+
+
+def _player_extras_for(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Trickplay, chapters and skip segments of one title or episode, read from Jellyfin here. Any
+    Jellyfin trouble leaves the parts empty: these features simply don't show."""
+    try:
+        jf_id = jellyfin_playback._subtitle_item_id(item)
+    except (ItemNotFound, JellyfinUnavailable):
+        return empty_extras()
+    return player_extras(jellyfin_playback, jf_id)
+
+
+@app.get("/api/nl/player-extras/{item_id}")
+async def nl_player_extras(
+    request: Request,
+    item_id: int,
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show"),
+) -> Dict[str, Any]:
+    """What the player draws over the picture, all read here (the Jellyfin key never leaves):
+    `trickplay` (seek-bar thumbnail sheets: geometry + a /nl/jf/ URL template, or null), `chapters`
+    ([{start_seconds, name}]) and `segments` ([{type intro|outro, start_seconds, end_seconds}], from
+    Jellyfin's MediaSegments, e.g. the Intro Skipper plugin). `skip_intro`: this viewer's switch for the show.
+    Jellyfin down, an old Jellyfin or a missing plugin only leave the parts empty; never an error."""
+    viewer = _nl_viewer_or_default(request)
+    item = _nl_subtitle_item(item_id, source)
+    extras = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], _player_extras_for, item)
+    is_show = item.get("media_type") == "tv"
+    extras["skip_intro"] = bool(is_show and await asyncio.to_thread(db.get_show_skip_intro, item_id, viewer.key))
+    extras["is_show"] = is_show
+    return extras
 
 
 @app.get("/api/nl/next/{item_id}")

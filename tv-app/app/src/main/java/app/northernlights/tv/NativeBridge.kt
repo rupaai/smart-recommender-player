@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative (bridge v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -19,6 +19,7 @@ class NativeBridge(private val host: Host) {
         fun onSeekRequested(seconds: Double)
         fun onSubtitleRequested(index: Int)
         fun onSubtitleStyleRequested(json: String)
+        fun onSpeedRequested(rate: Double)
     }
 
     @JavascriptInterface
@@ -71,6 +72,23 @@ class NativeBridge(private val host: Host) {
         host.onSubtitleStyleRequested(json)
     }
 
+    /**
+     * Bridge v4: playback speed ("0.75" .. "2"), as a string so a JS number or string both work. Out-of-range or
+     * unparsable values are ignored; the player keeps the speed for the next stream too.
+     */
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "3" else ""
+    fun setSpeed(rate: String?) {
+        if (!host.isTrusted()) return
+        val value = rate?.toDoubleOrNull() ?: return
+        if (value.isNaN() || value.isInfinite() || value < MIN_SPEED || value > MAX_SPEED) return
+        host.onSpeedRequested(value)
+    }
+
+    @JavascriptInterface
+    fun version(): String = if (host.isTrusted()) "4" else ""
+
+    companion object {
+        private const val MIN_SPEED = 0.25
+        private const val MAX_SPEED = 4.0
+    }
 }

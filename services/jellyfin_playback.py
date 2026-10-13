@@ -34,6 +34,9 @@ _KEY_PARAMS = {"api_key", "apikey", "x-emby-token"}
 _URI_ATTR = re.compile(r'URI="([^"]*)"')
 # Read-only artwork: Items/<id>/Images/<kind>[/<index>] and nothing else under Items/ (M2).
 _IMAGE_PATH = re.compile(r"^Items/[A-Za-z0-9-]{1,64}/Images/(Primary|Backdrop|Thumb|Logo|Banner)(/[0-9]{1,2})?$")
+# Seek-bar thumbnails (M7a): Videos/<id>/Trickplay/<tile width>/<sheet number>.jpg and nothing else under Trickplay.
+# (The tiles.m3u8 playlist is not used: the server hands the page the geometry as JSON.)
+_TRICKPLAY_PATH = re.compile(r"^Videos/[A-Za-z0-9-]{1,64}/Trickplay/[0-9]{2,4}/[0-9]{1,6}\.jpg$")
 
 
 class JellyfinUnavailable(Exception):
@@ -117,6 +120,8 @@ def safe_proxy_path(path: str) -> Optional[str]:
         return None
     if posixpath.normpath(decoded) != decoded.rstrip("/"):
         return None
+    if decoded == path and _TRICKPLAY_PATH.match(path):
+        return path
     if decoded.startswith("videos/") or decoded.startswith("Videos/"):
         return path
     if decoded == path and _IMAGE_PATH.match(path):  # artwork ids are plain, never percent-encoded
@@ -125,7 +130,11 @@ def safe_proxy_path(path: str) -> Optional[str]:
 
 
 def is_image_path(path: str) -> bool:
-    return bool(_IMAGE_PATH.match(path))
+    return bool(_IMAGE_PATH.match(path)) or bool(_TRICKPLAY_PATH.match(path))
+
+
+def is_trickplay_path(path: str) -> bool:
+    return bool(_TRICKPLAY_PATH.match(path))
 
 
 def proxy_url(jellyfin_path: str) -> str:
@@ -521,6 +530,23 @@ class JellyfinPlayback:
         try:
             return self._request("GET", f"/Users/{self._user_id()}/Items/{jf_id}") or {}
         except JellyfinUnavailable:
+            return {}
+
+    def media_segments(self, jf_id: str) -> Any:
+        """`GET /MediaSegments/{id}` for Intro and Outro (Jellyfin 10.10+; the segments come from a provider such as
+        the Intro Skipper plugin). {} when Jellyfin is old, has no provider, or can't be read: never raises."""
+        if not valid_jellyfin_id(jf_id or ""):
+            return {}
+        try:
+            self._require()
+            resp = self.jf.session.request(
+                "GET", f"{self.jf.base_url}/MediaSegments/{jf_id}",
+                params={"includeSegmentTypes": ["Intro", "Outro"]}, timeout=10,
+            )
+            if resp.status_code != 200:
+                return {}
+            return resp.json()
+        except Exception:  # noqa: BLE001 - segments are optional
             return {}
 
     def report_progress(

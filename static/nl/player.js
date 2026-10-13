@@ -73,8 +73,22 @@
     backHref: isTv ? "/nl/tv/" : "/nl/",
     nextPromise: null,    // the next-episode lookup in flight (the native player wants the label up front)
     subStyle: { size: "M", background: "box", raise: 0 },   // P15, saved in the person's prefs (NLPrefs; localStorage is the fallback)
-    subDelay: 0           // P16, seconds; per file, so never saved
+    subDelay: 0,          // P16, seconds; per file, so never saved
+    // M7a polish
+    extras: null,         // {trickplay, chapters, segments, skip_intro, is_show} from /api/nl/player-extras
+    extrasKey: 0,         // bumps with every episode so a late answer for the previous one is ignored
+    skipIntro: false,     // this viewer's "always skip intro" for the show
+    autoSkipped: {},      // intro segments already skipped by the switch (once each)
+    segDismissed: {},     // segments whose button was dismissed with Back (TV)
+    segFocused: {},       // segments whose button already took the remote's focus
+    segCur: null,         // the segment the button is showing for
+    speed: 1,             // P17
+    thumbTimer: null,
+    pointerType: "mouse",
+    quietUntil: 0,
+    closedMenuByTap: false
   };
+  var X = window.NLPlayerExtras;
 
   /* ---------------------------------------------------------- small helpers */
 
@@ -139,6 +153,11 @@
     }
   }
   function controlsVisible() { return root.classList.contains("controls-visible"); }
+  function hideControlsNow() {
+    clearTimeout(S.hideTimer);
+    root.classList.remove("controls-visible");
+    if ($("nl-controls").contains(document.activeElement)) { document.activeElement.blur(); }
+  }
 
   /* ------------------------------------------------------------------ menus */
 
@@ -221,7 +240,10 @@
     return row;
   }
   document.addEventListener("pointerdown", function (e) {
-    if (S.menuOpen && !menu.contains(e.target) && !e.target.closest(".nl-text-btn, .nl-chip")) { closeMenu(); }
+    if (S.menuOpen && !menu.contains(e.target) && !e.target.closest(".nl-text-btn, .nl-chip")) {
+      S.closedMenuByTap = true;   // that tap only closes the menu (see the gestures below)
+      closeMenu();
+    }
   }, true);
 
   /* ------------------------------------------------------------- skip length */
@@ -278,6 +300,7 @@
     player.seek(t);
     toast((sign < 0 ? "−" : "+") + S.skip + "s");
     renderProgress();
+    if (isTv && hasTrickplay() && d) { flashThumb(t, t / d); }   // P21: the remote sees where it lands
   }
 
   function renderProgress() {
@@ -291,6 +314,227 @@
     $("nl-elapsed").textContent = fmt(cur);
     $("nl-remaining").textContent = "−" + fmt(Math.max(0, d - cur));
     $("nl-total").textContent = fmt(d);
+    if (d !== S.ticksFor) { renderTicks(); }
+  }
+
+  /* --------------------------------- thumbnails, chapters, skip intro, speed (M7a) */
+
+  function hasTrickplay() { return !!(S.extras && S.extras.trickplay); }
+  function hasChapters() { return !!(S.extras && S.extras.chapters && S.extras.chapters.length); }
+
+  function loadExtras() {
+    S.extras = null;
+    S.skipIntro = false;
+    S.autoSkipped = {};
+    S.segDismissed = {};
+    S.segFocused = {};
+    var key = ++S.extrasKey;
+    hideSeg();
+    hideThumb();
+    renderExtras();
+    var qs = S.sourceId ? "?source=" + encodeURIComponent(S.sourceId) : "";
+    fetch("/api/nl/player-extras/" + encodeURIComponent(itemId) + qs).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (x) {
+      if (!x || key !== S.extrasKey) { return; }
+      S.extras = x;
+      S.skipIntro = !!x.skip_intro;
+      renderExtras();
+      checkSegments();
+    }).catch(function () { /* the extras are optional: without them the player is just the player */ });
+  }
+  function renderExtras() {
+    $("nl-chapters").hidden = !hasChapters();
+    S.ticksFor = null;
+    renderTicks();
+  }
+  function renderTicks() {
+    var box = $("nl-ticks");
+    var d = duration();
+    S.ticksFor = d;
+    box.innerHTML = "";
+    if (!hasChapters() || !d) { return; }
+    X.chapterTicks(S.extras.chapters, d).forEach(function (f) {
+      var tick = document.createElement("i");
+      tick.style.setProperty("--f", String(f));
+      box.appendChild(tick);
+    });
+  }
+
+  // P21: the bubble above the seek bar. `fraction` (0..1) is where the pointer or target is along the bar.
+  function thumbWidth() { return isTv ? 240 : 168; }
+  function showThumb(seconds, fraction) {
+    var wrap = $("nl-seek-wrap");
+    var bubble = $("nl-thumb");
+    var img = $("nl-thumb-img");
+    var tile = hasTrickplay() ? X.tileFor(S.extras.trickplay, seconds) : null;
+    if (tile) {
+      var scale = thumbWidth() / tile.width;
+      img.className = "nl-thumb-img";
+      img.style.width = Math.round(tile.width * scale) + "px";
+      img.style.height = Math.round(tile.height * scale) + "px";
+      img.style.backgroundImage = 'url("' + tile.url + '")';
+      img.style.backgroundSize = Math.round(tile.sheetWidth * scale) + "px " + Math.round(tile.sheetHeight * scale) + "px";
+      img.style.backgroundPosition = "-" + Math.round(tile.x * scale) + "px -" + Math.round(tile.y * scale) + "px";
+    } else {
+      img.className = "nl-thumb-img none";
+    }
+    var ci = hasChapters() ? X.chapterIndexAt(S.extras.chapters, seconds) : -1;
+    var chapterEl = $("nl-thumb-chapter");
+    chapterEl.hidden = ci < 0;
+    if (ci >= 0) { chapterEl.textContent = S.extras.chapters[ci].name; }
+    $("nl-thumb-time").textContent = fmt(seconds);
+    bubble.hidden = false;
+    var w = wrap.clientWidth;
+    var half = bubble.offsetWidth / 2;
+    bubble.style.left = Math.max(half, Math.min(w - half, fraction * w)) + "px";
+  }
+  function hideThumb() {
+    clearTimeout(S.thumbTimer);
+    $("nl-thumb").hidden = true;
+  }
+  function flashThumb(seconds, fraction) {
+    showThumb(seconds, fraction);
+    clearTimeout(S.thumbTimer);
+    S.thumbTimer = setTimeout(hideThumb, 1200);
+  }
+
+  // P22: the chapter list.
+  function openChaptersMenu() {
+    if (!hasChapters()) { return; }
+    var chapters = S.extras.chapters;
+    var cur = X.chapterIndexAt(chapters, player.currentTime || 0);
+    openMenu("Chapters", chapters.map(function (c, i) {
+      return { label: fmt(c.start_seconds) + "  " + c.name, selected: i === cur, onSelect: function () {
+        player.seek(c.start_seconds);
+        toast(c.name);
+        renderProgress();
+      } };
+    }));
+  }
+
+  // P17: speed.
+  function renderSpeed() {
+    $("nl-speed").hidden = !player.canChangeSpeed;
+    $("nl-speed").textContent = X.speedLabel(S.speed);
+    $("nl-speed").setAttribute("aria-label", "Playback speed " + X.speedLabel(S.speed));
+  }
+  function applySpeed() {
+    if (player.canChangeSpeed) { player.playbackRate = S.speed; }
+    renderSpeed();
+  }
+  function setSpeed(rate, announce) {
+    S.speed = rate;
+    applySpeed();
+    if (announce) { toast("Speed " + X.speedLabel(rate)); }
+  }
+  function stepSpeed(step) {
+    if (!player.canChangeSpeed) { return; }
+    var next = X.nextSpeed(S.speed, step);
+    if (next !== S.speed) { setSpeed(next, true); } else { toast("Speed " + X.speedLabel(S.speed)); }
+  }
+  function openSpeedMenu() {
+    if (!player.canChangeSpeed) { return; }
+    var items = X.SPEEDS.map(function (r) {
+      return { label: X.speedLabel(r) + (r === 1 ? " (normal)" : ""), selected: r === S.speed, onSelect: function () { setSpeed(r, true); } };
+    });
+    if (introSegment() && S.extras.is_show) {
+      items.push({ kind: "cycle", getLabel: function () { return "Always skip intro: " + (S.skipIntro ? "on" : "off"); }, onSelect: toggleSkipIntro });
+    }
+    openMenu("Playback", items);
+  }
+
+  // P23: "Skip intro" inside an Intro, "Next episode" inside an Outro.
+  function introSegment() {
+    var segs = (S.extras && S.extras.segments) || [];
+    for (var i = 0; i < segs.length; i++) { if (segs[i].type === "intro") { return segs[i]; } }
+    return null;
+  }
+  function segKey(seg) { return seg.type + "@" + seg.start_seconds; }
+  function segVisible() { return !$("nl-seg").hidden; }
+  function hideSeg() {
+    var el = $("nl-seg");
+    if (el.hidden) { return; }
+    el.hidden = true;
+    S.segCur = null;
+    if (el.contains(document.activeElement)) { document.activeElement.blur(); }
+  }
+  function renderAlways() {
+    var b = $("nl-seg-always");
+    b.textContent = "Always skip intro: " + (S.skipIntro ? "on" : "off");
+    b.setAttribute("aria-pressed", S.skipIntro ? "true" : "false");
+  }
+  function showSeg(seg, nextEpisode) {
+    var el = $("nl-seg");
+    var key = segKey(seg);
+    $("nl-seg-go").textContent = nextEpisode ? "Next episode" : "Skip intro";
+    var always = !nextEpisode && !!(S.extras && S.extras.is_show);
+    $("nl-seg-always").hidden = !always;
+    if (always) { renderAlways(); }
+    el.hidden = false;
+    S.segCur = { seg: seg, next: nextEpisode };
+    // The remote needs somewhere to land the first time the button appears: OK then skips.
+    if (isTv && !S.segFocused[key] && !screenOpen() && !S.menuOpen && !nextCardVisible() &&
+        !$("nl-controls").contains(document.activeElement)) {
+      S.segFocused[key] = true;
+      $("nl-seg-go").focus();
+    }
+  }
+  function checkSegments() {
+    var segs = S.extras && S.extras.segments;
+    if (!segs || !segs.length || S.advancing || S.switching) { hideSeg(); return; }
+    var t = player.currentTime || 0;
+    var intro = X.segmentAt(segs, "intro", t);
+    if (intro) {
+      var key = segKey(intro);
+      if (S.skipIntro && S.extras.is_show && !S.autoSkipped[key]) {
+        S.autoSkipped[key] = true;
+        hideSeg();
+        player.seek(intro.end_seconds);
+        toast("Intro skipped");
+        renderProgress();
+        return;
+      }
+      if (S.segDismissed[key]) { hideSeg(); } else { showSeg(intro, false); }
+      return;
+    }
+    var outro = S.next ? X.segmentAt(segs, "outro", t) : null;
+    if (outro && !nextCardVisible() && !S.nextCancelled && !S.segDismissed[segKey(outro)]) { showSeg(outro, true); return; }
+    hideSeg();
+  }
+  function useSeg() {
+    var cur = S.segCur;
+    if (!cur) { return; }
+    S.autoSkipped[segKey(cur.seg)] = true;
+    if (cur.next) {
+      hideSeg();
+      advanceToNext();
+    } else {
+      hideSeg();
+      player.seek(cur.seg.end_seconds);
+      toast("Intro skipped");
+      renderProgress();
+    }
+  }
+  function dismissSeg() {
+    if (S.segCur) { S.segDismissed[segKey(S.segCur.seg)] = true; }
+    hideSeg();
+  }
+  function toggleSkipIntro() {
+    var value = !S.skipIntro;
+    S.skipIntro = value;
+    renderAlways();
+    toast(value ? "This show’s intro will be skipped" : "This show’s intro will play");
+    fetch("/api/nl/show/" + encodeURIComponent(itemId) + "/skip-intro", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skip_intro: value })
+    }).then(function (r) {
+      if (!r.ok) { throw new Error("not saved"); }
+    }).catch(function () {
+      S.skipIntro = !value;
+      renderAlways();
+      toast("Couldn’t save that");
+    });
+    if (value) { checkSegments(); }
   }
 
   /* ------------------------------------------------------ progress to server */
@@ -593,6 +837,7 @@
     player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined });
     applyTextTracks();
     applySubStyle();
+    applySpeed();
   }
   // What the native player needs besides the stream (see the NorthernLightsNative contract in player-core.js).
   function nativeMeta(stream) {
@@ -666,6 +911,7 @@
       }
       S.advancing = false;
       loadNext(stream);
+      loadExtras();
       $("nl-buffering").hidden = true;
       var resumeAt = stream.resume_seconds || 0;
       var note = opts.fromNext ? "" : (stream.resume_note || "");   // M4: "You're at 42:10, Sam is at 38:00"
@@ -740,6 +986,7 @@
   function showNextCard() {
     var n = S.next;
     if (!n) { return; }
+    hideSeg();
     $("nl-next-title").textContent = nextLabel(n);
     $("nl-next").hidden = false;
     if (isTv) { $("nl-next-play").focus(); }   // the remote needs somewhere to land: OK plays it, Back cancels
@@ -810,16 +1057,18 @@
 
   /* ------------------------------------------------------------------ events */
 
-  player.on("play", function () { renderPlayState(); showControls(); });
+  // A double-tap skip makes the video "play" again for a moment; that must not pop the controls up (P14).
+  function showControlsUnlessQuiet() { if (Date.now() >= S.quietUntil) { showControls(); } }
+  player.on("play", function () { renderPlayState(); showControlsUnlessQuiet(); });
   player.on("pause", function () {
     renderPlayState();
     showControls();
     if (S.started && !S.stopped && !video.ended) { report("progress"); }
   });
-  player.on("playing", function () { renderPlayState(); onPlaying(); showControls(); });
+  player.on("playing", function () { renderPlayState(); onPlaying(); showControlsUnlessQuiet(); });
   player.on("waiting", function () { $("nl-buffering").hidden = false; });
-  player.on("loadedmetadata", function () { renderProgress(); });
-  player.on("timeupdate", function () { renderProgress(); checkNext(); });
+  player.on("loadedmetadata", function () { renderProgress(); renderTicks(); });
+  player.on("timeupdate", function () { renderProgress(); checkNext(); checkSegments(); });
   player.on("seeked", function () {
     $("nl-buffering").hidden = true;
     if (S.started && !S.stopped) { report("progress"); }
@@ -892,6 +1141,10 @@
   $("nl-subs").addEventListener("click", function () { S.menuOpen ? closeMenu() : openSubtitleMenu(); });
   $("nl-fs").addEventListener("click", function () { player.toggleFullscreen(root); });
   $("nl-mute").addEventListener("click", toggleMute);
+  $("nl-chapters").addEventListener("click", function () { S.menuOpen ? closeMenu() : openChaptersMenu(); });
+  $("nl-speed").addEventListener("click", function () { S.menuOpen ? closeMenu() : openSpeedMenu(); });
+  $("nl-seg-go").addEventListener("click", useSeg);
+  $("nl-seg-always").addEventListener("click", toggleSkipIntro);
 
   var chip = $("nl-skip-chip");
   var pressTimer = null;
@@ -911,13 +1164,30 @@
   chip.addEventListener("contextmenu", function (e) { e.preventDefault(); openSkipMenu(); });
 
   var seek = $("nl-seek");
-  seek.addEventListener("input", function () { S.scrubbing = true; renderProgress(); });
+  seek.addEventListener("input", function () {
+    S.scrubbing = true;
+    renderProgress();
+    var d = duration();
+    if (d) { showThumb(Number(seek.value), Number(seek.value) / d); }   // P21: scrubbing shows where you are
+  });
   seek.addEventListener("change", function () {
     player.seek(Number(seek.value));
     S.scrubbing = false;
+    hideThumb();
     renderProgress();
     showControls();
   });
+  // P21: hovering the bar (mouse) shows the frame under the pointer.
+  seek.addEventListener("pointermove", function (e) {
+    if (e.pointerType === "touch" || S.scrubbing) { return; }
+    var d = duration();
+    if (!d) { return; }
+    var r = seek.getBoundingClientRect();
+    if (!(r.width > 16)) { return; }
+    var f = Math.max(0, Math.min(1, (e.clientX - r.left - 8) / (r.width - 16)));
+    showThumb(f * d, f);
+  });
+  seek.addEventListener("pointerleave", function () { if (!S.scrubbing) { hideThumb(); } });
 
   var vol = $("nl-volume");
   vol.addEventListener("input", function () {
@@ -934,17 +1204,73 @@
     toast("Volume " + Math.round(player.volume * 100) + "%");
   }
 
-  // Tapping the picture: pause/play. On a touch screen with hidden controls, the first tap only shows them.
-  root.addEventListener("pointerdown", function () { S.wasVisible = controlsVisible(); showControls(); }, true);
-  root.addEventListener("pointermove", showControls);
+  // Mouse: clicking the picture pauses/plays, double-click is fullscreen (unchanged).
+  // Touch (P14, phones; not on the TV): a tap shows or hides the controls, a double tap on the left / right half
+  // skips back / ahead by the skip length, a vertical swipe on the right half changes the volume where the browser
+  // lets a page do that. Play/pause is the big button and the bottom one.
+  var G = { down: null, lastTap: null, tapTimer: null };
+  function touchGestures() { return S.pointerType === "touch" && !isTv; }
+  function onPicture(e) { return e.target === video || e.target.id === "nl-controls"; }
+  root.addEventListener("pointerdown", function (e) {
+    S.pointerType = e.pointerType || "mouse";
+    S.wasVisible = controlsVisible();
+    var ignore = S.closedMenuByTap;
+    S.closedMenuByTap = false;
+    if (touchGestures() && onPicture(e)) {
+      var r = root.getBoundingClientRect();
+      G.down = { id: e.pointerId, x: e.clientX, y: e.clientY, half: X.halfOf(e.clientX - r.left, r.width), height: r.height,
+        volume: player.volume, mode: null, ignore: ignore };
+    } else {
+      G.down = null;
+      showControls();
+    }
+  }, true);
+  root.addEventListener("pointermove", function (e) {
+    var g = G.down;
+    if (!g) { if (e.pointerType !== "touch") { showControls(); } return; }
+    if (e.pointerId !== g.id) { return; }
+    var dx = e.clientX - g.x, dy = e.clientY - g.y;
+    if (!g.mode && X.isVerticalSwipe(dx, dy)) { g.mode = g.half === "right" && player.canSetVolume ? "volume" : "ignored"; }
+    if (g.mode === "volume") {
+      player.muted = false;
+      player.volume = X.swipeVolume(g.volume, g.y, e.clientY, g.height);
+      toast("Volume " + Math.round(player.volume * 100) + "%", 700);
+    }
+  });
+  function endGesture(e, cancelled) {
+    var g = G.down;
+    if (!g || e.pointerId !== g.id) { return; }
+    G.down = null;
+    if (cancelled || g.ignore) { return; }
+    if (g.mode === "volume") { saveVolume(); return; }
+    if (g.mode || Math.abs(e.clientX - g.x) > 12 || Math.abs(e.clientY - g.y) > 12) { return; }   // a drag, not a tap
+    var action = X.tapAction(G.lastTap, Date.now(), g.half);
+    clearTimeout(G.tapTimer);
+    if (action === "first") {
+      G.lastTap = { at: Date.now(), half: g.half };
+      G.tapTimer = setTimeout(function () {
+        G.lastTap = null;
+        if (S.menuOpen) { return; }
+        if (controlsVisible()) { hideControlsNow(); } else { showControls(); }
+      }, X.DOUBLE_TAP_MS);
+    } else {
+      G.lastTap = null;
+      S.quietUntil = Date.now() + 1500;
+      skipBy(action === "double-left" ? -1 : 1);
+    }
+  }
+  root.addEventListener("pointerup", function (e) { endGesture(e, false); });
+  root.addEventListener("pointercancel", function (e) { endGesture(e, true); });
   root.addEventListener("click", function (e) {
-    if (e.target !== video && e.target.id !== "nl-controls") { return; }
+    if (!onPicture(e)) { return; }
     if (S.menuOpen) { return; }
+    if (touchGestures()) { return; }   // taps are handled by the pointer events above
     if (e.pointerType === "touch" && !S.wasVisible) { return; }
     togglePlay();
   });
   root.addEventListener("dblclick", function (e) {
-    if (e.target === video || e.target.id === "nl-controls") { player.toggleFullscreen(root); }
+    if (touchGestures()) { return; }
+    if (onPicture(e)) { player.toggleFullscreen(root); }
   });
   player.on("fullscreenchange", showControls);
 
@@ -997,7 +1323,18 @@
 
     // Back: close what is open, else leave.
     if (back) {
-      if (S.menuOpen) { closeMenu(); } else if (nextCardVisible()) { cancelNext(); } else { leave(); }
+      if (S.menuOpen) { closeMenu(); } else if (nextCardVisible()) { cancelNext(); } else if (segVisible()) { dismissSeg(); } else { leave(); }
+      return true;
+    }
+
+    // The skip / next-episode button has the remote: OK uses it, up/down reach the "always" switch, left/right still
+    // skip like on the picture.
+    if (segVisible() && $("nl-seg").contains(document.activeElement) && !S.menuOpen && !screenOpen() && !nextCardVisible()) {
+      var segButtons = visibleIn($("nl-seg"), "button");
+      if (ok) { document.activeElement.click(); }
+      else if (dir === "left") { skipBy(-1); }
+      else if (dir === "right") { skipBy(1); }
+      else { stepFocus(segButtons, dir === "up" ? -1 : 1); }
       return true;
     }
 
@@ -1074,6 +1411,8 @@
       case "n": case "N": if (nextCardVisible()) { advanceToNext(); } else { handled = false; } break;
       case "[": cycleSkip(-1); break;
       case "]": cycleSkip(1); break;
+      case "<": stepSpeed(-1); break;
+      case ">": stepSpeed(1); break;
       case "?": $("nl-help").hidden = false; break;
       default: handled = false;
     }
@@ -1092,6 +1431,7 @@
   if (isFinite(savedVol)) { player.volume = savedVol; }
   player.muted = lsGet("nl.muted") === "1";
   renderSkip();
+  renderSpeed();
   loadSubStyle();
   applySubStyle();
   renderPlayState();

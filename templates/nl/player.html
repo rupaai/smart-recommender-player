@@ -32,7 +32,15 @@
       <div class="nl-bottom">
         <div class="nl-seek-row">
           <span id="nl-elapsed" class="nl-time">0:00</span>
-          <input id="nl-seek" class="nl-range nl-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Seek">
+          <div id="nl-seek-wrap" class="nl-seek-wrap">
+            <div id="nl-thumb" class="nl-thumb" hidden aria-hidden="true">
+              <div id="nl-thumb-img" class="nl-thumb-img"></div>
+              <div id="nl-thumb-chapter" class="nl-thumb-chapter" hidden></div>
+              <div id="nl-thumb-time" class="nl-thumb-time"></div>
+            </div>
+            <input id="nl-seek" class="nl-range nl-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Seek">
+            <div id="nl-ticks" class="nl-ticks" aria-hidden="true"></div>
+          </div>
           <span class="nl-time nl-time-end"><span id="nl-remaining">-0:00</span><span class="nl-total"> / <span id="nl-total">0:00</span></span></span>
         </div>
         <div class="nl-button-row">
@@ -45,6 +53,8 @@
           <div class="nl-group nl-group-end">
             <button id="nl-mute" class="nl-btn" type="button" aria-label="Mute"><svg id="nl-mute-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
             <input id="nl-volume" class="nl-range nl-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+            <button id="nl-chapters" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu" hidden>Chapters</button>
+            <button id="nl-speed" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu" aria-label="Playback speed">1&times;</button>
             <button id="nl-audio" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu">Audio</button>
             <button id="nl-subs" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu">Subtitles</button>
             <button id="nl-fs" class="nl-btn" type="button" aria-label="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg></button>
@@ -53,6 +63,11 @@
       </div>
 
       <div id="nl-menu" class="nl-menu" role="menu" hidden></div>
+    </div>
+
+    <div id="nl-seg" class="nl-seg" role="group" aria-label="Skip" hidden>
+      <button id="nl-seg-go" class="nl-primary" type="button">Skip intro</button>
+      <button id="nl-seg-always" class="nl-secondary" type="button" aria-pressed="false" hidden>Always skip intro: off</button>
     </div>
 
     <div id="nl-next" class="nl-next" role="group" aria-label="Next episode" hidden>
@@ -94,6 +109,7 @@
           <dt>M</dt><dd>Mute</dd>
           <dt>F</dt><dd>Fullscreen</dd>
           <dt>C</dt><dd>Next subtitles</dd>
+          <dt>&lt; &nbsp; &gt;</dt><dd>Slower / faster</dd>
           <dt>N</dt><dd>Next episode (when offered)</dd>
           <dt>?</dt><dd>This help</dd>
         </dl>
@@ -106,6 +122,7 @@
   <script src="/static/nl/vendor/hls.min.js"></script>
   <script src="/static/nl/player-core.js"></script>
   <script src="/static/nl/prefs.js"></script>
+  <script src="/static/nl/player-extras.js"></script>
   <script src="/static/nl/subtitles.js"></script>
   <script src="/static/nl/player.js"></script>
 </body>
