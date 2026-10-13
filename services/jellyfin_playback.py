@@ -616,6 +616,22 @@ class JellyfinPlayback:
             raise ValueError("bad item id")
         self._send("POST" if played else "DELETE", f"/Users/{self._user_id()}/PlayedItems/{jf_id}")
 
+    def reset_user_data(self, jf_id: str) -> None:
+        """"Mark unwatched for me" (M9a): clears this one user's played flag and resume position for one
+        item. Runs as the current `as_user` person; nobody else's data is touched. The same per-user
+        calls the M4 code uses: DELETE /Users/{id}/PlayedItems/{item}, then the position is zeroed with
+        POST /UserItems/{item}/UserData?userId= (Jellyfin 10.11)."""
+        if not valid_jellyfin_id(jf_id):
+            raise ValueError("bad item id")
+        uid = self._user_id()
+        self._send("DELETE", f"/Users/{uid}/PlayedItems/{jf_id}")
+        status = self._send_status(
+            "POST", f"/UserItems/{jf_id}/UserData", params={"userId": uid},
+            json={"Played": False, "PlaybackPositionTicks": 0},
+        )
+        if status >= 400:
+            raise JellyfinUnavailable(f"Jellyfin answered {status} when clearing the position.")
+
     # ------------------------------------------------------------ subtitles (M5)
 
     def _subtitle_item_id(self, item: Dict[str, Any]) -> str:

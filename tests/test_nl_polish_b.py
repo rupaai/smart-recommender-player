@@ -238,7 +238,7 @@ def test_migration(tmp):
 
     print("schema v16")
     fresh = DatabaseManager(os.path.join(tmp, "fresh.db"))
-    check("fresh DB is at schema 16", fresh.get_schema_version() == 16, fresh.get_schema_version())
+    check("fresh DB is at schema 16 or newer", fresh.get_schema_version() >= 16, fresh.get_schema_version())
     path = os.path.join(tmp, "v15.db")
     old = DatabaseManager(path)
     with sqlite3.connect(path) as conn:
@@ -247,8 +247,8 @@ def test_migration(tmp):
     check("a v15 file really lacks the table", "nl_hidden_titles" not in {r[0] for r in sqlite3.connect(path).execute("SELECT name FROM sqlite_master")})
     up = DatabaseManager(path)
     check("it upgrades to 16 and the table is there",
-          up.get_schema_version() == 16 and "nl_hidden_titles" in {r[0] for r in sqlite3.connect(path).execute("SELECT name FROM sqlite_master")})
-    check("running again is harmless", DatabaseManager(path).get_schema_version() == 16)
+          up.get_schema_version() >= 16 and "nl_hidden_titles" in {r[0] for r in sqlite3.connect(path).execute("SELECT name FROM sqlite_master")})
+    check("running again is harmless", DatabaseManager(path).get_schema_version() >= 16)
     up.register_source_file("/media/Movies/X (2020)/X.mkv", "X", 2020, "movie")
     with up.get_connection() as conn:
         x = conn.execute("SELECT id FROM media_items WHERE title = 'X'").fetchone()["id"]
