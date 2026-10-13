@@ -30,6 +30,7 @@ from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.device_profiles import profile_for
 from services.nl_player_extras import empty_extras, player_extras
+from services.nl_polish_b import NLExtras
 from services.jellyfin_playback import (
     ItemNotFound,
     JellyfinPlayback,
@@ -58,7 +59,7 @@ from services.nl_people import (
     resume_summary,
     safe_next,
 )
-from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
+from services.catalogue_search import CatalogueSearch, _tmdb_get, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import paths as model_paths
@@ -147,6 +148,15 @@ if nl_people.configured and not jellyfin_service.user_id:
 
 # Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
 nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
+
+
+# Northern Lights browse polish (M7b): cast, trailer, tech details and "More like this". The TMDB key is used
+# here only; the pages get a YouTube key and library titles, never the key. No key = TMDB parts stay empty.
+def _nl_tmdb(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    return _tmdb_get(api_key, path, params) if api_key else None
+
+
+nl_extras = NLExtras(db, nl_browse, _nl_tmdb, lambda: recommender_service.vibe_index)
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -1138,19 +1148,47 @@ async def nl_mark_unplayed(jellyfin_id: str, request: Request) -> Dict[str, Any]
 
 
 @app.get("/api/nl/library")
-async def nl_library(request: Request, type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
+async def nl_library(
+    request: Request,
+    type: str = Query("movie", pattern="^(movie|tv)$"),
+    unwatched: bool = Query(False, description="only titles nobody at the screen has watched"),
+) -> Dict[str, Any]:
     """Cards for every movie or show that has a file. Movies partly watched carry a progress
-    bar, the latest additions a "New" badge. Works with Jellyfin down (no progress then)."""
+    bar, the latest additions a "New" badge. `unwatched` (M7b) keeps the titles nobody at the screen has
+    watched; `unwatched_applied` says whether Jellyfin could tell. Works with Jellyfin down (no progress then)."""
     viewer = _nl_viewer_or_default(request)
-    items = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.library, type, None, True, viewer.jellyfin_users)
-    return {"items": items}
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.library_page, type, viewer.jellyfin_users, unwatched)
 
 
 @app.get("/api/nl/home")
 async def nl_home_data(request: Request) -> Dict[str, Any]:
-    """Home: Continue Watching (Jellyfin Resume of the viewer) plus the newest movies and shows."""
+    """Home: Continue Watching (Jellyfin Resume of the viewer), Recently Added, Recently Watched and the
+    newest movies and shows. Titles this viewer hid (M7b) are left out of every row except Continue Watching."""
     viewer = _nl_viewer_or_default(request)
-    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.home, viewer.jellyfin_users)
+    hidden = await asyncio.to_thread(db.get_hidden_ids, viewer.key)
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.home, viewer.jellyfin_users, hidden)
+
+
+class NLHiddenBody(BaseModel):
+    hidden: bool
+
+
+@app.get("/api/nl/hidden/{item_id}")
+async def nl_hidden_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """Has this viewer hidden the title from the home rows?"""
+    viewer = _nl_viewer_or_default(request)
+    return {"hidden": item_id in await asyncio.to_thread(db.get_hidden_ids, viewer.key)}
+
+
+@app.put("/api/nl/hidden/{item_id}")
+async def nl_hidden_set(item_id: int, body: NLHiddenBody, request: Request) -> Dict[str, Any]:
+    """"Hide from home" / "Show on home again" for the person at the screen ("Both of us" has its own list)."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        value = await asyncio.to_thread(db.set_hidden, viewer.key, item_id, body.hidden)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"hidden": value}
 
 
 @app.get("/api/nl/title/{item_id}")
@@ -1158,6 +1196,29 @@ async def nl_title_data(item_id: int, request: Request) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
     data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.title, item_id, viewer.jellyfin_users)
     if not data:
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    data["hidden"] = item_id in await asyncio.to_thread(db.get_hidden_ids, viewer.key)
+    return data
+
+
+@app.get("/api/nl/title/{item_id}/extras")
+async def nl_title_extras(item_id: int, request: Request) -> Dict[str, Any]:
+    """Cast & crew, the Trailer (a YouTube key + address, never a TMDB or Jellyfin key) and Tech details.
+    Each part is just empty when its source (Jellyfin, TMDB) is away; only an unknown title is an error."""
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_extras.title_extras, item_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    return data
+
+
+@app.get("/api/nl/title/{item_id}/more")
+async def nl_title_more(item_id: int, request: Request) -> Dict[str, Any]:
+    """"More like this": library titles close to this one (TMDB similar, the recommender's vibe index, shared
+    genres). `items` may be empty; it degrades part by part and never fails for a missing source."""
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_extras.more_like_this, item_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="That title isn't in the library.")
     return data
 

@@ -467,7 +467,8 @@ class NLPicks:
         rows = {r["id"]: r for r in self.browse._on_disk("movie")}
         ids = [i for i, r in rows.items() if runtime_ok(r.get("runtime"), max_minutes)]
         interest = self.db.get_interest(ids)
-        ids = [i for i in ids if not passed_by_any(ctx, interest.get(i, {}))]
+        hidden = self.db.get_hidden_ids(viewer.key)   # M7b: "Hide from home" also keeps a title out of this row
+        ids = [i for i in ids if i not in hidden and not passed_by_any(ctx, interest.get(i, {}))]
         out: Dict[str, Any] = {
             "title": ctx.title, "solo": ctx.solo, "max_minutes": max_minutes, "chips": self._chips(),
             "engine": "recommender", "note": "", "items": [],
@@ -482,7 +483,7 @@ class NLPicks:
             pool = self._recommend(ctx, ids, tastes)
         except Exception as e:  # noqa: BLE001 - the recommender is optional on the server; the row must not 500
             print(f"[NLPicks] recommender unavailable, using the fallback: {e}", flush=True)
-        pool = [p for p in pool if p.get("id") in rows]
+        pool = [p for p in pool if p.get("id") in rows and p.get("id") not in hidden]
         if not pool:
             out["engine"] = "fallback"
             seen = self.db.get_seen_item_ids([p["profile_id"] for p in ctx.persons])
@@ -510,7 +511,7 @@ class NLPicks:
         seen_titles: Set[int] = set()
         for it in ranked:
             iid = it.get("id")
-            if iid in seen_titles or iid not in rows:
+            if iid in seen_titles or iid not in rows or iid in hidden:
                 continue
             seen_titles.add(iid)
             card = self.browse._card(rows[iid], None)

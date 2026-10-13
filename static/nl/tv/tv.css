@@ -145,3 +145,27 @@ button { font: inherit; color: inherit; }
 .tv-wl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1.25rem; padding: 0.75rem 0.5rem; }
 .nl-toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 40; max-width: 70%; background: var(--text); color: var(--bg);
   padding: 1rem 2rem; border-radius: 1rem; font-size: 1.5rem; font-weight: 800; }
+
+/* ---- M7b: Unwatched only, hide from home, Cast & crew, Tech details, More like this */
+.tv-filters { display: flex; gap: 1.25rem; padding: 1.25rem var(--side) 0; }
+.tv-filters-inner { display: flex; gap: 1.25rem; padding: 0.75rem 0.5rem; }
+.nl-folds { display: flex; flex-wrap: wrap; gap: 1.25rem; padding: 0.75rem calc(var(--side) + 0.5rem); margin-top: 1rem; }
+.nl-fold { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.nl-fold-head { gap: 1.25rem; }
+.nl-fold-sum { color: inherit; opacity: 0.7; font-weight: 600; }
+.nl-fold-caret { width: 1rem; height: 1rem; border-right: 0.2rem solid currentColor; border-bottom: 0.2rem solid currentColor; transform: rotate(45deg); }
+.nl-fold.is-open .nl-fold-caret { transform: rotate(-135deg); }
+.nl-fold-body { padding: 0 0.5rem; max-width: 100rem; }
+.nl-fold-sub { margin: 1rem 0 0.5rem; font-size: 1.5rem; font-weight: 800; text-transform: uppercase; color: var(--text-2); }
+.nl-people { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem 3rem; }
+.nl-person { display: flex; align-items: center; gap: 1.25rem; min-width: 0; }
+.nl-person-photo { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; overflow: hidden; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-weight: 800; }
+.nl-person-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nl-person-photo .nl-fallback { background: none; border: 0; padding: 0; font-size: 2rem; }
+.nl-person-name { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-person-text { min-width: 0; }
+.nl-person-text .nl-meta { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-tech { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 2.5rem; margin: 0.5rem 0 0; }
+.nl-tech dt { color: var(--text-2); font-weight: 800; }
+.nl-tech dd { margin: 0; }
+.tv-trailer-note { margin: 1rem 0 0; color: var(--text-2); }
