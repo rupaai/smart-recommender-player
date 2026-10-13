@@ -146,6 +146,7 @@ class DatabaseManager:
             self._migrate_v15_nl_polish_a(cursor)
             self._migrate_v16_nl_polish_b(cursor)
             self._migrate_v17_nl_together(cursor)
+            self._migrate_v18_nl_choosing(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -865,6 +866,43 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 17;")
             print("[Database] Migration v17 applied: nl_seen_together, nl_pacts added.")
 
+    def _migrate_v18_nl_choosing(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9b (choosing).
+
+          nl_vetoes    "Not tonight" (kind tonight: person_key '*' = for whoever is at the screen,
+                       `until` = tomorrow 05:00 local, stored as UTC) and "Never" (kind never: one
+                       person's key, no end). One row per person key and title.
+          nl_chooser   one row (slot 1): who chose last and what, so the app can say "Your turn, <name>".
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_vetoes (
+                person_key     TEXT NOT NULL,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                kind           TEXT NOT NULL CHECK (kind IN ('tonight', 'never')),
+                until          TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (person_key, media_item_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_chooser (
+                slot           INTEGER PRIMARY KEY CHECK (slot = 1),
+                person_id      TEXT NOT NULL,
+                media_item_id  INTEGER,
+                chosen_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 18:
+            cursor.execute("PRAGMA user_version = 18;")
+            print("[Database] Migration v18 applied: nl_vetoes, nl_chooser added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1536,6 +1574,70 @@ class DatabaseManager:
             else:
                 conn.execute("DELETE FROM nl_pacts WHERE media_item_id = ?;", (media_item_id,))
         return bool(on)
+
+    # ------------------------------------------------------------------ Northern Lights choosing (M9b)
+
+    def set_veto(self, person_key: str, media_item_id: int, kind: str, until: Optional[str] = None) -> None:
+        """"Not tonight" (kind tonight, `until` a UTC 'YYYY-MM-DD HH:MM:SS') or "Never" (no end) for one
+        person key ('*' = whoever is at the screen). Raises ValueError for an unknown title or kind.
+        Expired "tonight" rows are cleaned out on the way."""
+        if kind not in ("tonight", "never"):
+            raise ValueError("kind must be tonight or never")
+        if kind == "tonight" and not until:
+            raise ValueError("a tonight veto needs an end time")
+        with self.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError("unknown title")
+            conn.execute("DELETE FROM nl_vetoes WHERE kind = 'tonight' AND until <= strftime('%Y-%m-%d %H:%M:%S', 'now');")
+            conn.execute(
+                """
+                INSERT INTO nl_vetoes (person_key, media_item_id, kind, until) VALUES (?, ?, ?, ?)
+                ON CONFLICT(person_key, media_item_id)
+                DO UPDATE SET kind = excluded.kind, until = excluded.until, created_at = CURRENT_TIMESTAMP;
+                """,
+                (person_key, media_item_id, kind, until if kind == "tonight" else None),
+            )
+
+    def clear_veto(self, person_key: str, media_item_id: int) -> bool:
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM nl_vetoes WHERE person_key = ? AND media_item_id = ?;", (person_key, media_item_id))
+            return cur.rowcount > 0
+
+    def get_vetoes(self, person_keys: List[str], now_utc: str) -> List[Dict[str, Any]]:
+        """Active vetoes that apply to these people: their own "never" rows and every still-running
+        "tonight" row (person key '*'). `now_utc` is 'YYYY-MM-DD HH:MM:SS'."""
+        keys = [str(k) for k in person_keys] + ["*"]
+        marks = ",".join("?" * len(keys))
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT v.person_key, v.media_item_id, v.kind, v.until, m.title, m.release_year AS year
+                FROM nl_vetoes v JOIN media_items m ON m.id = v.media_item_id
+                WHERE v.person_key IN ({marks}) AND (v.kind = 'never' OR v.until > ?)
+                ORDER BY v.created_at DESC, v.media_item_id;
+                """,
+                (*keys, now_utc),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_vetoed_ids(self, person_keys: List[str], now_utc: str) -> set:
+        return {int(r["media_item_id"]) for r in self.get_vetoes(person_keys, now_utc)}
+
+    def set_last_chooser(self, person_id: str, media_item_id: Optional[int]) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO nl_chooser (slot, person_id, media_item_id) VALUES (1, ?, ?)
+                ON CONFLICT(slot) DO UPDATE SET person_id = excluded.person_id, media_item_id = excluded.media_item_id,
+                                                chosen_at = CURRENT_TIMESTAMP;
+                """,
+                (person_id, media_item_id),
+            )
+
+    def get_last_chooser(self) -> Optional[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT person_id, media_item_id, chosen_at FROM nl_chooser WHERE slot = 1;").fetchone()
+        return dict(row) if row else None
 
     # ------------------------------------------------------------------ Northern Lights browse polish (M7b)
 

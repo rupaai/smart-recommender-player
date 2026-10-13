@@ -23,6 +23,7 @@ function at the top that takes dicts, so it is tested without a server.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from services.nl_people import Person, Viewer
@@ -52,6 +53,16 @@ class PicksError(Exception):
 
 
 # ---------------------------------------------------------------- pure helpers
+
+
+def viewer_keys(viewer: Viewer) -> List[str]:
+    """The person keys a viewer's vetoes are filed under: each person at the screen, or the implicit key."""
+    return [p.id for p in viewer.people] or [viewer.key]
+
+
+def utc_str(moment: Optional[datetime] = None) -> str:
+    """A UTC moment as 'YYYY-MM-DD HH:MM:SS' (what the database stores and compares)."""
+    return (moment or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def parse_max_runtime(value: Any) -> Optional[int]:
@@ -324,6 +335,7 @@ class NLPicks:
         self.browse = browse
         self.recommender = recommender
         self._people = people
+        self.clock = None   # tests fix the time of day vetoes are judged by
 
     @property
     def people(self) -> Any:
@@ -468,6 +480,7 @@ class NLPicks:
         ids = [i for i, r in rows.items() if runtime_ok(r.get("runtime"), max_minutes)]
         interest = self.db.get_interest(ids)
         hidden = self.db.get_hidden_ids(viewer.key)   # M7b: "Hide from home" also keeps a title out of this row
+        hidden = hidden | self.db.get_vetoed_ids(viewer_keys(viewer), utc_str(self.clock() if self.clock else None))   # M9b: "Not tonight" and "Never"
         ids = [i for i in ids if i not in hidden and not passed_by_any(ctx, interest.get(i, {}))]
         out: Dict[str, Any] = {
             "title": ctx.title, "solo": ctx.solo, "max_minutes": max_minutes, "chips": self._chips(),

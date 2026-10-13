@@ -58,6 +58,7 @@ from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
 from services import nl_together
+from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
     BOTH,
     COOKIE_MAX_AGE,
@@ -170,6 +171,13 @@ nl_type = TypeChannels()
 
 # Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
 nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
+
+# Northern Lights choosing for two (M9b): Choose for us, vetoes, the rotating chooser. `northern_lights.timezone`
+# (an IANA name like Europe/London) is only the fallback for a browser that sends no UTC offset.
+nl_choose = NLChoose(
+    db, nl_picks, lambda: nl_people, MOOD_MAPPINGS,
+    tz_name=str(((config.get("northern_lights") or {}).get("timezone")) or "") or None,
+)
 
 
 # Northern Lights browse polish (M7b): cast, trailer, tech details and "More like this". The TMDB key is used
@@ -1565,6 +1573,82 @@ async def nl_picks_row(request: Request, max_runtime: Optional[str] = None) -> D
     return await asyncio.to_thread(nl_picks.picks, viewer, parse_max_runtime(max_runtime))
 
 
+# --- Northern Lights choosing for two (M9b) ---
+class NLChooseBody(BaseModel):
+    mood: Optional[int] = None
+    genre: Optional[str] = Field(None, max_length=40)
+    max_minutes: Optional[int] = None
+    exclude: List[int] = Field(default_factory=list, max_length=60)
+    mode: str = "pick"             # "pick" or "yeses" (a random title both said yes to)
+    tz: Optional[int] = None       # the browser's UTC offset in minutes east of UTC
+
+
+class NLVetoBody(BaseModel):
+    kind: str                      # "tonight" or "never"
+    person: Optional[str] = None   # whose "never"; needed on "Both of us"
+    tz: Optional[int] = None
+
+
+@app.get("/api/nl/choose/options")
+async def nl_choose_options(request: Request, tz: Optional[str] = None) -> Dict[str, Any]:
+    """What Choose for us offers: the recommender's moods, the shelf's genres, the length chips, what today's
+    weekday and time of day suggest, whose turn it is to choose, and how many titles both said yes to."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_choose.options, viewer, clean_tz(tz))
+
+
+@app.post("/api/nl/choose")
+async def nl_choose_pick(body: NLChooseBody, request: Request) -> Dict[str, Any]:
+    """One big pick for the viewer(s). Wishes (mood, genre, length) filter; the weekday and time of day fill
+    in a mood and length when none was chosen; `exclude` is what "Another" has already shown; mode "yeses" is a
+    random title both said yes to. `item` is null with a `note` when nothing fits."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(
+            nl_choose.choose, viewer, body.mood, body.genre, body.max_minutes, body.exclude, body.mode, clean_tz(body.tz)
+        )
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.post("/api/nl/choose/chosen/{item_id}")
+async def nl_choose_chosen(item_id: int, request: Request) -> Dict[str, Any]:
+    """The pick was played: remember who chose, so the next time says "Your turn, <the other person>"."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.chosen, viewer, item_id)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.get("/api/nl/vetoes")
+async def nl_vetoes_list(request: Request) -> Dict[str, Any]:
+    """The titles off the table for this screen: "Not tonight" (until tomorrow 05:00) and each person's "Never"."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_choose.vetoes, viewer)
+
+
+@app.post("/api/nl/veto/{item_id}")
+async def nl_veto_set(item_id: int, body: NLVetoBody, request: Request) -> Dict[str, Any]:
+    """"Not tonight" hides a title until tomorrow 05:00 local; "Never" hides it for that person. Both leave it
+    out of Choose for us and the home row; the library, search and watchlist still show it."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.veto, viewer, item_id, body.kind, body.person, clean_tz(body.tz))
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.delete("/api/nl/veto/{item_id}")
+async def nl_veto_clear(item_id: int, request: Request, kind: str = Query("never"), person: Optional[str] = None) -> Dict[str, Any]:
+    """Bring a title back (undo "Not tonight" or "Never")."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.unveto, viewer, item_id, kind, person)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
     return _nl_page(request, "nl/home.html", {"active": "home"})
@@ -1593,6 +1677,11 @@ async def nl_show_page(item_id: int, request: Request) -> Any:
 @app.get("/nl/watchlist", response_class=HTMLResponse)
 async def nl_watchlist_page(request: Request) -> Any:
     return _nl_page(request, "nl/watchlist.html", {"active": "watchlist"})
+
+
+@app.get("/nl/choose", response_class=HTMLResponse)
+async def nl_choose_page(request: Request) -> Any:
+    return _nl_page(request, "nl/choose.html", {"active": "choose"})
 
 
 @app.get("/nl/me", response_class=HTMLResponse)
@@ -1624,6 +1713,11 @@ async def nl_tv_show(item_id: int, request: Request) -> Any:
 @app.get("/nl/tv/watchlist", response_class=HTMLResponse)
 async def nl_tv_watchlist(request: Request) -> Any:
     return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, tv=True)
+
+
+@app.get("/nl/tv/choose", response_class=HTMLResponse)
+async def nl_tv_choose(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, tv=True)
 
 
 @app.get("/nl/tv/me", response_class=HTMLResponse)

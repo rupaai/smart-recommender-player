@@ -27,6 +27,9 @@
     window.NLPrefs.save(patch).then(function () { say("Saved"); });
   }
 
+  var vetoes = document.getElementById("nl-vetoes");
+  if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, false); }   // M9b: bring back what was vetoed
+
   window.NLPrefs.get().then(function (p) {
     fill(audio, p.audio_lang);
     fill(sub, p.subtitle_lang);
