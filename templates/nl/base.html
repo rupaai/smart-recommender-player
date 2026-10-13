@@ -17,6 +17,7 @@
         <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
         <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
         <a href="/nl/watchlist"{% if active == 'watchlist' %} aria-current="page"{% endif %}>Watchlist</a>
+        <a href="/nl/choose"{% if active == 'choose' %} aria-current="page"{% endif %}>Choose</a>
       </nav>
       {% if people_configured and viewer %}<a class="nl-viewer" href="/nl/me"{% if active == 'me' %} aria-current="page"{% endif %} aria-label="{{ viewer.label }}: languages and who's watching">{{ viewer.label }}</a>{% endif %}
       <form class="nl-search" id="nl-search-form" role="search" autocomplete="off">

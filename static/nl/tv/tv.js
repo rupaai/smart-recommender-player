@@ -676,6 +676,8 @@
     var on = document.getElementById("tv-pref-on");
     var status = document.getElementById("tv-pref-status");
     setStatus("");
+    var vetoes = document.getElementById("tv-vetoes");
+    if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, true); }   // M9b: bring back what was vetoed
     var prefs = null;
     function paint() {
       audio.textContent = "Audio language: " + langName(prefs.audio_lang);
@@ -863,6 +865,13 @@
     load();
   }
 
+  /* ----------------------------------------------------- choose for us (M9b) */
+
+  function initChoose() {
+    window.NLFocus.remember(false);
+    window.NLChoose.mount(document.getElementById("tv-choose"), { tv: true, href: tvHref, status: setStatus });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -872,4 +881,5 @@
   else if (page === "who") { initWho(); }
   else if (page === "me") { initMe(); }
   else if (page === "watchlist") { initWatchlist(); }
+  else if (page === "choose") { initChoose(); }
 })();

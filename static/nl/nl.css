@@ -304,3 +304,33 @@ button.nl-btn-quiet:hover { background: rgba(29, 27, 41, 0.06); }
 .nl-pact { margin-top: 18px; }
 .nl-together-detail { position: static; margin: 0 0 10px; }
 .nl-pact .nl-switch-label { font-weight: 600; }
+
+/* ---- M9b: Choose for us, vetoes */
+.nl-choose-cta { margin: 14px 0 4px; }
+.nl-choose { max-width: 760px; padding-bottom: 32px; }
+.nl-choose[hidden] { display: none; }
+.nl-choose-turn { margin: 8px 0 0; font-family: var(--font-display); font-stretch: 72%; font-weight: 800; font-size: clamp(1.5rem, 6vw, 2.1rem); text-transform: uppercase; }
+.nl-choose-turn[hidden], .nl-choose-turn:empty { display: none; }
+.nl-choose-block { margin-top: 18px; }
+.nl-choose-label { font-size: 0.9rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); margin: 0 0 6px; }
+.nl-choose-group { flex-wrap: wrap; overflow: visible; padding-bottom: 4px; }
+.nl-choose-note { margin: 18px 0; color: var(--text-2); }
+.nl-pick { margin-top: 22px; }
+.nl-pick-card { display: grid; grid-template-columns: 132px 1fr; gap: 16px; align-items: start; padding: 14px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.nl-pick-title { font-size: clamp(1.5rem, 6vw, 2.2rem); margin: 0; }
+.nl-pick-reason { margin: 8px 0 0; font-weight: 600; }
+.nl-pick-overview { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin-top: 8px; }
+.nl-pick-info .nl-actions { margin-top: 14px; }
+.nl-pick-info .nl-actions > * { min-height: 48px; }
+.nl-choose-undo:empty { display: none; }
+.nl-choose-undo { margin-top: 12px; }
+.nl-veto-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.nl-veto { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.nl-veto-title { font-weight: 700; flex: 1 1 160px; }
+@media (min-width: 720px) {
+  .nl-pick-card { grid-template-columns: 200px 1fr; gap: 24px; padding: 20px; }
+}
+@media (max-width: 380px) {
+  .nl-pick-card { grid-template-columns: 1fr; }
+  .nl-pick-poster { max-width: 160px; }
+}

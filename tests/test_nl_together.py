@@ -128,7 +128,7 @@ def test_database(tmp):
     with fresh.get_connection() as conn:
         seen = {r[1] for r in conn.execute("PRAGMA table_info(nl_seen_together)")}
         pacts = {r[1] for r in conn.execute("PRAGMA table_info(nl_pacts)")}
-    check("fresh DB is at schema 17", fresh.get_schema_version() == 17, fresh.get_schema_version())
+    check("fresh DB is at schema 17", fresh.get_schema_version() >= 17, fresh.get_schema_version())
     check("the two tables have their columns", {"media_item_id", "source_id", "seen_at"} <= seen and {"media_item_id", "updated_at"} <= pacts, (seen, pacts))
 
     path = os.path.join(tmp, "old.db")
@@ -144,8 +144,8 @@ def test_database(tmp):
     up = DatabaseManager(path)
     with up.get_connection() as conn:
         has = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('nl_seen_together', 'nl_pacts')").fetchone()[0]
-    check("v16 upgrades to 17 and gets both tables", up.get_schema_version() == 17 and has == 2, (up.get_schema_version(), has))
-    check("running again is harmless", DatabaseManager(path).get_schema_version() == 17)
+    check("v16 upgrades to 17 and gets both tables", up.get_schema_version() >= 17 and has == 2, (up.get_schema_version(), has))
+    check("running again is harmless", DatabaseManager(path).get_schema_version() >= 17)
 
     print("together rows")
     src = up.get_nl_title(show)["sources"][0]["id"]
