@@ -29,6 +29,15 @@ from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.device_profiles import profile_for
+from services.nl_cast import (
+    CastConfig,
+    CastConfigError,
+    CastTokens,
+    cast_payload,
+    secret_from_env,
+    strip_param,
+    token_values,
+)
 from services.nl_player_extras import empty_extras, player_extras
 from services.nl_polish_b import NLExtras
 from services.jellyfin_playback import (
@@ -145,6 +154,14 @@ except PeopleConfigError as _e:
     raise SystemExit(f"[Northern Lights] bad people configuration: {_e}")
 if nl_people.configured and not jellyfin_service.user_id:
     jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
+
+# Northern Lights casting (M8): where the Chromecast reaches this app and the signed stream tokens.
+# NL_CAST_SECRET signs the tokens; without it a random secret lives in memory only (tokens die on restart).
+try:
+    nl_cast = CastConfig.from_config(config)
+except CastConfigError as _e:
+    raise SystemExit(f"[Northern Lights] bad cast configuration: {_e}")
+nl_cast_tokens = CastTokens(secret_from_env())
 
 # Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
 nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
@@ -886,6 +903,19 @@ async def nl_play_info(
     its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
     default tracks from their language prefs, and Resume from their own progress (the further of the
     two for "Both of us", with a note when they are in different places)."""
+    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client)
+
+
+async def _nl_play(
+    request: Request,
+    item_id: int,
+    audio: Optional[int],
+    subtitle: Optional[int],
+    start: float,
+    caps: Optional[str],
+    source: Optional[int],
+    client: Optional[str],
+) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
     prefer = _nl_effective_prefs(viewer).public()
     item = db.get_nl_title(item_id)
@@ -914,6 +944,33 @@ async def nl_play_info(
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
     return info
+
+
+@app.get("/api/nl/cast/config")
+async def nl_cast_config() -> Dict[str, Any]:
+    """Whether casting is set up (cast_base_url configured) and which receiver app the sender launches."""
+    return nl_cast.public()
+
+
+@app.get("/api/nl/cast/play/{item_id}")
+async def nl_cast_play(
+    request: Request,
+    item_id: int,
+    audio: Optional[int] = Query(None, ge=0, description="Jellyfin audio stream index"),
+    subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
+    start: float = Query(0.0, ge=0, description="Start position in seconds"),
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show"),
+) -> Dict[str, Any]:
+    """/api/nl/play for a Chromecast: the cast profile (H.264/AAC), every URL absolute on the LAN
+    (northern_lights.cast_base_url) and carrying a 6-hour token for this one item (?t=), so the
+    Chromecast needs no cookies. Adds a `cast` block (content type, backdrop, poster). No Jellyfin key."""
+    if not nl_cast.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Casting isn't set up: set northern_lights.cast_base_url to this server's LAN address.",
+        )
+    info = await _nl_play(request, item_id, audio, subtitle, start, None, source, "cast")
+    return cast_payload(info, nl_cast, nl_cast_tokens)
 
 
 def _stream_for_viewer(item, audio, subtitle, start, profile, prefer):
@@ -1022,12 +1079,23 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
     clean = safe_proxy_path(path)
     if clean is None:
         raise HTTPException(status_code=404, detail="Not found.")
+    # M8: a cast stream token (?t=) narrows the request to the one item the token was made for. A bad,
+    # expired, forged, or mismatched token is a 403; the token never goes on to Jellyfin.
+    cast_token: Optional[str] = None
+    tokens = token_values(request.url.query)
+    if tokens:
+        ok, _why = (False, "") if len(tokens) != 1 else nl_cast_tokens.check(tokens[0], request.method, clean)
+        if not ok:
+            raise HTTPException(status_code=403, detail="This link isn't valid.")
+        cast_token = tokens[0]
     jf = jellyfin_service
     if not jf.configured:
         raise HTTPException(status_code=503, detail="Jellyfin is not configured.")
 
     upstream_url = f"{jf.base_url}/{quote(clean, safe='/')}"
     query = strip_api_key("?" + request.url.query)[1:] if request.url.query else ""
+    if cast_token:
+        query = strip_param(query, "t")
     if query:
         upstream_url += "?" + query
     headers = {k: v for k, v in request.headers.items() if k.lower() in _PROXY_REQUEST_HEADERS}
@@ -1052,7 +1120,7 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
             upstream.close()
         if len(body) > _MAX_PLAYLIST_BYTES:
             raise HTTPException(status_code=502, detail="Playlist too large.")
-        text = rewrite_playlist(body.decode("utf-8", errors="replace"))
+        text = rewrite_playlist(body.decode("utf-8", errors="replace"), cast_token)
         return Response(
             content=text,
             status_code=upstream.status_code,
@@ -1451,6 +1519,16 @@ async def nl_tv_watchlist(request: Request) -> Any:
 @app.get("/nl/tv/me", response_class=HTMLResponse)
 async def nl_tv_me(request: Request) -> Any:
     return _nl_page(request, "nl/tv/me.html", {"page": "me"}, tv=True)
+
+
+@app.get("/nl/cast/receiver", response_class=HTMLResponse)
+async def nl_cast_receiver(request: Request) -> Any:
+    """The custom Chromecast Web Receiver (M8). Runs on the Chromecast, so it never has the viewer cookie and
+    never calls our API: everything it shows arrives in the load request from the sender, and the artwork URL
+    carries a stream token."""
+    resp = templates.TemplateResponse(request=request, name="nl/cast_receiver.html", context={})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)

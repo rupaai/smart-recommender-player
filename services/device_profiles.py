@@ -3,7 +3,7 @@ Jellyfin DeviceProfiles (services/device_profiles.py)
 
 A DeviceProfile tells Jellyfin what a client can play, so PlaybackInfo can choose
 direct play or an HLS transcode. Kept conservative on purpose. TV and Cast profiles
-come in later Northern Lights milestones (TV: below, M3; Cast: M8).
+come in later Northern Lights milestones (TV: below, M3; Cast: below, M8).
 """
 
 from __future__ import annotations
@@ -203,9 +203,61 @@ TV_PROFILE = {
 }
 
 
+# ---- Cast profile (M8) ------------------------------------------------------------
+# A Chromecast decodes H.264 + AAC everywhere (older sticks stop at level 4.1; 5.1 / HEVC only on
+# the Ultra and Google TV models), so this is the lowest common denominator: direct play an mp4 that
+# is already H.264/AAC, otherwise Jellyfin remuxes or converts to HLS (MPEG-TS segments, H.264 + AAC
+# stereo). Chosen with `client=cast`; the page's `caps` are ignored (the browser is not what plays).
+# Text subtitles go out as WebVTT tracks; picture subtitles are burned in.
+
+CAST_CLIENT = "cast"
+
+CAST_PROFILE = {
+    "Name": "Northern Lights (Chromecast)",
+    "MaxStreamingBitrate": 20_000_000,   # home Wi-Fi to a Chromecast
+    "MaxStaticBitrate": 20_000_000,
+    "MusicStreamingTranscodingBitrate": 192_000,
+    "DirectPlayProfiles": [
+        {
+            "Container": "mp4,m4v",
+            "Type": "Video",
+            "VideoCodec": "h264",
+            "AudioCodec": "aac,mp3",
+        },
+    ],
+    "TranscodingProfiles": [
+        {
+            "Container": "ts",
+            "Type": "Video",
+            "VideoCodec": "h264",
+            "AudioCodec": "aac",
+            "Protocol": "hls",
+            "Context": "Streaming",
+            "MaxAudioChannels": "2",
+        },
+    ],
+    "ContainerProfiles": [],
+    "CodecProfiles": [
+        {
+            "Type": "Video",
+            "Codec": "h264",
+            "Conditions": [
+                {"Condition": "LessThanEqual", "Property": "VideoLevel", "Value": "41", "IsRequired": False},
+            ],
+        },
+    ],
+    "SubtitleProfiles": (
+        [{"Format": "vtt", "Method": "External"}]
+        + [{"Format": f, "Method": "Encode"} for f in ("pgssub", "pgs", "dvdsub", "vobsub", "dvbsub")]
+    ),
+}
+
+
 def profile_for(client: Optional[str], caps_raw: Optional[str]) -> dict:
-    """The DeviceProfile for a play request: `client=tv` wins (caps ignored), else the
+    """The DeviceProfile for a play request: `client=tv` or `client=cast` wins (caps ignored), else the
     browser profile shaped by `caps`, else the conservative BROWSER_PROFILE."""
     if client == TV_CLIENT:
         return TV_PROFILE
+    if client == CAST_CLIENT:
+        return CAST_PROFILE
     return browser_profile(parse_caps(caps_raw))
