@@ -224,6 +224,10 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
         runOnUiThread { if (pageTrusted) player.setSubtitleStyle(json) }
     }
 
+    override fun onSpeedRequested(rate: Double) {
+        runOnUiThread { if (pageTrusted) player.setSpeed(rate) }
+    }
+
     override fun onStop() {
         super.onStop()
         player.close(sendStopped = true) // user left the app: save the position

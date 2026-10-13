@@ -30,6 +30,8 @@ _TICKS = 10_000_000
 NEW_DAYS = 14
 NEW_MAX = 6          # at most this many "New" badges per list (a first scan must not mark everything)
 HOME_ROW = 18
+RECENT_ROW = 18        # Recently Added / Recently Watched on the home page
+PLAYED_FETCH = 2000    # how many played items to read from Jellyfin (newest first) per person
 DOWNLOAD_HREF = "/#direct"   # the existing app's Download tab (static/app.js switchTab('direct'))
 
 
@@ -172,6 +174,32 @@ def parse_next_up(data: Dict[str, Any], by_path: Dict[str, Dict[str, Any]]) -> O
         if src:
             return src["source_id"]
     return None
+
+
+def parse_played(data: Dict[str, Any], by_path: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Jellyfin's played items (newest first) -> [{media_item_id, played_at}], one entry per title of ours
+    (a show appears once, at its most recently played episode). Items whose Path we do not know are dropped."""
+    out: List[Dict[str, Any]] = []
+    seen = set()
+    for it in (data or {}).get("Items") or []:
+        src = by_path.get(it.get("Path") or "")
+        if not src or src["media_item_id"] in seen:
+            continue
+        if not (it.get("UserData") or {}).get("Played"):
+            continue
+        seen.add(src["media_item_id"])
+        out.append({"media_item_id": src["media_item_id"], "played_at": str((it.get("UserData") or {}).get("LastPlayedDate") or "")})
+    return out
+
+
+def merge_played(lists: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Several people's played lists -> one: a title any of them played, at the latest time, newest first."""
+    latest: Dict[int, str] = {}
+    for lst in lists:
+        for e in lst:
+            if e["media_item_id"] not in latest or e["played_at"] > latest[e["media_item_id"]]:
+                latest[e["media_item_id"]] = e["played_at"]
+    return [{"media_item_id": i, "played_at": t} for i, t in sorted(latest.items(), key=lambda kv: kv[1], reverse=True)]
 
 
 def season_label(number: int) -> str:
@@ -331,20 +359,75 @@ class NLBrowse:
             "image_fallback": self._movie_fallback(row),
             "badge": badge,
             "progress": progress or None,
+            "together": self.db.get_together_counts().get(row["id"], 0) > 0,   # M9a: seen together
             "href": f"/nl/{'show' if is_show else 'title'}/{row['id']}",
         }
 
-    def home(self, users: Optional[List[Optional[str]]] = None) -> Dict[str, Any]:
+    # ------------------------------------------------------- watched state (M7b)
+
+    def _played_one(self) -> List[Dict[str, Any]]:
+        data = self.pb._request(
+            "GET", f"/Users/{self._uid()}/Items",
+            params={"Filters": "IsPlayed", "IncludeItemTypes": "Movie,Episode", "Recursive": "true", "Fields": "Path",
+                    "SortBy": "DatePlayed", "SortOrder": "Descending", "Limit": PLAYED_FETCH, "EnableUserData": "true"},
+        )
+        items = [i for i in (data or {}).get("Items") or [] if i.get("Path")]
+        return parse_played({"Items": items}, self._by_path([i["Path"] for i in items]))
+
+    def played_titles(self, users: Optional[List[Optional[str]]] = None) -> Optional[List[Dict[str, Any]]]:
+        """Titles of ours that were watched, newest first. For several people (Both of us) a title
+        counts when either watched it. None when Jellyfin cannot tell (down, refused): callers then show
+        everything rather than guess."""
+        lists: List[List[Dict[str, Any]]] = []
+        try:
+            for u in (users or [None]):
+                with self.pb.as_user(u):
+                    lists.append(self._played_one())
+        except JellyfinUnavailable:
+            return None
+        return lists[0] if len(lists) == 1 else merge_played(lists)
+
+    def library_page(
+        self, media_type: str, users: Optional[List[Optional[str]]] = None, unwatched: bool = False
+    ) -> Dict[str, Any]:
+        """The Movies / Shows page: every card, or only titles nobody at the screen has watched
+        (`unwatched`). `unwatched_applied` is False when the filter was asked for but Jellyfin could not
+        say what was watched, so the page can say so instead of showing a wrong list."""
+        cards = self.library(media_type, None, True, users)
+        applied = False
+        if unwatched:
+            played = self.played_titles(users)
+            if played is not None:
+                seen = {e["media_item_id"] for e in played}
+                cards = [c for c in cards if c["id"] not in seen]
+                applied = True
+        return {"items": cards, "unwatched": bool(unwatched), "unwatched_applied": applied}
+
+    def home(self, users: Optional[List[Optional[str]]] = None, hidden: Optional[Any] = None) -> Dict[str, Any]:
+        hidden = set(hidden or ())
         cont = self.resume_cards(users)
         progress = {c["media_item_id"]: c["progress"] for c in cont if c["kind"] == "movie"}
         out: Dict[str, Any] = {"continue_watching": cont}
+        pool: Dict[int, Dict[str, Any]] = {}
         for key, mtype in (("movies", "movie"), ("shows", "tv")):
             rows = self._on_disk(mtype)
             mark_new(rows)
             total = len(rows)
-            rows = sorted(rows, key=lambda r: r.get("added_at") or "", reverse=True)[:HOME_ROW]
-            out[key] = [self._card(r, progress.get(r["id"])) for r in rows]
+            rows = sorted(rows, key=lambda r: r.get("added_at") or "", reverse=True)
+            for r in rows:
+                pool[r["id"]] = r
+            shown = [r for r in rows if r["id"] not in hidden][:HOME_ROW]
+            out[key] = [self._card(r, progress.get(r["id"])) for r in shown]
             out[key + "_total"] = total
+        # Recently Added: newest files first, movies and shows together.
+        newest = sorted((r for r in pool.values() if r["id"] not in hidden), key=lambda r: r.get("added_at") or "", reverse=True)
+        out["recently_added"] = [self._card(r, progress.get(r["id"])) for r in newest[:RECENT_ROW]]
+        # Recently Watched: what Jellyfin says was played last; empty when it cannot say.
+        played = self.played_titles(users) or []
+        out["recently_watched"] = [
+            self._card(pool[e["media_item_id"]], None) for e in played
+            if e["media_item_id"] in pool and e["media_item_id"] not in hidden
+        ][:RECENT_ROW]
         return out
 
     # ---------------------------------------------------------------- details

@@ -127,8 +127,9 @@ class FakeJellyfin:
         return self.stream_response
 
 
-def boot(tmp):
-    """Imports server against a fresh DB in tmp, loads the library, wires the fake. Returns a dict."""
+def boot(tmp, extra_config=None):
+    """Imports server against a fresh DB in tmp, loads the library, wires the fake. Returns a dict.
+    `extra_config` is merged into the config file (for example {"northern_lights": {...}})."""
     from services.jellyfin_playback import JellyfinPlayback
     JellyfinPlayback.file_exists = staticmethod(lambda path: True)
     cfg_file = os.path.join(tmp, "config.yaml")
@@ -137,6 +138,7 @@ def boot(tmp):
             "media_folders": [os.path.join(tmp, "Movies"), os.path.join(tmp, "Shows")],
             "jellyfin_library": {"movie_dir": os.path.join(tmp, "Movies"), "tv_dir": os.path.join(tmp, "Shows")},
             "torrent": {"download_dir": os.path.join(tmp, "downloads")},
+            **(extra_config or {}),
         }, f)
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")

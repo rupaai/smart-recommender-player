@@ -15,9 +15,12 @@
     {% if page != 'who' %}<nav class="tv-nav" data-nl-row="nav" data-nl-skip-initial aria-label="Sections">
       <a class="tv-pill" data-nl-focus href="/nl/tv/">Home</a>
       <a class="tv-pill" data-nl-focus href="/nl/tv/watchlist">Watchlist</a>
+      <a class="tv-pill" data-nl-focus href="/nl/tv/choose">Choose</a>
+      <a class="tv-pill" data-nl-focus href="/nl/tv/downloads">Downloads</a>
       <a class="tv-pill" data-nl-focus href="/nl/tv/search">Search</a>
       {% if people_configured and viewer %}<a class="tv-pill" data-nl-focus href="/nl/tv/me" aria-label="{{ viewer.label }}: languages and who's watching">{{ viewer.label }}</a>{% endif %}
     </nav>{% endif %}
+    <div class="tv-health" id="tv-health" hidden></div>
     <span class="tv-foil" aria-hidden="true"></span>
   </header>
   <main id="tv-main">
@@ -26,9 +29,13 @@
   </main>
   <script src="/static/nl/nl.js"></script>
   <script src="/static/nl/watch.js"></script>
+  <script src="/static/nl/polish.js"></script>
+  <script src="/static/nl/couple.js"></script>
+  <script src="/static/nl/health.js"></script>
   <script src="/static/nl/tv/focus.js"></script>
   <script src="/static/nl/prefs.js"></script>
   <script src="/static/nl/subtitles.js"></script>
+  {% block scripts %}{% endblock %}
   <script src="/static/nl/tv/tv.js"></script>
 </body>
 </html>

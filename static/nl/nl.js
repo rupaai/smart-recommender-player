@@ -94,15 +94,19 @@
     } else if (item.badge) {
       poster.appendChild(el("span", "nl-badge", item.badge));
     }
+    if (item.together && window.NLCouple) { poster.appendChild(window.NLCouple.togetherBadge(false)); }   // M9a
     a.appendChild(poster);
     a.appendChild(el("div", "nl-name", item.title));
     a.appendChild(el("div", "nl-meta", metaLine(item)));
     var label = item.title + (item.year ? " (" + item.year + ")" : "");
     if (item.progress) { label += ", " + item.progress + " percent watched"; } else if (item.badge) { label += ", " + item.badge; }
+    if (item.together) { label += ", watched together"; }
     a.setAttribute("aria-label", label);
     li.appendChild(a);
     // M6: "+" for the watchlist, beside the link (a button inside a link is not valid markup).
     if (window.NLWatch && item.id) { li.appendChild(window.NLWatch.iconButton(item.id, item.title)); }
+    // M7b: home rows mark their cards hideable; "Hide from home" sits under the "+".
+    if (window.NLPolish && item.hideable && item.id) { li.appendChild(window.NLPolish.hideButton(item, li)); }
     return li;
   }
 

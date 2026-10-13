@@ -17,6 +17,7 @@
   var value = window.NLWatch ? window.NLWatch.savedRuntime() : null;
 
   function card(item) {
+    item.hideable = true;   // M7b: "Hide from home" works on this row too
     var li = NL.posterCard(item);
     var why = NL.el("p", "nl-reason", item.reason || "");
     why.setAttribute("data-reason", "");

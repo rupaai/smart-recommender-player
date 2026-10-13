@@ -1,13 +1,23 @@
 {% extends "nl/tv/base.html" %}
 {% block main %}
   <section class="tv-section tv-me" aria-labelledby="tv-me-h">
-    <h2 id="tv-me-h">{{ viewer.label }}</h2>
+    <h2 id="tv-me-h">{{ viewer.label }}: Playback</h2>
     <div class="tv-me-list" data-nl-row="me-audio"><button id="tv-pref-audio" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
     <div class="tv-me-list" data-nl-row="me-sub"><button id="tv-pref-sub" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
     <div class="tv-me-list" data-nl-row="me-on"><button id="tv-pref-on" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="false" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-skip"><button id="tv-pref-skip" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-autoplay"><button id="tv-pref-autoplay" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="true" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-quality"><button id="tv-pref-quality" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
+  </section>
+  <section class="tv-section tv-me" aria-labelledby="tv-me-display">
+    <h2 id="tv-me-display">{{ viewer.label }}: Display</h2>
+    <div class="tv-me-list" id="tv-pref-fit-row" data-nl-row="me-fit"><button id="tv-pref-fit" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-spoilers"><button id="tv-pref-spoilers" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="false" data-nl-focus></button></div>
     {% if people_configured %}
     <div class="tv-me-list" data-nl-row="me-switch"><a class="tv-btn tv-me-btn" data-nl-focus href="/nl/tv/who?next=%2Fnl%2Ftv%2F">{% if viewer.both %}Change who&rsquo;s watching{% else %}Not {{ viewer.label }}? Switch who&rsquo;s watching{% endif %}</a></div>
     {% endif %}
     <p class="tv-hint" id="tv-pref-status" role="status">Press OK to change a setting.</p>
   </section>
+  <section id="tv-vetoes" class="tv-section tv-me tv-vetoes" hidden></section>
 {% endblock %}
+{% block scripts %}<script src="/static/nl/choose.js"></script>{% endblock %}

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northern Lights receiver</title>
+  <link rel="stylesheet" href="/static/nl/cast-receiver.css">
+  <!-- Google's Web Receiver framework runs on the Chromecast. This page needs no cookies and calls none of our APIs:
+       title, episode and artwork arrive in the sender's load request. -->
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+</head>
+<body>
+  <cast-media-player id="nlr-player"></cast-media-player>
+
+  <div id="nlr-art" class="nlr-art" aria-hidden="true"><div id="nlr-backdrop" class="nlr-backdrop"></div></div>
+
+  <div id="nlr-info" class="nlr-info">
+    <p class="nlr-brand">Northern Lights</p>
+    <h1 id="nlr-title" class="nlr-title"></h1>
+    <p id="nlr-episode" class="nlr-episode"></p>
+    <p id="nlr-state" class="nlr-state"></p>
+  </div>
+
+  <div class="nlr-progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div id="nlr-fill" class="nlr-fill"></div>
+    <span id="nlr-time" class="nlr-time"></span>
+  </div>
+
+  <script src="/static/nl/cast-receiver.js"></script>
+</body>
+</html>

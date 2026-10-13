@@ -12,11 +12,14 @@
   <header class="nl-bar">
     <div class="nl-bar-inner">
       <a class="nl-brand" href="/nl/" aria-label="Northern Lights home">Northern Lights</a>
+      <div class="nl-health" id="nl-health" role="status" hidden></div>
       <nav class="nl-nav" aria-label="Sections">
         <a href="/nl/"{% if active == 'home' %} aria-current="page"{% endif %}>Home</a>
         <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
         <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
         <a href="/nl/watchlist"{% if active == 'watchlist' %} aria-current="page"{% endif %}>Watchlist</a>
+        <a href="/nl/choose"{% if active == 'choose' %} aria-current="page"{% endif %}>Choose</a>
+        <a href="/nl/downloads"{% if active == 'downloads' %} aria-current="page"{% endif %}>Downloads</a>
       </nav>
       {% if people_configured and viewer %}<a class="nl-viewer" href="/nl/me"{% if active == 'me' %} aria-current="page"{% endif %} aria-label="{{ viewer.label }}: languages and who's watching">{{ viewer.label }}</a>{% endif %}
       <form class="nl-search" id="nl-search-form" role="search" autocomplete="off">
@@ -43,6 +46,9 @@
 
   <script src="/static/nl/nl.js"></script>
   <script src="/static/nl/watch.js"></script>
+  <script src="/static/nl/polish.js"></script>
+  <script src="/static/nl/couple.js"></script>
+  <script src="/static/nl/health.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

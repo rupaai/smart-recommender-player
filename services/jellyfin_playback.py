@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote, unquote
 
 from services.device_profiles import BROWSER_PROFILE
+from services import nl_picture, nl_settings
 from services.nl_people import pick_audio_index, pick_subtitle_track
 from services.jellyfin_service import JellyfinService
 
@@ -34,6 +35,9 @@ _KEY_PARAMS = {"api_key", "apikey", "x-emby-token"}
 _URI_ATTR = re.compile(r'URI="([^"]*)"')
 # Read-only artwork: Items/<id>/Images/<kind>[/<index>] and nothing else under Items/ (M2).
 _IMAGE_PATH = re.compile(r"^Items/[A-Za-z0-9-]{1,64}/Images/(Primary|Backdrop|Thumb|Logo|Banner)(/[0-9]{1,2})?$")
+# Seek-bar thumbnails (M7a): Videos/<id>/Trickplay/<tile width>/<sheet number>.jpg and nothing else under Trickplay.
+# (The tiles.m3u8 playlist is not used: the server hands the page the geometry as JSON.)
+_TRICKPLAY_PATH = re.compile(r"^Videos/[A-Za-z0-9-]{1,64}/Trickplay/[0-9]{2,4}/[0-9]{1,6}\.jpg$")
 
 
 class JellyfinUnavailable(Exception):
@@ -79,18 +83,31 @@ def strip_api_key(url: str) -> str:
     return out + (hash_sep + fragment if hash_sep else "")
 
 
-def rewrite_playlist(text: str) -> str:
+def append_token(url: str, token: str) -> str:
+    """Adds t=<token> (a cast stream token, M8) to a URL's query, before any #fragment."""
+    base, hash_sep, fragment = url.partition("#")
+    out = f"{base}{'&' if '?' in base else '?'}t={quote(token, safe='')}"
+    return out + (hash_sep + fragment if hash_sep else "")
+
+
+def rewrite_playlist(text: str, token: Optional[str] = None) -> str:
     """Strip API keys from an .m3u8 body: URI lines, and URI="..." attributes in # tags.
-    Other tag lines are left alone."""
+    Other tag lines are left alone. With a cast `token` (M8) every URI also gets t=<token>: the
+    Chromecast fetches the segments itself and a relative URI does not inherit the playlist's query."""
+
+    def fix(uri: str) -> str:
+        uri = strip_api_key(uri)
+        return append_token(uri, token) if token and not uri.lower().startswith("data:") else uri
+
     lines = []
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             lines.append(line)
         elif stripped.startswith("#"):
-            lines.append(_URI_ATTR.sub(lambda m: 'URI="%s"' % strip_api_key(m.group(1)), line))
+            lines.append(_URI_ATTR.sub(lambda m: 'URI="%s"' % fix(m.group(1)), line))
         else:
-            lines.append(strip_api_key(stripped))
+            lines.append(fix(stripped))
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
@@ -117,6 +134,8 @@ def safe_proxy_path(path: str) -> Optional[str]:
         return None
     if posixpath.normpath(decoded) != decoded.rstrip("/"):
         return None
+    if decoded == path and _TRICKPLAY_PATH.match(path):
+        return path
     if decoded.startswith("videos/") or decoded.startswith("Videos/"):
         return path
     if decoded == path and _IMAGE_PATH.match(path):  # artwork ids are plain, never percent-encoded
@@ -125,7 +144,11 @@ def safe_proxy_path(path: str) -> Optional[str]:
 
 
 def is_image_path(path: str) -> bool:
-    return bool(_IMAGE_PATH.match(path))
+    return bool(_IMAGE_PATH.match(path)) or bool(_TRICKPLAY_PATH.match(path))
+
+
+def is_trickplay_path(path: str) -> bool:
+    return bool(_TRICKPLAY_PATH.match(path))
 
 
 def proxy_url(jellyfin_path: str) -> str:
@@ -199,6 +222,8 @@ def audio_label(stream: Dict[str, Any]) -> str:
     label = " \u00b7 ".join(parts)
     if "commentary" in (stream.get("Title") or "").lower():
         label += " (Commentary)"
+    elif nl_picture.is_audio_description(stream):
+        label += " (AD)"   # M10c, P24: a narrator describing the picture
     return label
 
 
@@ -245,6 +270,7 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str) -> 
         }
         if kind == "Audio":
             track["label"] = audio_label(st)
+            track["is_audio_description"] = nl_picture.is_audio_description(st)
             audio.append(track)
         else:
             image = _is_image_subtitle(st)
@@ -475,11 +501,19 @@ class JellyfinPlayback:
         start_seconds: float = 0.0,
         direct_play: bool = True,
         direct_stream: bool = True,
+        max_bitrate: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """`max_bitrate` (bit/s, M10c) is the highest stream rate to allow, from the viewer's quality choice. It only ever
+        lowers the profile's own ceiling; a file above it cannot direct play, so Jellyfin converts it."""
         profile = copy.deepcopy(profile or BROWSER_PROFILE)
+        ceiling = int(profile.get("MaxStreamingBitrate") or MAX_STREAMING_BITRATE)
+        if max_bitrate and max_bitrate < ceiling:
+            ceiling = int(max_bitrate)
+            profile["MaxStreamingBitrate"] = ceiling
+            profile["MaxStaticBitrate"] = min(int(profile.get("MaxStaticBitrate") or ceiling), ceiling)
         body: Dict[str, Any] = {
             "DeviceProfile": profile,
-            "MaxStreamingBitrate": MAX_STREAMING_BITRATE,
+            "MaxStreamingBitrate": ceiling if max_bitrate else MAX_STREAMING_BITRATE,
             "EnableDirectPlay": direct_play,
             "EnableDirectStream": direct_stream,
             "EnableTranscoding": True,
@@ -521,6 +555,23 @@ class JellyfinPlayback:
         try:
             return self._request("GET", f"/Users/{self._user_id()}/Items/{jf_id}") or {}
         except JellyfinUnavailable:
+            return {}
+
+    def media_segments(self, jf_id: str) -> Any:
+        """`GET /MediaSegments/{id}` for Intro and Outro (Jellyfin 10.10+; the segments come from a provider such as
+        the Intro Skipper plugin). {} when Jellyfin is old, has no provider, or can't be read: never raises."""
+        if not valid_jellyfin_id(jf_id or ""):
+            return {}
+        try:
+            self._require()
+            resp = self.jf.session.request(
+                "GET", f"{self.jf.base_url}/MediaSegments/{jf_id}",
+                params={"includeSegmentTypes": ["Intro", "Outro"]}, timeout=10,
+            )
+            if resp.status_code != 200:
+                return {}
+            return resp.json()
+        except Exception:  # noqa: BLE001 - segments are optional
             return {}
 
     def report_progress(
@@ -576,6 +627,22 @@ class JellyfinPlayback:
         if not valid_jellyfin_id(jf_id):
             raise ValueError("bad item id")
         self._send("POST" if played else "DELETE", f"/Users/{self._user_id()}/PlayedItems/{jf_id}")
+
+    def reset_user_data(self, jf_id: str) -> None:
+        """"Mark unwatched for me" (M9a): clears this one user's played flag and resume position for one
+        item. Runs as the current `as_user` person; nobody else's data is touched. The same per-user
+        calls the M4 code uses: DELETE /Users/{id}/PlayedItems/{item}, then the position is zeroed with
+        POST /UserItems/{item}/UserData?userId= (Jellyfin 10.11)."""
+        if not valid_jellyfin_id(jf_id):
+            raise ValueError("bad item id")
+        uid = self._user_id()
+        self._send("DELETE", f"/Users/{uid}/PlayedItems/{jf_id}")
+        status = self._send_status(
+            "POST", f"/UserItems/{jf_id}/UserData", params={"userId": uid},
+            json={"Played": False, "PlaybackPositionTicks": 0},
+        )
+        if status >= 400:
+            raise JellyfinUnavailable(f"Jellyfin answered {status} when clearing the position.")
 
     # ------------------------------------------------------------ subtitles (M5)
 
@@ -650,6 +717,22 @@ class JellyfinPlayback:
         if resp.status_code >= 400:
             raise self._refine_subtitle_error(subtitle_error_for(resp.status_code, _body_text(resp), "download"))
 
+    def _cannot_play_message(self, jf_id: str, ms: Optional[Dict[str, Any]], code: str, device: str) -> str:
+        """The 415 text when Jellyfin has no way to play a file here (P20): names the codecs when they can be read,
+        e.g. "This browser can't play this format (HEVC video, DTS sound) and Jellyfin has no way to convert it (NoCompatibleStream)."."""
+        formats = nl_picture.formats_of(ms, None) if ms else {}
+        if not formats.get("video") and not formats.get("audio"):
+            try:
+                details = self.item_details(jf_id)
+                sources = details.get("MediaSources") or []
+                streams = (details.get("MediaStreams") or []) or (sources[0].get("MediaStreams") if sources else []) or []
+                formats = nl_picture.formats_of({"MediaStreams": streams}, None)
+            except Exception:  # noqa: BLE001 - the codec names are a nicety
+                formats = {}
+        named = [f"{formats[k]} {w}" for k, w in (("video", "video"), ("audio", "sound")) if formats.get(k)]
+        where = f" ({', '.join(named)})" if named else ""
+        return f"{device} can't play this format{where} and Jellyfin has no way to convert it ({code})."
+
     def stream_for(
         self,
         item: Dict[str, Any],
@@ -658,8 +741,12 @@ class JellyfinPlayback:
         start_seconds: float = 0.0,
         profile: Optional[Dict[str, Any]] = None,
         prefer: Optional[Dict[str, Any]] = None,
+        max_kbps: Optional[int] = None,
+        device: str = "This browser",
     ) -> Dict[str, Any]:
-        """`prefer` ({audio_lang, subtitle_lang, subtitles_on}, from the viewer's prefs, M4) picks the
+        """`max_kbps` (M10c) is the viewer's quality choice (None = Auto): the highest stream rate to ask for.
+        `device` ("This TV" / "This browser") is how the conversion note names the screen.
+        `prefer` ({audio_lang, subtitle_lang, subtitles_on}, from the viewer's prefs, M4) picks the
         default tracks when the caller did not ask for any: audio in the preferred language, and a
         subtitle track when subtitles are on by default (picture subtitles are burned in from the start;
         a text track is reported as `default_subtitle_index` for the page to switch on)."""
@@ -676,10 +763,19 @@ class JellyfinPlayback:
         if not jf_id:
             raise ItemNotFound("Jellyfin does not know this file yet.")
 
-        info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds)
+        cap = nl_settings.effective_cap_bps(int((profile or BROWSER_PROFILE).get("MaxStreamingBitrate") or 0) or None, max_kbps) if max_kbps else None
+
+        def pinfo(audio, sub, start, **kw):
+            return self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, **kw)
+
+        def not_playable(info_, ms_=None):
+            code = (info_ or {}).get("ErrorCode") or "no media source"
+            return NotPlayable(self._cannot_play_message(jf_id, ms_, code, device))
+
+        info = pinfo(audio_index, subtitle_index, start_seconds)
         media_sources = info.get("MediaSources") or []
         if info.get("ErrorCode") or not media_sources:
-            raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
+            raise not_playable(info)
         ms = media_sources[0]
 
         default_subtitle_index = -1
@@ -699,10 +795,10 @@ class JellyfinPlayback:
                         default_subtitle_index = track["index"]
             if want_audio != audio_index or want_sub != subtitle_index:
                 audio_index, subtitle_index = want_audio, want_sub
-                info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds)
+                info = pinfo(audio_index, subtitle_index, start_seconds)
                 media_sources = info.get("MediaSources") or []
                 if info.get("ErrorCode") or not media_sources:
-                    raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
+                    raise not_playable(info)
                 ms = media_sources[0]
 
         # A non-default audio track or burned-in subtitles cannot come from the file itself:
@@ -713,18 +809,16 @@ class JellyfinPlayback:
         )
         wants_burn_in = subtitle_index is not None and subtitle_index >= 0
         if (wants_other_audio or wants_burn_in) and not ms.get("TranscodingUrl"):
-            info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds, direct_play=False)
+            info = pinfo(audio_index, subtitle_index, start_seconds, direct_play=False)
             media_sources = info.get("MediaSources") or []
             if info.get("ErrorCode") or not media_sources:
-                raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
+                raise not_playable(info)
             ms = media_sources[0]
             if not ms.get("TranscodingUrl"):
-                info = self.playback_info(
-                    jf_id, profile, audio_index, subtitle_index, start_seconds, direct_play=False, direct_stream=False
-                )
+                info = pinfo(audio_index, subtitle_index, start_seconds, direct_play=False, direct_stream=False)
                 media_sources = info.get("MediaSources") or []
                 if info.get("ErrorCode") or not media_sources:
-                    raise NotPlayable("Jellyfin cannot switch tracks for this file.")
+                    raise not_playable(info)
                 ms = media_sources[0]
 
         session_id = info.get("PlaySessionId") or ""
@@ -742,7 +836,7 @@ class JellyfinPlayback:
             url = proxy_url(transcoding_url)
             kind = "hls"
         else:
-            raise NotPlayable("Jellyfin offered no way to play this file in a browser.")
+            raise NotPlayable(self._cannot_play_message(jf_id, ms, "no stream offered", device))
 
         tracks = extract_tracks(ms, jf_id, source_id)
         if audio_index is not None:
@@ -772,7 +866,18 @@ class JellyfinPlayback:
         video_codec = next(
             (st.get("Codec") for st in (ms.get("MediaStreams") or []) if st.get("Type") == "Video"), None
         )
+        formats = nl_picture.formats_of(ms, selected_audio)
+        conversion = nl_picture.describe_conversion(
+            play_method, nl_picture.transcode_reasons(transcoding_url), formats, device, cap_kbps=max_kbps
+        )
+        bitrate = ms.get("Bitrate")
         return {
+            "audio_codec": formats["audio_codec"],
+            "conversion": conversion,
+            "quality": {
+                "applied_kbps": int(max_kbps) if max_kbps else None,
+                "source_kbps": int(bitrate / 1000) if isinstance(bitrate, (int, float)) and bitrate > 0 else None,
+            },
             "url": url,
             "kind": kind,
             "play_method": play_method,

@@ -23,6 +23,7 @@ function at the top that takes dicts, so it is tested without a server.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from services.nl_people import Person, Viewer
@@ -52,6 +53,16 @@ class PicksError(Exception):
 
 
 # ---------------------------------------------------------------- pure helpers
+
+
+def viewer_keys(viewer: Viewer) -> List[str]:
+    """The person keys a viewer's vetoes are filed under: each person at the screen, or the implicit key."""
+    return [p.id for p in viewer.people] or [viewer.key]
+
+
+def utc_str(moment: Optional[datetime] = None) -> str:
+    """A UTC moment as 'YYYY-MM-DD HH:MM:SS' (what the database stores and compares)."""
+    return (moment or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def parse_max_runtime(value: Any) -> Optional[int]:
@@ -324,6 +335,7 @@ class NLPicks:
         self.browse = browse
         self.recommender = recommender
         self._people = people
+        self.clock = None   # tests fix the time of day vetoes are judged by
 
     @property
     def people(self) -> Any:
@@ -467,7 +479,9 @@ class NLPicks:
         rows = {r["id"]: r for r in self.browse._on_disk("movie")}
         ids = [i for i, r in rows.items() if runtime_ok(r.get("runtime"), max_minutes)]
         interest = self.db.get_interest(ids)
-        ids = [i for i in ids if not passed_by_any(ctx, interest.get(i, {}))]
+        hidden = self.db.get_hidden_ids(viewer.key)   # M7b: "Hide from home" also keeps a title out of this row
+        hidden = hidden | self.db.get_vetoed_ids(viewer_keys(viewer), utc_str(self.clock() if self.clock else None))   # M9b: "Not tonight" and "Never"
+        ids = [i for i in ids if i not in hidden and not passed_by_any(ctx, interest.get(i, {}))]
         out: Dict[str, Any] = {
             "title": ctx.title, "solo": ctx.solo, "max_minutes": max_minutes, "chips": self._chips(),
             "engine": "recommender", "note": "", "items": [],
@@ -482,7 +496,7 @@ class NLPicks:
             pool = self._recommend(ctx, ids, tastes)
         except Exception as e:  # noqa: BLE001 - the recommender is optional on the server; the row must not 500
             print(f"[NLPicks] recommender unavailable, using the fallback: {e}", flush=True)
-        pool = [p for p in pool if p.get("id") in rows]
+        pool = [p for p in pool if p.get("id") in rows and p.get("id") not in hidden]
         if not pool:
             out["engine"] = "fallback"
             seen = self.db.get_seen_item_ids([p["profile_id"] for p in ctx.persons])
@@ -510,7 +524,7 @@ class NLPicks:
         seen_titles: Set[int] = set()
         for it in ranked:
             iid = it.get("id")
-            if iid in seen_titles or iid not in rows:
+            if iid in seen_titles or iid not in rows or iid in hidden:
                 continue
             seen_titles.add(iid)
             card = self.browse._card(rows[iid], None)

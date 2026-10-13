@@ -11,13 +11,13 @@ import os
 import shutil
 import socket
 from typing import Any, Dict, List, Literal, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
@@ -29,6 +29,18 @@ from database import DatabaseManager
 from enricher import TMDBEnricher
 from scanner import LocalFileScanner
 from services.device_profiles import profile_for
+from services.nl_cast import (
+    CastConfig,
+    CastConfigError,
+    CastTokens,
+    cast_payload,
+    secret_from_env,
+    strip_param,
+    token_values,
+)
+from services.nl_player_extras import empty_extras, player_extras
+from services.nl_type import TypeChannels, TypingError, describe as describe_type_error, normalise_code
+from services.nl_polish_b import NLExtras
 from services.jellyfin_playback import (
     ItemNotFound,
     JellyfinPlayback,
@@ -45,6 +57,12 @@ from services.jellyfin_playback import (
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
+from services import nl_downloads
+from services import nl_health
+from services import nl_reactions
+from services import nl_settings
+from services import nl_together
+from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
     BOTH,
     COOKIE_MAX_AGE,
@@ -57,7 +75,7 @@ from services.nl_people import (
     resume_summary,
     safe_next,
 )
-from services.catalogue_search import CatalogueSearch, tmdb_import, tmdb_search
+from services.catalogue_search import CatalogueSearch, _tmdb_get, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import paths as model_paths
@@ -129,9 +147,11 @@ def reload_models() -> None:
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
 torrent_downloader = TorrentDownloader(config, db_manager=db)
+download_requests = nl_downloads.DownloadRequests()   # M10a: what Retry needs; the magnet link never leaves the server
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
+nl_health_state = nl_health.Health(config, jellyfin_service, downloads_store)   # M10b: header status and admin
 jellyfin_playback = JellyfinPlayback(jellyfin_service)  # Northern Lights player (M0)
 nl_browse = NLBrowse(db, jellyfin_playback)  # Northern Lights browse (M2); search is wired in below
 
@@ -144,8 +164,35 @@ except PeopleConfigError as _e:
 if nl_people.configured and not jellyfin_service.user_id:
     jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
 
+# Northern Lights casting (M8): where the Chromecast reaches this app and the signed stream tokens.
+# NL_CAST_SECRET signs the tokens; without it a random secret lives in memory only (tokens die on restart).
+try:
+    nl_cast = CastConfig.from_config(config)
+except CastConfigError as _e:
+    raise SystemExit(f"[Northern Lights] bad cast configuration: {_e}")
+nl_cast_tokens = CastTokens(secret_from_env())
+
+# Northern Lights phone keyboard for TV search (M8b): short-lived codes held in memory only.
+nl_type = TypeChannels()
+
 # Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
 nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
+
+# Northern Lights choosing for two (M9b): Choose for us, vetoes, the rotating chooser. `northern_lights.timezone`
+# (an IANA name like Europe/London) is only the fallback for a browser that sends no UTC offset.
+nl_choose = NLChoose(
+    db, nl_picks, lambda: nl_people, MOOD_MAPPINGS,
+    tz_name=str(((config.get("northern_lights") or {}).get("timezone")) or "") or None,
+)
+
+
+# Northern Lights browse polish (M7b): cast, trailer, tech details and "More like this". The TMDB key is used
+# here only; the pages get a YouTube key and library titles, never the key. No key = TMDB parts stay empty.
+def _nl_tmdb(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    return _tmdb_get(api_key, path, params) if api_key else None
+
+
+nl_extras = NLExtras(db, nl_browse, _nl_tmdb, lambda: recommender_service.vibe_index)
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
@@ -870,13 +917,40 @@ async def nl_play_info(
     caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
     source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
     client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
+    max_kbps: Optional[int] = Query(None, ge=0, le=200000, description="Quality for this viewing: 8000, 4000, 2000 or 1000 kbit/s; 0 = Auto; absent = the person's default"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
     default tracks from their language prefs, and Resume from their own progress (the further of the
     two for "Both of us", with a note when they are in different places)."""
+    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client, max_kbps)
+
+
+async def _nl_play(
+    request: Request,
+    item_id: int,
+    audio: Optional[int],
+    subtitle: Optional[int],
+    start: float,
+    caps: Optional[str],
+    source: Optional[int],
+    client: Optional[str],
+    max_kbps: Optional[int] = None,
+) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
-    prefer = _nl_effective_prefs(viewer).public()
+    prefs = _nl_effective_prefs(viewer)
+    prefer = prefs.public()
+    # M10c, P19: this viewing's quality (the Picture menu) wins, else the person's default; 0 = Auto.
+    if max_kbps is None:
+        quality = prefs.quality_kbps
+    elif max_kbps == 0:
+        quality = None
+    elif nl_settings.valid_quality(max_kbps):
+        quality = max_kbps
+    else:
+        raise HTTPException(status_code=400, detail="Quality must be 8000, 4000, 2000 or 1000 (kbit/s), or 0 for Auto.")
+    if client == "cast":
+        quality = None   # the Chromecast has its own profile ceiling
     item = db.get_nl_title(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
@@ -889,34 +963,77 @@ async def nl_play_info(
     try:
         profile = profile_for(client, caps)
         info = await asyncio.to_thread(
-            _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer
+            _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer,
+            quality, "This TV" if client == "tv" else ("This Chromecast" if client == "cast" else "This browser"),
         )
+        states: Dict[str, Dict[str, Any]] = {}
         if nl_people.configured and info.get("jellyfin_id"):
-            await asyncio.to_thread(_apply_resume_rule, viewer, info)
+            states = await asyncio.to_thread(_apply_resume_rule, viewer, info)
     except ItemNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except NotPlayable as e:
         raise HTTPException(status_code=415, detail=str(e))
+    info["quality"] = {**(info.get("quality") or {}), "default_kbps": prefs.quality_kbps, "options": nl_settings.quality_options()}
     info["media_item_id"] = item_id
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
+    info["together_prompt"] = await asyncio.to_thread(_pact_prompt_for, viewer, item_id, item, chosen, states)
     return info
 
 
-def _stream_for_viewer(item, audio, subtitle, start, profile, prefer):
+def _pact_prompt_for(viewer: Viewer, item_id: int, item: Dict[str, Any], chosen: Dict[str, Any], states) -> Optional[Dict[str, Any]]:
+    """U5: the "You said you'd watch this together" question for this play, or None."""
+    if item.get("media_type") != "tv" or not nl_together.together_possible(nl_people.people) or viewer.is_both:
+        return None
+    if not db.get_pact(item_id):
+        return None
+    return nl_together.pact_prompt(
+        viewer, nl_people.people, states or {}, True, chosen["id"] in db.get_seen_together(item_id)
+    )
+
+
+@app.get("/api/nl/cast/config")
+async def nl_cast_config() -> Dict[str, Any]:
+    """Whether casting is set up (cast_base_url configured) and which receiver app the sender launches."""
+    return nl_cast.public()
+
+
+@app.get("/api/nl/cast/play/{item_id}")
+async def nl_cast_play(
+    request: Request,
+    item_id: int,
+    audio: Optional[int] = Query(None, ge=0, description="Jellyfin audio stream index"),
+    subtitle: Optional[int] = Query(None, ge=-1, description="Jellyfin subtitle stream index to burn in; -1 = none"),
+    start: float = Query(0.0, ge=0, description="Start position in seconds"),
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show"),
+) -> Dict[str, Any]:
+    """/api/nl/play for a Chromecast: the cast profile (H.264/AAC), every URL absolute on the LAN
+    (northern_lights.cast_base_url) and carrying a 6-hour token for this one item (?t=), so the
+    Chromecast needs no cookies. Adds a `cast` block (content type, backdrop, poster). No Jellyfin key."""
+    if not nl_cast.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Casting isn't set up: set northern_lights.cast_base_url to this server's LAN address.",
+        )
+    info = await _nl_play(request, item_id, audio, subtitle, start, None, source, "cast")
+    return cast_payload(info, nl_cast, nl_cast_tokens)
+
+
+def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser"):
     if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on")):
         prefer = None
     if prefer:
-        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer)
-    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile)
+        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device)
+    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device)
 
 
-def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> None:
+def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     """Resume from the viewer's own progress; for Both the further of the two. Adds `resume_note`
     ("You're at 42:10, Sam is at 38:00") when they differ by more than two minutes. Jellyfin trouble
-    for the other person never blocks playback."""
+    for the other person never blocks playback. Returns each person's {position, played} (the pact question
+    reads it too)."""
     primary = viewer.primary
     states: Dict[str, Dict[str, Any]] = {}
     if primary is not None:
@@ -939,6 +1056,7 @@ def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> None:
         info["resume_seconds"] = summary["resume_seconds"]
         info["played"] = summary["played"]
     info["resume_note"] = summary["note"]
+    return states
 
 
 def _nl_subtitle_item(item_id: int, source: Optional[int]) -> Dict[str, Any]:
@@ -1011,12 +1129,23 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
     clean = safe_proxy_path(path)
     if clean is None:
         raise HTTPException(status_code=404, detail="Not found.")
+    # M8: a cast stream token (?t=) narrows the request to the one item the token was made for. A bad,
+    # expired, forged, or mismatched token is a 403; the token never goes on to Jellyfin.
+    cast_token: Optional[str] = None
+    tokens = token_values(request.url.query)
+    if tokens:
+        ok, _why = (False, "") if len(tokens) != 1 else nl_cast_tokens.check(tokens[0], request.method, clean)
+        if not ok:
+            raise HTTPException(status_code=403, detail="This link isn't valid.")
+        cast_token = tokens[0]
     jf = jellyfin_service
     if not jf.configured:
         raise HTTPException(status_code=503, detail="Jellyfin is not configured.")
 
     upstream_url = f"{jf.base_url}/{quote(clean, safe='/')}"
     query = strip_api_key("?" + request.url.query)[1:] if request.url.query else ""
+    if cast_token:
+        query = strip_param(query, "t")
     if query:
         upstream_url += "?" + query
     headers = {k: v for k, v in request.headers.items() if k.lower() in _PROXY_REQUEST_HEADERS}
@@ -1041,7 +1170,7 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
             upstream.close()
         if len(body) > _MAX_PLAYLIST_BYTES:
             raise HTTPException(status_code=502, detail="Playlist too large.")
-        text = rewrite_playlist(body.decode("utf-8", errors="replace"))
+        text = rewrite_playlist(body.decode("utf-8", errors="replace"), cast_token)
         return Response(
             content=text,
             status_code=upstream.status_code,
@@ -1071,6 +1200,11 @@ class NLProgressRequest(BaseModel):
     paused: bool = False
     event: Literal["start", "progress", "stop"]
     play_method: str = "DirectPlay"
+    # M9: which title this is (the page knows), the length and whether the player reached the end.
+    media_item_id: Optional[int] = Field(None, ge=1)
+    source_id: Optional[int] = Field(None, ge=1)
+    duration_seconds: Optional[float] = Field(None, ge=0)
+    ended: bool = False
 
 
 def _report_to_users(users: List[Optional[str]], call) -> None:
@@ -1108,7 +1242,65 @@ async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any
         )
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
+    # M9a: "Both of us" finishing a title is the one thing that marks it as seen together.
+    if (
+        req.event == "stop" and req.media_item_id and viewer.is_both and nl_together.together_possible(nl_people.people)
+        and nl_together.is_finished(req.position_seconds, req.duration_seconds, req.ended)
+    ):
+        await asyncio.to_thread(db.mark_seen_together, req.media_item_id, req.source_id)
     return {"success": True}
+
+
+class NLReactBody(BaseModel):
+    reaction: str
+
+
+def _react_profiles(viewer: Viewer) -> List[int]:
+    return nl_reactions.profiles_to_rate(viewer.profile_ids, viewer.implicit)
+
+
+@app.get("/api/nl/react/{item_id}")
+async def nl_react_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """W10: should the player ask "How was it?" now. `ask` is false for an unknown title, a viewer with no
+    profile, or when everyone at the screen already gave this title a verdict of their own."""
+    viewer = _nl_viewer_or_default(request)
+
+    def work() -> Dict[str, Any]:
+        item = db.get_item_by_id(item_id)
+        profiles = _react_profiles(viewer)
+        asked = bool(item and profiles) and not all(
+            nl_reactions.has_own_verdict(db.get_rating_details(item_id, pid)) for pid in profiles
+        )
+        return {
+            "ask": asked,
+            "text": nl_reactions.question(item["title"], viewer.is_both) if item else "",
+            "options": [{"id": r["id"], "label": r["label"]} for r in nl_reactions.REACTIONS],
+        }
+
+    return await asyncio.to_thread(work)
+
+
+@app.post("/api/nl/react/{item_id}")
+async def nl_react_post(item_id: int, body: NLReactBody, request: Request) -> Dict[str, Any]:
+    """W10: records the answer as a verdict for the profile(s) at the screen ("Both of us" rates for both)."""
+    viewer = _nl_viewer_or_default(request)
+    verdict = nl_reactions.verdict_for(body.reaction)
+    if verdict is None:
+        raise HTTPException(status_code=400, detail="Unknown reaction.")
+    profiles = _react_profiles(viewer)
+    if not profiles:
+        raise HTTPException(status_code=400, detail="No profile to rate for.")
+
+    def work() -> bool:
+        if not db.get_item_by_id(item_id):
+            return False
+        for pid in profiles:
+            db.rate_item(item_id, profile_id=pid, status="seen", verdict=verdict)
+        return True
+
+    if not await asyncio.to_thread(work):
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    return {"success": True, "verdict": verdict, "profiles": len(profiles)}
 
 
 async def _nl_set_played(jellyfin_id: str, played: bool, request: Request) -> Dict[str, Any]:
@@ -1137,19 +1329,47 @@ async def nl_mark_unplayed(jellyfin_id: str, request: Request) -> Dict[str, Any]
 
 
 @app.get("/api/nl/library")
-async def nl_library(request: Request, type: str = Query("movie", pattern="^(movie|tv)$")) -> Dict[str, Any]:
+async def nl_library(
+    request: Request,
+    type: str = Query("movie", pattern="^(movie|tv)$"),
+    unwatched: bool = Query(False, description="only titles nobody at the screen has watched"),
+) -> Dict[str, Any]:
     """Cards for every movie or show that has a file. Movies partly watched carry a progress
-    bar, the latest additions a "New" badge. Works with Jellyfin down (no progress then)."""
+    bar, the latest additions a "New" badge. `unwatched` (M7b) keeps the titles nobody at the screen has
+    watched; `unwatched_applied` says whether Jellyfin could tell. Works with Jellyfin down (no progress then)."""
     viewer = _nl_viewer_or_default(request)
-    items = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.library, type, None, True, viewer.jellyfin_users)
-    return {"items": items}
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.library_page, type, viewer.jellyfin_users, unwatched)
 
 
 @app.get("/api/nl/home")
 async def nl_home_data(request: Request) -> Dict[str, Any]:
-    """Home: Continue Watching (Jellyfin Resume of the viewer) plus the newest movies and shows."""
+    """Home: Continue Watching (Jellyfin Resume of the viewer), Recently Added, Recently Watched and the
+    newest movies and shows. Titles this viewer hid (M7b) are left out of every row except Continue Watching."""
     viewer = _nl_viewer_or_default(request)
-    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.home, viewer.jellyfin_users)
+    hidden = await asyncio.to_thread(db.get_hidden_ids, viewer.key)
+    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.home, viewer.jellyfin_users, hidden)
+
+
+class NLHiddenBody(BaseModel):
+    hidden: bool
+
+
+@app.get("/api/nl/hidden/{item_id}")
+async def nl_hidden_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """Has this viewer hidden the title from the home rows?"""
+    viewer = _nl_viewer_or_default(request)
+    return {"hidden": item_id in await asyncio.to_thread(db.get_hidden_ids, viewer.key)}
+
+
+@app.put("/api/nl/hidden/{item_id}")
+async def nl_hidden_set(item_id: int, body: NLHiddenBody, request: Request) -> Dict[str, Any]:
+    """"Hide from home" / "Show on home again" for the person at the screen ("Both of us" has its own list)."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        value = await asyncio.to_thread(db.set_hidden, viewer.key, item_id, body.hidden)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"hidden": value}
 
 
 @app.get("/api/nl/title/{item_id}")
@@ -1157,6 +1377,31 @@ async def nl_title_data(item_id: int, request: Request) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
     data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.title, item_id, viewer.jellyfin_users)
     if not data:
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    data["hidden"] = item_id in await asyncio.to_thread(db.get_hidden_ids, viewer.key)
+    together = nl_together.together_possible(nl_people.people)
+    data["together"] = bool(together and data.get("media_type") != "tv" and 0 in await asyncio.to_thread(db.get_seen_together, item_id))
+    return data
+
+
+@app.get("/api/nl/title/{item_id}/extras")
+async def nl_title_extras(item_id: int, request: Request) -> Dict[str, Any]:
+    """Cast & crew, the Trailer (a YouTube key + address, never a TMDB or Jellyfin key) and Tech details.
+    Each part is just empty when its source (Jellyfin, TMDB) is away; only an unknown title is an error."""
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_extras.title_extras, item_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    return data
+
+
+@app.get("/api/nl/title/{item_id}/more")
+async def nl_title_more(item_id: int, request: Request) -> Dict[str, Any]:
+    """"More like this": library titles close to this one (TMDB similar, the recommender's vibe index, shared
+    genres). `items` may be empty; it degrades part by part and never fails for a missing source."""
+    viewer = _nl_viewer_or_default(request)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_extras.more_like_this, item_id)
+    if data is None:
         raise HTTPException(status_code=404, detail="That title isn't in the library.")
     return data
 
@@ -1169,7 +1414,86 @@ async def nl_show_data(item_id: int, request: Request) -> Dict[str, Any]:
     data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.show, item_id)
     if not data:
         raise HTTPException(status_code=404, detail="That show isn't in the library.")
+    await asyncio.to_thread(_add_together_to_show, data, item_id, viewer)
+    data["autoplay"] = await asyncio.to_thread(_autoplay_for, item_id, viewer, data.get("autoplay"))
     return data
+
+
+def _add_together_to_show(data: Dict[str, Any], item_id: int, viewer: Viewer) -> None:
+    """M9a: the pact switch, the episodes seen together and (for the person-specific "Mark unwatched")
+    who can be reset. With fewer than two people configured none of it is offered."""
+    possible = nl_together.together_possible(nl_people.people)
+    seen = db.get_seen_together(item_id) if possible else set()
+    for season in data.get("seasons") or []:
+        for ep in season.get("episodes") or []:
+            ep["together"] = ep["source_id"] in seen
+    data["together_count"] = len(seen)
+    data["pact"] = {"available": possible, "together": bool(possible and db.get_pact(item_id))}
+    data["unwatch_people"] = _unwatch_choices(viewer)
+    data["hide_spoilers"] = bool(_nl_prefs_row(viewer).get("hide_spoilers"))   # M9c
+
+
+def _unwatch_choices(viewer: Viewer) -> List[Dict[str, str]]:
+    """Whom "Mark unwatched" can reset from this screen: the one person, or each of the two on "Both of us".
+    Empty list = the implicit single viewer (no person to name)."""
+    return [{"id": p.id, "name": p.name} for p in viewer.people]
+
+
+class NLPactBody(BaseModel):
+    together: bool
+
+
+@app.get("/api/nl/show/{item_id}/pact")
+async def nl_show_pact_get(item_id: int) -> Dict[str, Any]:
+    """Is "We watch this together" on for this show? Only offered with two or more people configured."""
+    possible = nl_together.together_possible(nl_people.people)
+    return {"available": possible, "together": bool(possible and await asyncio.to_thread(db.get_pact, item_id))}
+
+
+@app.put("/api/nl/show/{item_id}/pact")
+async def nl_show_pact_set(item_id: int, body: NLPactBody) -> Dict[str, Any]:
+    """Switches the watch-together pact for a show on or off (it belongs to the pair, not to one person)."""
+    if not nl_together.together_possible(nl_people.people):
+        raise HTTPException(status_code=400, detail="Watching together needs two people in the config.")
+    try:
+        value = await asyncio.to_thread(db.set_pact, item_id, body.together)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"available": True, "together": value}
+
+
+class NLUnwatchBody(BaseModel):
+    source_id: Optional[int] = None   # which episode of a show
+    person: Optional[str] = None      # whose data; needed on "Both of us"
+
+
+@app.post("/api/nl/unwatch/{item_id}")
+async def nl_unwatch(item_id: int, body: NLUnwatchBody, request: Request) -> Dict[str, Any]:
+    """U6, "Mark unwatched for me": resets the played flag and resume position of ONE person's Jellyfin
+    user for an episode or movie. On "Both of us" `person` says whose; nobody else's data is touched. The
+    together mark of that title goes too, since it is no longer seen by both."""
+    viewer = _nl_viewer_or_default(request)
+    if viewer.implicit:
+        person_user: Optional[str] = None
+        person_id = None
+    else:
+        wanted = (body.person or "").strip().lower() or (viewer.primary.id if not viewer.is_both else "")
+        if not wanted:
+            raise HTTPException(status_code=400, detail="Say whose watched state to reset.")
+        person = next((p for p in viewer.people if p.id == wanted), None)
+        if person is None:
+            raise HTTPException(status_code=403 if nl_people.get(wanted) else 400, detail="That person isn't at the screen.")
+        person_user, person_id = person.jellyfin_user_id, person.id
+    item = _nl_subtitle_item(item_id, body.source_id)
+    try:
+        jf_id = await asyncio.to_thread(jellyfin_playback._subtitle_item_id, item)
+        await asyncio.to_thread(_as_user, person_user, jellyfin_playback.reset_user_data, jf_id)
+    except ItemNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except JellyfinUnavailable as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    await asyncio.to_thread(db.clear_seen_together, item_id, item["sources"][0]["id"] if item.get("media_type") == "tv" else 0)
+    return {"success": True, "person": person_id}
 
 
 class NLShowPrefs(BaseModel):
@@ -1191,11 +1515,75 @@ async def nl_show_prefs_set(item_id: int, prefs: NLShowPrefs) -> Dict[str, Any]:
     return {"autoplay": value}
 
 
+class NLSkipIntro(BaseModel):
+    skip_intro: bool
+
+
+@app.get("/api/nl/show/{item_id}/skip-intro")
+async def nl_show_skip_intro_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """Does this viewer always skip this show's intro? (per viewer, off by default)"""
+    viewer = _nl_viewer_or_default(request)
+    return {"skip_intro": await asyncio.to_thread(db.get_show_skip_intro, item_id, viewer.key)}
+
+
+@app.put("/api/nl/show/{item_id}/skip-intro")
+async def nl_show_skip_intro_set(item_id: int, body: NLSkipIntro, request: Request) -> Dict[str, Any]:
+    """The per-show "always skip intro" switch of the person at the screen (Both of us has its own)."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        value = await asyncio.to_thread(db.set_show_skip_intro, item_id, viewer.key, body.skip_intro)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"skip_intro": value}
+
+
+def _player_extras_for(item: Dict[str, Any]) -> Dict[str, Any]:
+    """Trickplay, chapters and skip segments of one title or episode, read from Jellyfin here. Any
+    Jellyfin trouble leaves the parts empty: these features simply don't show."""
+    try:
+        jf_id = jellyfin_playback._subtitle_item_id(item)
+    except (ItemNotFound, JellyfinUnavailable):
+        return empty_extras()
+    return player_extras(jellyfin_playback, jf_id)
+
+
+@app.get("/api/nl/player-extras/{item_id}")
+async def nl_player_extras(
+    request: Request,
+    item_id: int,
+    source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show"),
+) -> Dict[str, Any]:
+    """What the player draws over the picture, all read here (the Jellyfin key never leaves):
+    `trickplay` (seek-bar thumbnail sheets: geometry + a /nl/jf/ URL template, or null), `chapters`
+    ([{start_seconds, name}]) and `segments` ([{type intro|outro, start_seconds, end_seconds}], from
+    Jellyfin's MediaSegments, e.g. the Intro Skipper plugin). `skip_intro`: this viewer's switch for the show.
+    Jellyfin down, an old Jellyfin or a missing plugin only leave the parts empty; never an error."""
+    viewer = _nl_viewer_or_default(request)
+    item = _nl_subtitle_item(item_id, source)
+    extras = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], _player_extras_for, item)
+    is_show = item.get("media_type") == "tv"
+    extras["skip_intro"] = bool(is_show and await asyncio.to_thread(db.get_show_skip_intro, item_id, viewer.key))
+    extras["is_show"] = is_show
+    return extras
+
+
 @app.get("/api/nl/next/{item_id}")
 async def nl_next_episode(request: Request, item_id: int, source: int = Query(..., ge=1)) -> Dict[str, Any]:
     """The episode after `source` for the player's next-episode card (has_next false at the end)."""
     viewer = _nl_viewer_or_default(request)
-    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.next_episode, item_id, source)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.next_episode, item_id, source)
+    if isinstance(data, dict) and "autoplay" in data:
+        data["autoplay"] = await asyncio.to_thread(_autoplay_for, item_id, viewer, data["autoplay"])
+    return data
+
+
+def _autoplay_for(item_id: int, viewer: Viewer, fallback: Any) -> bool:
+    """Start the next episode by itself? The show's own switch if anyone ever set it, else this viewer's default
+    (M10c, H5; on unless they turned it off)."""
+    own = db.get_show_autoplay_row(item_id)
+    if own is not None:
+        return own
+    return bool(_nl_effective_prefs(viewer).autoplay)
 
 
 @app.get("/api/nl/search")
@@ -1273,6 +1661,203 @@ async def nl_picks_row(request: Request, max_runtime: Optional[str] = None) -> D
     return await asyncio.to_thread(nl_picks.picks, viewer, parse_max_runtime(max_runtime))
 
 
+# --- Northern Lights choosing for two (M9b) ---
+class NLChooseBody(BaseModel):
+    mood: Optional[int] = None
+    genre: Optional[str] = Field(None, max_length=40)
+    max_minutes: Optional[int] = None
+    exclude: List[int] = Field(default_factory=list, max_length=60)
+    mode: str = "pick"             # "pick" or "yeses" (a random title both said yes to)
+    tz: Optional[int] = None       # the browser's UTC offset in minutes east of UTC
+
+
+class NLVetoBody(BaseModel):
+    kind: str                      # "tonight" or "never"
+    person: Optional[str] = None   # whose "never"; needed on "Both of us"
+    tz: Optional[int] = None
+
+
+@app.get("/api/nl/choose/options")
+async def nl_choose_options(request: Request, tz: Optional[str] = None) -> Dict[str, Any]:
+    """What Choose for us offers: the recommender's moods, the shelf's genres, the length chips, what today's
+    weekday and time of day suggest, whose turn it is to choose, and how many titles both said yes to."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_choose.options, viewer, clean_tz(tz))
+
+
+@app.post("/api/nl/choose")
+async def nl_choose_pick(body: NLChooseBody, request: Request) -> Dict[str, Any]:
+    """One big pick for the viewer(s). Wishes (mood, genre, length) filter; the weekday and time of day fill
+    in a mood and length when none was chosen; `exclude` is what "Another" has already shown; mode "yeses" is a
+    random title both said yes to. `item` is null with a `note` when nothing fits."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(
+            nl_choose.choose, viewer, body.mood, body.genre, body.max_minutes, body.exclude, body.mode, clean_tz(body.tz)
+        )
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.post("/api/nl/choose/chosen/{item_id}")
+async def nl_choose_chosen(item_id: int, request: Request) -> Dict[str, Any]:
+    """The pick was played: remember who chose, so the next time says "Your turn, <the other person>"."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.chosen, viewer, item_id)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.get("/api/nl/vetoes")
+async def nl_vetoes_list(request: Request) -> Dict[str, Any]:
+    """The titles off the table for this screen: "Not tonight" (until tomorrow 05:00) and each person's "Never"."""
+    viewer = _nl_viewer_or_default(request)
+    return await asyncio.to_thread(nl_choose.vetoes, viewer)
+
+
+@app.post("/api/nl/veto/{item_id}")
+async def nl_veto_set(item_id: int, body: NLVetoBody, request: Request) -> Dict[str, Any]:
+    """"Not tonight" hides a title until tomorrow 05:00 local; "Never" hides it for that person. Both leave it
+    out of Choose for us and the home row; the library, search and watchlist still show it."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.veto, viewer, item_id, body.kind, body.person, clean_tz(body.tz))
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+@app.delete("/api/nl/veto/{item_id}")
+async def nl_veto_clear(item_id: int, request: Request, kind: str = Query("never"), person: Optional[str] = None) -> Dict[str, Any]:
+    """Bring a title back (undo "Not tonight" or "Never")."""
+    viewer = _nl_viewer_or_default(request)
+    try:
+        return await asyncio.to_thread(nl_choose.unveto, viewer, item_id, kind, person)
+    except PicksError as e:
+        raise _picks_error(e) from e
+
+
+# --- Northern Lights downloads (M10a): the same downloader and store as the old Download tab ---
+def _nl_downloads_payload() -> Dict[str, Any]:
+    snapshot = dict(downloads_store)
+    briefs = db.get_download_briefs([i for i in snapshot if isinstance(i, int)])
+    return nl_downloads.build_list(
+        snapshot,
+        download_requests,
+        lambda i: briefs.get(i),
+        lambda i: bool((briefs.get(i) or {}).get("has_file")),
+    )
+
+
+@app.get("/api/nl/downloads")
+async def nl_downloads_list() -> Dict[str, Any]:
+    """Every download the downloader knows: queued, downloading (speed and time left), importing, ready
+    (with a Play link) or failed (with a plain-words reason and Retry). No magnet links, no file paths."""
+    return await asyncio.to_thread(_nl_downloads_payload)
+
+
+@app.post("/api/nl/downloads/{item_id}/retry")
+async def nl_downloads_retry(item_id: int) -> Dict[str, Any]:
+    """Starts a failed or stopped download again from the link it was first started with."""
+    entry = downloads_store.get(item_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="That download isn't in the list any more.")
+    if nl_downloads.state_of(entry) not in nl_downloads.RETRY_STATES:
+        raise HTTPException(status_code=409, detail="That download is not stopped, so there is nothing to retry.")
+    req = download_requests.get(item_id)
+    if req is None:
+        raise HTTPException(
+            status_code=404,
+            detail="The app was restarted since this started, so it no longer has the link. Search for the title again.",
+        )
+    downloads_store[item_id] = {"movie_id": item_id, "status": "connecting", "progress": 0.0, "error": None,
+                                "name": req["title"], "media_type": req["media_type"]}
+    asyncio.create_task(
+        torrent_downloader.download(req["magnet"], item_id, req["title"], media_type=req["media_type"])
+    )
+    return {"success": True, "id": item_id}
+
+
+@app.delete("/api/nl/downloads/{item_id}")
+async def nl_downloads_dismiss(item_id: int) -> Dict[str, Any]:
+    """Clears a failed, stopped or finished download from the list (the record only; files are never touched)."""
+    entry = downloads_store.get(item_id)
+    if entry is None:
+        return {"success": True}
+    if nl_downloads.state_of(entry) not in nl_downloads.DISMISS_STATES:
+        raise HTTPException(status_code=409, detail="That download is still running.")
+    downloads_store.pop(item_id, None)
+    download_requests.forget(item_id)
+    return {"success": True}
+
+
+# --- Northern Lights health and admin (M10b): only what the existing status endpoints already show ---
+def _host_only(url: Optional[str]) -> Optional[str]:
+    """Jellyfin's address as host:port, with no scheme, user name or path."""
+    try:
+        parts = urlsplit(url or "")
+        if not parts.hostname:
+            return None
+        return parts.hostname + (f":{parts.port}" if parts.port else "")
+    except ValueError:
+        return None
+
+
+def _nl_admin_payload() -> Dict[str, Any]:
+    diag = jellyfin_service.diagnostics()
+    disk = dict(nl_health_state.disk_state())
+    disk["media_used_bytes"] = nl_health_state.media_used()
+    return {
+        "health": nl_health_state.status(),
+        "jellyfin": {
+            "configured": bool(diag.get("configured")),
+            "server_online": bool(diag.get("server_online")),
+            "host": _host_only(diag.get("base_url")),
+            "settings_present": {k: bool(v) for k, v in (diag.get("env") or {}).items()},   # yes / no only, never the values
+            "realtime_monitor": diag.get("realtime_monitor"),
+            "libraries": [
+                {"name": lib.get("name"), "type": lib.get("collection_type"), "locations": lib.get("locations") or [],
+                 "realtime_monitor": lib.get("realtime_monitor")}
+                for lib in (diag.get("libraries") or [])
+            ],
+        },
+        "disk": disk,
+        "tools": nl_health.tool_links(config),
+    }
+
+
+@app.get("/api/nl/health")
+async def nl_health_status() -> Dict[str, Any]:
+    """The compact header status: Jellyfin reachable, free disk space, download queue size. Cheap: checks are
+    cached for a few seconds. Carries no address, key or path."""
+    return await asyncio.to_thread(nl_health_state.status)
+
+
+@app.get("/api/nl/admin")
+async def nl_admin_data() -> Dict[str, Any]:
+    """The admin screen's data: the status above, Jellyfin's diagnostics (libraries and where they point),
+    disk use against the limits, and the Jellystat / Uptime Kuma / Dozzle links that are configured."""
+    return await asyncio.to_thread(_nl_admin_payload)
+
+
+@app.post("/api/nl/admin/repair")
+async def nl_admin_repair() -> Dict[str, Any]:
+    """Library repair (the same action as POST /api/jellyfin/repair), answered with a short summary only."""
+    report = await asyncio.to_thread(jellyfin_service.repair_libraries)
+    nl_health_state.forget()
+    return {
+        "ok": not report.get("error") and all(
+            lib.get("result") in ("already-attached", "created", "path-added", "recreated") for lib in report.get("libraries", [])
+        ),
+        "error": report.get("error"),
+        "libraries": [
+            {"library": lib.get("library"), "result": lib.get("result") or lib.get("error"), "hint": lib.get("hint")}
+            for lib in report.get("libraries", [])
+        ],
+        "refresh_triggered": bool(report.get("refresh_triggered")),
+    }
+
+
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
     return _nl_page(request, "nl/home.html", {"active": "home"})
@@ -1301,6 +1886,22 @@ async def nl_show_page(item_id: int, request: Request) -> Any:
 @app.get("/nl/watchlist", response_class=HTMLResponse)
 async def nl_watchlist_page(request: Request) -> Any:
     return _nl_page(request, "nl/watchlist.html", {"active": "watchlist"})
+
+
+@app.get("/nl/choose", response_class=HTMLResponse)
+async def nl_choose_page(request: Request) -> Any:
+    return _nl_page(request, "nl/choose.html", {"active": "choose"})
+
+
+@app.get("/nl/downloads", response_class=HTMLResponse)
+async def nl_downloads_page(request: Request) -> Any:
+    return _nl_page(request, "nl/downloads.html", {"active": "downloads"})
+
+
+@app.get("/nl/admin", response_class=HTMLResponse)
+async def nl_admin_page(request: Request) -> Any:
+    """Web only: there is deliberately no TV version and no link from the TV pages."""
+    return _nl_page(request, "nl/admin.html", {"active": "admin"})
 
 
 @app.get("/nl/me", response_class=HTMLResponse)
@@ -1334,9 +1935,119 @@ async def nl_tv_watchlist(request: Request) -> Any:
     return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, tv=True)
 
 
+@app.get("/nl/tv/choose", response_class=HTMLResponse)
+async def nl_tv_choose(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, tv=True)
+
+
+@app.get("/nl/tv/downloads", response_class=HTMLResponse)
+async def nl_tv_downloads(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, tv=True)
+
+
 @app.get("/nl/tv/me", response_class=HTMLResponse)
 async def nl_tv_me(request: Request) -> Any:
     return _nl_page(request, "nl/tv/me.html", {"page": "me"}, tv=True)
+
+
+# --- Northern Lights phone keyboard for TV search (M8b) ---
+class NLTypeSession(BaseModel):
+    previous_key: Optional[str] = Field(None, max_length=64)
+
+
+class NLTypeText(BaseModel):
+    text: str = Field("", max_length=1000)   # the real limit (100 characters) is applied by services/nl_type.py
+    submit: bool = False
+
+
+def _client_address(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _type_error(e: TypingError) -> JSONResponse:
+    status, body = describe_type_error(e)
+    headers = {"Retry-After": str(body["retry_after"])} if "retry_after" in body else None
+    return JSONResponse(status_code=status, content=body, headers=headers)
+
+
+@app.post("/api/nl/type/session")
+async def nl_type_session(request: Request, body: NLTypeSession = Body(default_factory=NLTypeSession)) -> Any:
+    """The TV search page asks for a typing code. Returns {code, key, expires_in}: the code goes on the screen (and in
+    the QR), the key stays on the TV (it is how only that TV reads what the phone types). With the old key the old
+    session is replaced: one session per TV."""
+    try:
+        return nl_type.create(_client_address(request), body.previous_key)
+    except TypingError as e:
+        return _type_error(e)
+
+
+@app.get("/api/nl/type/{code}/poll")
+async def nl_type_poll(
+    code: str, request: Request, after: int = Query(0, ge=0), x_nl_type_key: Optional[str] = Header(None),
+) -> Any:
+    """The TV reads the latest phone text. Needs the session key (header X-NL-Type-Key)."""
+    try:
+        return nl_type.poll(code, x_nl_type_key, _client_address(request), after)
+    except TypingError as e:
+        return _type_error(e)
+
+
+@app.delete("/api/nl/type/{code}")
+async def nl_type_close(code: str, request: Request, x_nl_type_key: Optional[str] = Header(None)) -> Any:
+    """The TV leaves the search page: its code stops working."""
+    try:
+        nl_type.close(code, x_nl_type_key, _client_address(request))
+    except TypingError as e:
+        return _type_error(e)
+    return {"ok": True}
+
+
+@app.post("/api/nl/type/{code}")
+async def nl_type_send(code: str, body: NLTypeText, request: Request) -> Any:
+    """The phone's text for the TV (the whole text each time, so a missed update heals itself). 404 once the code is
+    gone, 422 for more than 100 characters, 429 when going too fast."""
+    try:
+        return nl_type.send(code, body.text, _client_address(request), body.submit)
+    except TypingError as e:
+        return _type_error(e)
+
+
+def _type_page(request: Request, code: Optional[str], message: str = "", status: int = 200) -> Any:
+    resp = templates.TemplateResponse(request=request, name="nl/type.html", context={"code": code or "", "message": message}, status_code=status)
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Referrer-Policy"] = "no-referrer"   # the code is in the address
+    return resp
+
+
+@app.get("/nl/type", response_class=HTMLResponse)
+async def nl_type_enter(request: Request, code: Optional[str] = Query(None, max_length=32)) -> Any:
+    """The phone page without a code: type the 6 characters from the TV (a code in the address goes on to its page)."""
+    if code is not None:
+        norm = normalise_code(code)
+        if norm:
+            return RedirectResponse(f"/nl/type/{norm}", status_code=302)
+        return _type_page(request, None, "That code doesn't look right. It has 6 letters and digits.", 400)
+    return _type_page(request, None)
+
+
+@app.get("/nl/type/{code}", response_class=HTMLResponse)
+async def nl_type_page(code: str, request: Request) -> Any:
+    """The phone's keyboard page for one TV. No cookies, no who's-watching: the code is the only credential."""
+    try:
+        norm = nl_type.check(code, _client_address(request))
+    except TypingError as e:
+        return _type_page(request, None, e.message, e.status)
+    return _type_page(request, norm)
+
+
+@app.get("/nl/cast/receiver", response_class=HTMLResponse)
+async def nl_cast_receiver(request: Request) -> Any:
+    """The custom Chromecast Web Receiver (M8). Runs on the Chromecast, so it never has the viewer cookie and
+    never calls our API: everything it shows arrives in the load request from the sender, and the artwork URL
+    carries a stream token."""
+    resp = templates.TemplateResponse(request=request, name="nl/cast_receiver.html", context={})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
@@ -1870,6 +2581,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
 
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
+        download_requests.remember(movie_id, req.magnet_link, clean_movie_title, req.media_type)
         asyncio.create_task(
             torrent_downloader.download(
                 req.magnet_link,

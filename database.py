@@ -143,6 +143,12 @@ class DatabaseManager:
             self._migrate_v12_nl_browse(cursor)
             self._migrate_v13_nl_people(cursor)
             self._migrate_v14_nl_picks(cursor)
+            self._migrate_v15_nl_polish_a(cursor)
+            self._migrate_v16_nl_polish_b(cursor)
+            self._migrate_v17_nl_together(cursor)
+            self._migrate_v18_nl_choosing(cursor)
+            self._migrate_v19_nl_spoilers(cursor)
+            self._migrate_v20_nl_settings(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -782,6 +788,158 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 14;")
             print("[Database] Migration v14 applied: watch_later.owner_profile_id, nl_interest added.")
 
+    def _migrate_v15_nl_polish_a(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M7a (player polish).
+
+          nl_show_viewer_prefs   per show AND per viewer key (a person's id, "both" or "default"):
+                                 skip_intro = 1 means "always skip the intro" for that viewer.
+                                 (nl_show_prefs stays show-wide: it holds the autoplay switch.)
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_show_viewer_prefs (
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                viewer_key     TEXT NOT NULL,
+                skip_intro     INTEGER NOT NULL DEFAULT 0,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_item_id, viewer_key)
+            );
+            """
+        )
+        if version < 15:
+            cursor.execute("PRAGMA user_version = 15;")
+            print("[Database] Migration v15 applied: nl_show_viewer_prefs added.")
+
+    def _migrate_v16_nl_polish_b(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M7b (browse polish).
+
+          nl_hidden_titles   "Hide from home", per viewer key (a person's id, "both" or "default"):
+                             a row means that viewer does not want this title on the home rows.
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_hidden_titles (
+                viewer_key     TEXT NOT NULL,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                hidden_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (viewer_key, media_item_id)
+            );
+            """
+        )
+        if version < 16:
+            cursor.execute("PRAGMA user_version = 16;")
+            print("[Database] Migration v16 applied: nl_hidden_titles added.")
+
+    def _migrate_v17_nl_together(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9a (couple extras).
+
+          nl_seen_together   a title (or one episode: source_id) "Both of us" finished. Movies use
+                             source_id 0. One row per title / episode, whoever it was played with.
+          nl_pacts           "We watch this together" for a show; a row means the pact is on.
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_seen_together (
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                source_id      INTEGER NOT NULL DEFAULT 0,
+                seen_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (media_item_id, source_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_pacts (
+                media_item_id  INTEGER PRIMARY KEY REFERENCES media_items(id) ON DELETE CASCADE,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 17:
+            cursor.execute("PRAGMA user_version = 17;")
+            print("[Database] Migration v17 applied: nl_seen_together, nl_pacts added.")
+
+    def _migrate_v18_nl_choosing(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9b (choosing).
+
+          nl_vetoes    "Not tonight" (kind tonight: person_key '*' = for whoever is at the screen,
+                       `until` = tomorrow 05:00 local, stored as UTC) and "Never" (kind never: one
+                       person's key, no end). One row per person key and title.
+          nl_chooser   one row (slot 1): who chose last and what, so the app can say "Your turn, <name>".
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_vetoes (
+                person_key     TEXT NOT NULL,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                kind           TEXT NOT NULL CHECK (kind IN ('tonight', 'never')),
+                until          TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (person_key, media_item_id)
+            );
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_chooser (
+                slot           INTEGER PRIMARY KEY CHECK (slot = 1),
+                person_id      TEXT NOT NULL,
+                media_item_id  INTEGER,
+                chosen_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        )
+        if version < 18:
+            cursor.execute("PRAGMA user_version = 18;")
+            print("[Database] Migration v18 applied: nl_vetoes, nl_chooser added.")
+
+    def _migrate_v19_nl_spoilers(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9c (spoiler hiding).
+
+          nl_person_prefs.hide_spoilers   1 = blur the thumbnails and hide the synopses of episodes this
+                                          viewer has not watched; NULL / 0 = show everything (the default).
+
+        Reactions (W10) add no storage: they are ordinary verdicts in rating_details. Additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {r[1] for r in cursor.execute("PRAGMA table_info(nl_person_prefs);").fetchall()}
+        if "hide_spoilers" not in cols:
+            cursor.execute("ALTER TABLE nl_person_prefs ADD COLUMN hide_spoilers INTEGER;")
+        if version < 19:
+            cursor.execute("PRAGMA user_version = 19;")
+            print("[Database] Migration v19 applied: nl_person_prefs.hide_spoilers added.")
+
+    def _migrate_v20_nl_settings(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M10c (playback and display settings), all on nl_person_prefs and all NULL = "not set":
+
+          skip_seconds   10 / 15 / 30 / 60: how far the skip buttons jump
+          autoplay       0 / 1: start the next episode by itself, for shows with no switch of their own (NULL = on)
+          quality_kbps   8000 / 4000 / 2000 / 1000: highest stream rate to ask Jellyfin for (NULL = Auto)
+          picture_fit    fit / fill / original
+
+        Additive only (ALTER TABLE ... ADD COLUMN).
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {r[1] for r in cursor.execute("PRAGMA table_info(nl_person_prefs);").fetchall()}
+        for name, kind in (("skip_seconds", "INTEGER"), ("autoplay", "INTEGER"), ("quality_kbps", "INTEGER"), ("picture_fit", "TEXT")):
+            if name not in cols:
+                cursor.execute(f"ALTER TABLE nl_person_prefs ADD COLUMN {name} {kind};")
+        if version < 20:
+            cursor.execute("PRAGMA user_version = 20;")
+            print("[Database] Migration v20 applied: nl_person_prefs.skip_seconds/autoplay/quality_kbps/picture_fit added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1289,6 +1447,22 @@ class DatabaseManager:
             item["added_at"] = max((s["created_at"] or "") for s in item["sources"]) or None
             return item
 
+    def get_download_briefs(self, item_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """{id: {title, media_type, has_file}} for the Downloads screen (M10a); unknown ids are left out.
+        `has_file` = the title has a registered source file, i.e. it can be played."""
+        ids = [int(i) for i in dict.fromkeys(item_ids) if isinstance(i, int) and i > 0]
+        if not ids:
+            return {}
+        marks = ",".join("?" for _ in ids)
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT mi.id, mi.title, mi.media_type, "
+                f"(SELECT COUNT(*) FROM media_sources ms WHERE ms.media_item_id = mi.id) AS files "
+                f"FROM media_items mi WHERE mi.id IN ({marks});",
+                ids,
+            ).fetchall()
+        return {r["id"]: {"title": r["title"], "media_type": r["media_type"], "has_file": r["files"] > 0} for r in rows}
+
     def get_sources_by_paths(self, paths: List[str]) -> Dict[str, Dict[str, Any]]:
         """{file_path: source row + media_type/title of its item} for the exact paths given."""
         paths = [p for p in dict.fromkeys(paths) if p]
@@ -1333,6 +1507,14 @@ class DatabaseManager:
                 changed += cur.rowcount
         return changed
 
+    def get_show_autoplay_row(self, media_item_id: int) -> Optional[bool]:
+        """The show's own autoplay switch, or None when nobody ever touched it (M10c: then the person's default applies)."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT autoplay FROM nl_show_prefs WHERE media_item_id = ?;", (media_item_id,)
+            ).fetchone()
+        return None if row is None else bool(row["autoplay"])
+
     def get_show_autoplay(self, media_item_id: int) -> bool:
         """Autoplay of the next episode for this show; on unless it was switched off."""
         with self.get_connection() as conn:
@@ -1356,6 +1538,206 @@ class DatabaseManager:
             )
         return bool(autoplay)
 
+    def get_show_skip_intro(self, media_item_id: int, viewer_key: str) -> bool:
+        """Does this viewer always skip the intro of this show? Off unless they switched it on."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT skip_intro FROM nl_show_viewer_prefs WHERE media_item_id = ? AND viewer_key = ?;",
+                (media_item_id, viewer_key),
+            ).fetchone()
+        return False if row is None else bool(row["skip_intro"])
+
+    def set_show_skip_intro(self, media_item_id: int, viewer_key: str, skip_intro: bool) -> bool:
+        """Stores the viewer's "always skip intro" for one show. Raises ValueError if it is not a show."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row or row["media_type"] != "tv":
+                raise ValueError("skip intro is a setting for TV shows")
+            conn.execute(
+                """
+                INSERT INTO nl_show_viewer_prefs (media_item_id, viewer_key, skip_intro, updated_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(media_item_id, viewer_key)
+                DO UPDATE SET skip_intro = excluded.skip_intro, updated_at = CURRENT_TIMESTAMP;
+                """,
+                (media_item_id, viewer_key, 1 if skip_intro else 0),
+            )
+        return bool(skip_intro)
+
+    # ------------------------------------------------------------------ Northern Lights couple extras (M9a)
+
+    def _together_changed(self) -> None:
+        self._together_cache = None
+
+    def mark_seen_together(self, media_item_id: int, source_id: Optional[int] = None) -> bool:
+        """Records that both of them finished this movie / episode. Movies are stored with source_id 0.
+        Returns False for an unknown title or an episode that is not one of its files."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row:
+                return False
+            sid = 0
+            if row["media_type"] == "tv":
+                if not source_id or not conn.execute(
+                    "SELECT 1 FROM media_sources WHERE id = ? AND media_item_id = ?;", (source_id, media_item_id)
+                ).fetchone():
+                    return False
+                sid = int(source_id)
+            conn.execute(
+                "INSERT INTO nl_seen_together (media_item_id, source_id) VALUES (?, ?) "
+                "ON CONFLICT(media_item_id, source_id) DO UPDATE SET seen_at = CURRENT_TIMESTAMP;",
+                (media_item_id, sid),
+            )
+        self._together_changed()
+        return True
+
+    def clear_seen_together(self, media_item_id: int, source_id: Optional[int] = None) -> None:
+        """Takes the together mark off (one of them watched it again from the start, or reset it)."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM nl_seen_together WHERE media_item_id = ? AND source_id = ?;",
+                (media_item_id, int(source_id or 0)),
+            )
+        self._together_changed()
+
+    def get_seen_together(self, media_item_id: int) -> set:
+        """source ids of the episodes seen together (0 = the movie itself)."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT source_id FROM nl_seen_together WHERE media_item_id = ?;", (media_item_id,)).fetchall()
+        return {int(r["source_id"]) for r in rows}
+
+    def get_together_counts(self) -> Dict[int, int]:
+        """{media_item_id: how many of its files were seen together}. Cached until the next write: every
+        poster card asks."""
+        cache = getattr(self, "_together_cache", None)
+        if cache is None:
+            with self.get_connection() as conn:
+                rows = conn.execute("SELECT media_item_id, COUNT(*) AS n FROM nl_seen_together GROUP BY media_item_id;").fetchall()
+            cache = {int(r["media_item_id"]): int(r["n"]) for r in rows}
+            self._together_cache = cache
+        return cache
+
+    def get_pact(self, media_item_id: int) -> bool:
+        with self.get_connection() as conn:
+            return conn.execute("SELECT 1 FROM nl_pacts WHERE media_item_id = ?;", (media_item_id,)).fetchone() is not None
+
+    def set_pact(self, media_item_id: int, on: bool) -> bool:
+        """"We watch this together" for one show. Raises ValueError if it is not a show."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT media_type FROM media_items WHERE id = ?;", (media_item_id,)).fetchone()
+            if not row or row["media_type"] != "tv":
+                raise ValueError("a watch-together pact is for TV shows")
+            if on:
+                conn.execute(
+                    "INSERT INTO nl_pacts (media_item_id) VALUES (?) ON CONFLICT(media_item_id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP;",
+                    (media_item_id,),
+                )
+            else:
+                conn.execute("DELETE FROM nl_pacts WHERE media_item_id = ?;", (media_item_id,))
+        return bool(on)
+
+    # ------------------------------------------------------------------ Northern Lights choosing (M9b)
+
+    def set_veto(self, person_key: str, media_item_id: int, kind: str, until: Optional[str] = None) -> None:
+        """"Not tonight" (kind tonight, `until` a UTC 'YYYY-MM-DD HH:MM:SS') or "Never" (no end) for one
+        person key ('*' = whoever is at the screen). Raises ValueError for an unknown title or kind.
+        Expired "tonight" rows are cleaned out on the way."""
+        if kind not in ("tonight", "never"):
+            raise ValueError("kind must be tonight or never")
+        if kind == "tonight" and not until:
+            raise ValueError("a tonight veto needs an end time")
+        with self.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError("unknown title")
+            conn.execute("DELETE FROM nl_vetoes WHERE kind = 'tonight' AND until <= strftime('%Y-%m-%d %H:%M:%S', 'now');")
+            conn.execute(
+                """
+                INSERT INTO nl_vetoes (person_key, media_item_id, kind, until) VALUES (?, ?, ?, ?)
+                ON CONFLICT(person_key, media_item_id)
+                DO UPDATE SET kind = excluded.kind, until = excluded.until, created_at = CURRENT_TIMESTAMP;
+                """,
+                (person_key, media_item_id, kind, until if kind == "tonight" else None),
+            )
+
+    def clear_veto(self, person_key: str, media_item_id: int) -> bool:
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM nl_vetoes WHERE person_key = ? AND media_item_id = ?;", (person_key, media_item_id))
+            return cur.rowcount > 0
+
+    def get_vetoes(self, person_keys: List[str], now_utc: str) -> List[Dict[str, Any]]:
+        """Active vetoes that apply to these people: their own "never" rows and every still-running
+        "tonight" row (person key '*'). `now_utc` is 'YYYY-MM-DD HH:MM:SS'."""
+        keys = [str(k) for k in person_keys] + ["*"]
+        marks = ",".join("?" * len(keys))
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT v.person_key, v.media_item_id, v.kind, v.until, m.title, m.release_year AS year
+                FROM nl_vetoes v JOIN media_items m ON m.id = v.media_item_id
+                WHERE v.person_key IN ({marks}) AND (v.kind = 'never' OR v.until > ?)
+                ORDER BY v.created_at DESC, v.media_item_id;
+                """,
+                (*keys, now_utc),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_vetoed_ids(self, person_keys: List[str], now_utc: str) -> set:
+        return {int(r["media_item_id"]) for r in self.get_vetoes(person_keys, now_utc)}
+
+    def set_last_chooser(self, person_id: str, media_item_id: Optional[int]) -> None:
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO nl_chooser (slot, person_id, media_item_id) VALUES (1, ?, ?)
+                ON CONFLICT(slot) DO UPDATE SET person_id = excluded.person_id, media_item_id = excluded.media_item_id,
+                                                chosen_at = CURRENT_TIMESTAMP;
+                """,
+                (person_id, media_item_id),
+            )
+
+    def get_last_chooser(self) -> Optional[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT person_id, media_item_id, chosen_at FROM nl_chooser WHERE slot = 1;").fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------ Northern Lights browse polish (M7b)
+
+    def get_hidden_ids(self, viewer_key: str) -> set:
+        """Media item ids this viewer hid from the home rows."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT media_item_id FROM nl_hidden_titles WHERE viewer_key = ?;", (viewer_key,)).fetchall()
+        return {int(r["media_item_id"]) for r in rows}
+
+    def set_hidden(self, viewer_key: str, media_item_id: int, hidden: bool) -> bool:
+        """Hides or shows one title on this viewer's home. Raises ValueError for an unknown title."""
+        with self.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError("unknown title")
+            if hidden:
+                conn.execute(
+                    "INSERT OR IGNORE INTO nl_hidden_titles (viewer_key, media_item_id) VALUES (?, ?);",
+                    (viewer_key, media_item_id),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM nl_hidden_titles WHERE viewer_key = ? AND media_item_id = ?;", (viewer_key, media_item_id)
+                )
+        return bool(hidden)
+
+    def get_library_profiles(self, media_type: str) -> List[Dict[str, Any]]:
+        """id, tmdb_id, genres and rating of every title of this type that has a source file
+        (what "More like this" matches against)."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.id, mi.tmdb_id, mi.genres, mi.rating, mi.release_year AS year
+                FROM media_items mi
+                WHERE mi.media_type = ? AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id);
+                """,
+                (media_type,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # ------------------------------------------------------------------ Northern Lights people (M4)
 
     def get_person_prefs(self, person_id: str) -> Optional[Dict[str, Any]]:
@@ -1374,18 +1756,24 @@ class DatabaseManager:
             "subtitles_on": None if row["subtitles_on"] is None else bool(row["subtitles_on"]),
             "sub_style": style,
             "search_lang": row["search_lang"],
+            "hide_spoilers": None if row["hide_spoilers"] is None else bool(row["hide_spoilers"]),
+            "skip_seconds": row["skip_seconds"],
+            "autoplay": None if row["autoplay"] is None else bool(row["autoplay"]),
+            "quality_kbps": row["quality_kbps"],
+            "picture_fit": row["picture_fit"],
         }
 
     def set_person_prefs(self, person_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         """Updates the given (already validated) pref fields and leaves the others alone."""
-        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang")
+        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang", "hide_spoilers",
+                   "skip_seconds", "autoplay", "quality_kbps", "picture_fit")
         values: Dict[str, Any] = {}
         for key in allowed:
             if key in fields:
                 v = fields[key]
                 if key == "sub_style":
                     v = json.dumps(v, separators=(",", ":")) if v else None
-                elif key == "subtitles_on":
+                elif key in ("subtitles_on", "hide_spoilers", "autoplay"):
                     v = None if v is None else (1 if v else 0)
                 values[key] = v
         with self.get_connection() as conn:

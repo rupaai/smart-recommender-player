@@ -53,11 +53,13 @@
     } else if (item.badge) {
       art.appendChild(el("span", "tv-badge", item.badge));
     }
+    if (item.together && window.NLCouple) { art.appendChild(window.NLCouple.togetherBadge(true)); }   // M9a
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", item.title));
     a.appendChild(el("div", "tv-meta", NL.metaLine(item)));
     var label = item.title + (item.year ? " (" + item.year + ")" : "");
     if (item.progress) { label += ", " + item.progress + " percent watched"; } else if (item.badge) { label += ", " + item.badge; }
+    if (item.together) { label += ", watched together"; }
     a.setAttribute("aria-label", label);
     li.appendChild(a);
     return li;
@@ -90,18 +92,70 @@
 
   /* ------------------------------------------------------------------ home */
 
+  function libraryUrl(type, unwatched) {
+    return "/api/nl/library?type=" + type + (unwatched ? "&unwatched=1" : "");
+  }
+
+  function emptyRow(sectionId, listId) {
+    document.getElementById(listId).textContent = "";
+    document.getElementById(sectionId).hidden = true;
+  }
+
   function initHome() {
+    var unwatchedOn = false;
     var home = NL.fetchJSON("/api/nl/home");
+    // M7b: "Unwatched only" for the Movies and Shows rows, remembered between visits.
+    var toggle = window.NLPolish ? window.NLPolish.unwatchedSwitch({ key: "nl.tv.unwatched", tv: true, onChange: refill }) : null;
+    unwatchedOn = !!(toggle && toggle.nlOn);
     // The home call only carries the newest few; the library calls give the whole shelf.
-    var movies = NL.fetchJSON("/api/nl/library?type=movie").catch(function () { return null; });
-    var shows = NL.fetchJSON("/api/nl/library?type=tv").catch(function () { return null; });
+    var movies = NL.fetchJSON(libraryUrl("movie", unwatchedOn)).catch(function () { return null; });
+    var shows = NL.fetchJSON(libraryUrl("tv", unwatchedOn)).catch(function () { return null; });
+
+    function fillLibrary(m, s, unwatched, fallback) {
+      var note = document.getElementById("tv-filters-note");
+      var applied = !!((m && m.unwatched_applied) || (s && s.unwatched_applied));
+      var any = false;
+      emptyRow("tv-movies", "tv-movies-list");
+      emptyRow("tv-shows", "tv-shows-list");
+      var movieRow = fillRow("tv-movies", "tv-movies-list", (m && m.items) || (fallback ? fallback.movies : []), posterCard);
+      var showRow = fillRow("tv-shows", "tv-shows-list", (s && s.items) || (fallback ? fallback.shows : []), posterCard);
+      any = movieRow || showRow || any;
+      if (!unwatched) { note.textContent = ""; }
+      else if (!m && !s) { note.textContent = "Could not load the list."; }
+      else if (!applied) { note.textContent = "Jellyfin isn’t answering, so I can’t tell what you’ve watched. Showing everything."; }
+      else if (!movieRow && !showRow) { note.textContent = "You’ve watched everything on the shelf."; }
+      else if (!movieRow) { note.textContent = "You’ve watched every movie on the shelf."; }
+      else if (!showRow) { note.textContent = "You’ve watched every show on the shelf."; }
+      else { note.textContent = ""; }
+      return any;
+    }
+
+    var latest = null;
+    function refill(on) {
+      unwatchedOn = on;
+      Promise.all([
+        NL.fetchJSON(libraryUrl("movie", on)).catch(function () { return null; }),
+        NL.fetchJSON(libraryUrl("tv", on)).catch(function () { return null; })
+      ]).then(function (r) {
+        fillLibrary(r[0], r[1], on, on ? null : latest);
+        // The filter pill may have been the only thing still on screen; keep the focus on it.
+        if (toggle) { window.NLFocus.focus(toggle); }
+      });
+    }
+
     Promise.all([home, movies, shows]).then(function (r) {
       var data = r[0];
+      latest = data;
       var any = false;
       any = fillRow("tv-continue", "tv-continue-list", data.continue_watching, wideCard) || any;
       initPicks();
-      any = fillRow("tv-movies", "tv-movies-list", (r[1] && r[1].items) || data.movies, posterCard) || any;
-      any = fillRow("tv-shows", "tv-shows-list", (r[2] && r[2].items) || data.shows, posterCard) || any;
+      any = fillRow("tv-recent-added", "tv-recent-added-list", data.recently_added, posterCard) || any;
+      any = fillRow("tv-recent-watched", "tv-recent-watched-list", data.recently_watched, posterCard) || any;
+      if (toggle) {
+        document.getElementById("tv-filters-box").appendChild(toggle);
+        document.getElementById("tv-filters").hidden = false;
+      }
+      any = fillLibrary(r[1], r[2], unwatchedOn, data) || any;
       setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
       window.NLFocus.start();
     }).catch(function () {
@@ -222,8 +276,22 @@
       actions.appendChild(find);
     }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(t.id, t.title, "tv-btn")); }
+    if (window.NLPolish) {
+      // M7b: keep this title off this viewer's home (or bring it back). A button in the existing actions row.
+      actions.appendChild(window.NLPolish.hideToggle(t, {
+        tv: true,
+        onChange: function (hidden) {
+          subNote.textContent = hidden === null ? "Could not change that. Try again."
+            : hidden ? "Hidden from your home page. It is still in search." : "Back on your home page.";
+          subNote.hidden = false;
+        }
+      }));
+    }
     h.info.appendChild(actions);
     h.info.appendChild(subNote);
+    var trailerNote = el("p", "tv-trailer-note");
+    trailerNote.hidden = true;
+    h.info.appendChild(trailerNote);
     addInterest(h.info, t.id);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = el("div", "tv-detail-progress");
@@ -237,6 +305,12 @@
     root.hidden = false;
     setStatus("");
     window.NLFocus.start();
+    if (window.NLPolish) {
+      // M7b: Cast & crew, Tech details (collapsed; OK opens them), the Trailer line and More like this.
+      var extras = el("div", "tv-extras");
+      root.appendChild(extras);
+      window.NLPolish.titleExtras(t, extras, null, { tv: true, trailerNote: trailerNote, buildCard: posterCard });
+    }
   }
 
   function initTitle() {
@@ -255,15 +329,41 @@
   var show = null;
   var episodesBox = null;
   var seasonRow = null;
+  var curSeason = null;
+  var unwatchMode = null;        // M9a: {person, label} while "Mark unwatched" waits for an episode
+  var unwatchHint = null;
+
+  // M9c (W11): with spoiler hiding on, an unstarted episode has a blurred picture until OK is pressed on it once.
+  function spoilerHidden(e) {
+    return !!show.hide_spoilers && !e.played && !e.progress && !e.revealed;
+  }
 
   function episodeCard(e) {
     var li = el("li", "tv-item tv-item-wide");
-    var a = el("a", "tv-card" + (e.played ? " is-played" : ""));
+    var hidden = spoilerHidden(e);
+    var a = el("a", "tv-card" + (e.played ? " is-played" : "") + (hidden ? " is-spoiler" : ""));
     a.href = tvHref(e.href);
     a.setAttribute("data-nl-focus", "");
+    a.addEventListener("click", function (ev) {
+      if (unwatchMode) {
+        ev.preventDefault();
+        markUnwatched(e);
+        return;
+      }
+      if (hidden) {
+        ev.preventDefault();
+        e.revealed = true;
+        var col = episodesBox._nlCol;
+        var at = Array.prototype.indexOf.call(episodesBox.children, li);
+        showSeason(curSeason);
+        var again = episodesBox.querySelectorAll("[data-nl-focus]")[at >= 0 ? at : Math.min(col, episodesBox.children.length - 1)];
+        if (again) { window.NLFocus.focus(again); }
+      }
+    });
     var art = el("div", "tv-art tv-still");
     NL.fillImage(art, [e.image], e.code || ("E" + (e.episode || "")));
     if (e.progress) { art.appendChild(NL.progressBar(e.progress)); }
+    if (e.together && window.NLCouple) { art.appendChild(window.NLCouple.togetherBadge(true)); }   // M9a
     if (e.played) {
       var tick = el("span", "tv-tick", "✓");
       tick.setAttribute("role", "img");
@@ -275,14 +375,89 @@
     var meta = [];
     if (e.runtime_minutes) { meta.push(NL.fmtRuntime(e.runtime_minutes)); }
     if (e.progress && !e.played) { meta.push(e.progress + "% watched"); }
+    if (hidden) { meta.push("Details hidden, OK to show"); }
     a.appendChild(el("div", "tv-meta", meta.join(" · ")));
     a.setAttribute("aria-label", (e.code ? e.code + ", " : "") + e.name + (e.played ? ", watched" : "") +
-      (e.progress && !e.played ? ", " + e.progress + " percent watched" : ""));
+      (e.progress && !e.played ? ", " + e.progress + " percent watched" : "") + (hidden ? ", details hidden, press OK to show" : ""));
     li.appendChild(a);
     return li;
   }
 
+  function setUnwatchMode(mode) {
+    unwatchMode = mode;
+    if (unwatchHint) {
+      unwatchHint.hidden = !mode;
+      unwatchHint.textContent = mode ? "Pick the episode, then press OK. " + mode.label + ". Back cancels." : "";
+    }
+  }
+
+  function markUnwatched(e) {
+    var mode = unwatchMode;
+    if (!e.played && !e.progress) {
+      unwatchHint.textContent = "That episode isn\u2019t marked as watched. Pick another, or press Back.";
+      return;
+    }
+    setUnwatchMode(null);
+    unwatchHint.hidden = false;
+    unwatchHint.textContent = "Working\u2026";
+    window.NLCouple.unwatch(itemId, e.source_id, mode.person).then(function () {
+      e.played = false; e.progress = 0; e.resume_seconds = 0; e.together = false;
+      unwatchHint.textContent = "Marked unwatched.";
+      var col = episodesBox._nlCol;
+      showSeason(curSeason);
+      var again = episodesBox.querySelectorAll("[data-nl-focus]")[Math.min(col, episodesBox.children.length - 1)];
+      if (again) { window.NLFocus.focus(again); }
+    }).catch(function () {
+      unwatchHint.textContent = "Couldn\u2019t mark that unwatched. Is Jellyfin reachable?";
+    });
+  }
+
+  // U6: one button per person who can be reset ("Mark unwatched for me", or each name on Both of us).
+  function unwatchButtons(actions) {
+    unwatchHint = el("p", "tv-unwatch-hint");
+    unwatchHint.setAttribute("role", "status");
+    unwatchHint.hidden = true;
+    window.NLCouple.unwatchLabels(show.unwatch_people).forEach(function (entry) {
+      var b = el("button", "tv-btn", entry.label);
+      b.type = "button";
+      b.setAttribute("data-nl-focus", "");
+      b.addEventListener("click", function () {
+        setUnwatchMode(unwatchMode && unwatchMode.person === entry.person ? null : entry);
+        if (unwatchMode) {
+          var first = episodesBox.querySelector("[data-nl-focus]");
+          if (first) { window.NLFocus.focus(first); }
+        }
+      });
+      actions.appendChild(b);
+    });
+  }
+
+  // M9a: "We watch this together", only with two people configured.
+  function pactSwitch() {
+    var pact = show.pact;
+    if (!pact || !pact.available) { return null; }
+    var box = document.createElement("button");
+    box.type = "button";
+    box.className = "tv-btn tv-switch";
+    box.setAttribute("data-nl-focus", "");
+    box.setAttribute("role", "switch");
+    var state = el("span", "tv-switch-state");
+    box.appendChild(el("span", "tv-switch-label", "We watch this together"));
+    box.appendChild(state);
+    function paint(on) { box.setAttribute("aria-checked", String(!!on)); state.textContent = on ? "On" : "Off"; }
+    paint(pact.together);
+    box.addEventListener("click", function () {
+      var want = box.getAttribute("aria-checked") !== "true";
+      paint(want);
+      NL.fetchJSON("/api/nl/show/" + encodeURIComponent(itemId) + "/pact", {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ together: want })
+      }).then(function (r) { pact.together = r.together; paint(r.together); }).catch(function () { paint(!want); });
+    });
+    return box;
+  }
+
   function showSeason(number) {
+    curSeason = number;
     lsSet("nl.season." + itemId, number);
     episodesBox.textContent = "";
     episodesBox._nlCol = 0;
@@ -344,9 +519,14 @@
     actions.setAttribute("data-nl-row", "actions");
     if (s.next_up) { actions.appendChild(button(s.next_up.text, s.next_up.href, true)); }
     actions.appendChild(autoplaySwitch());
+    var pact = window.NLCouple ? pactSwitch() : null;
+    if (pact) { actions.appendChild(pact); }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title, "tv-btn")); }
     h.info.appendChild(actions);
     addInterest(h.info, s.id);
+    if (s.together_count) {
+      h.info.appendChild(el("p", "tv-meta", "Watched together: " + s.together_count + (s.together_count === 1 ? " episode" : " episodes")));
+    }
     if (!s.jellyfin) {
       h.info.appendChild(el("p", "tv-meta", "Watched ticks and Next up need Jellyfin, which isn’t answering right now."));
     }
@@ -374,6 +554,13 @@
     }
     episodesBox = el("ul", "tv-row");
     episodesBox.setAttribute("data-nl-row", "episodes");
+    if (window.NLCouple && s.seasons.some(function (sn) { return sn.episodes.some(function (x) { return x.played || x.progress; }); })) {
+      var tools = el("div", "tv-seasons");
+      tools.setAttribute("data-nl-row", "episode-tools");
+      unwatchButtons(tools);
+      section.appendChild(tools);
+      section.appendChild(unwatchHint);
+    }
     section.appendChild(episodesBox);
     root.appendChild(section);
 
@@ -385,6 +572,11 @@
     root.hidden = false;
     setStatus("");
     window.NLFocus.start();
+    window.NLFocus.onBack(function () {
+      if (!unwatchMode) { return false; }
+      setUnwatchMode(null);
+      return true;
+    });
   }
 
   function initShow() {
@@ -455,6 +647,24 @@
 
     input.addEventListener("nl-input-done", run);
     document.getElementById("tv-search-form").addEventListener("submit", function (e) { e.preventDefault(); run(); });
+
+    // M8b: the phone as keyboard. What it types lands in the box and searches after a short pause; its Search button
+    // searches at once. The box keeps its place on the remote's focus ring; only its text changes.
+    var phoneTimer = null;
+    if (window.NLPhoneKeyboard) {
+      window.NLPhoneKeyboard.start({
+        panel: document.getElementById("tv-phone"),
+        qr: document.getElementById("tv-phone-qr"),
+        code: document.getElementById("tv-phone-code"),
+        how: document.getElementById("tv-phone-how"),
+        onText: function (text) {
+          input.value = text;
+          window.clearTimeout(phoneTimer);
+          phoneTimer = window.setTimeout(run, 450);
+        },
+        onSubmit: function () { window.clearTimeout(phoneTimer); run(); }
+      });
+    }
     window.NLFocus.start();
   }
 
@@ -483,7 +693,16 @@
     var sub = document.getElementById("tv-pref-sub");
     var on = document.getElementById("tv-pref-on");
     var status = document.getElementById("tv-pref-status");
+    var spoilers = document.getElementById("tv-pref-spoilers");
+    var skip = document.getElementById("tv-pref-skip");
+    var autoplay = document.getElementById("tv-pref-autoplay");
+    var quality = document.getElementById("tv-pref-quality");
+    var fit = document.getElementById("tv-pref-fit");
+    // The Android app draws the picture itself (behind this page), so the page cannot resize it: no picture size there.
+    if (window.NorthernLightsNative && typeof window.NorthernLightsNative.play === "function") { document.getElementById("tv-pref-fit-row").hidden = true; }
     setStatus("");
+    var vetoes = document.getElementById("tv-vetoes");
+    if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, true); }   // M9b: bring back what was vetoed
     var prefs = null;
     function paint() {
       audio.textContent = "Audio language: " + langName(prefs.audio_lang);
@@ -492,6 +711,26 @@
       on.appendChild(document.createTextNode("Subtitles on by default "));
       on.appendChild(el("span", "tv-switch-state", prefs.subtitles_on ? "On" : "Off"));
       on.setAttribute("aria-checked", String(!!prefs.subtitles_on));
+      spoilers.textContent = "";
+      spoilers.appendChild(document.createTextNode("Hide spoilers in episode lists "));
+      spoilers.appendChild(el("span", "tv-switch-state", prefs.hide_spoilers ? "On" : "Off"));
+      spoilers.setAttribute("aria-checked", String(!!prefs.hide_spoilers));
+      skip.textContent = "Skip length: " + (prefs.skip_seconds ? prefs.skip_seconds + " seconds" : "Device's own choice");
+      autoplay.textContent = "";
+      autoplay.appendChild(document.createTextNode("Play the next episode by itself "));
+      autoplay.appendChild(el("span", "tv-switch-state", prefs.autoplay !== false ? "On" : "Off"));
+      autoplay.setAttribute("aria-checked", String(prefs.autoplay !== false));
+      quality.textContent = "Quality: " + choiceLabel(window.NLPrefs.qualityChoices, prefs.quality_kbps);
+      fit.textContent = "Picture size: " + choiceLabel(window.NLPrefs.fitChoices, prefs.picture_fit || "fit");
+    }
+    function choiceLabel(pairs, value) {
+      for (var i = 0; i < pairs.length; i++) { if (pairs[i][0] === (value === undefined ? null : value)) { return pairs[i][1]; } }
+      return String(value);
+    }
+    function nextChoice(pairs, value) {
+      var at = 0;
+      for (var i = 0; i < pairs.length; i++) { if (pairs[i][0] === (value === undefined ? null : value)) { at = i; } }
+      return pairs[(at + 1) % pairs.length][0];
     }
     function save(patch) {
       Object.assign(prefs, patch);
@@ -507,6 +746,16 @@
     audio.addEventListener("click", function () { if (prefs) { save({ audio_lang: nextLang(prefs.audio_lang) || null }); } });
     sub.addEventListener("click", function () { if (prefs) { save({ subtitle_lang: nextLang(prefs.subtitle_lang) || null }); } });
     on.addEventListener("click", function () { if (prefs) { save({ subtitles_on: !prefs.subtitles_on }); } });
+    spoilers.addEventListener("click", function () { if (prefs) { save({ hide_spoilers: !prefs.hide_spoilers }); } });
+    skip.addEventListener("click", function () {
+      if (!prefs) { return; }
+      var order = [null].concat(window.NLPrefs.skipChoices);
+      var at = order.indexOf(prefs.skip_seconds || null);
+      save({ skip_seconds: order[(at + 1) % order.length] });
+    });
+    autoplay.addEventListener("click", function () { if (prefs) { save({ autoplay: prefs.autoplay === false }); } });
+    quality.addEventListener("click", function () { if (prefs) { save({ quality_kbps: nextChoice(window.NLPrefs.qualityChoices, prefs.quality_kbps) }); } });
+    fit.addEventListener("click", function () { if (prefs) { save({ picture_fit: nextChoice(window.NLPrefs.fitChoices, prefs.picture_fit || "fit") }); } });
   }
 
   /* ----------------------------------------- picks for two (M6): home row */
@@ -671,6 +920,20 @@
     load();
   }
 
+  /* ----------------------------------------------------- choose for us (M9b) */
+
+  function initChoose() {
+    window.NLFocus.remember(false);
+    window.NLChoose.mount(document.getElementById("tv-choose"), { tv: true, href: tvHref, status: setStatus });
+  }
+
+  /* ----------------------------------------------------------- downloads (M10a) */
+
+  function initDownloads() {
+    window.NLFocus.remember(false);
+    window.NLDownloads.mount(document.getElementById("tv-downloads"), { tv: true, href: tvHref, status: setStatus });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -680,4 +943,6 @@
   else if (page === "who") { initWho(); }
   else if (page === "me") { initMe(); }
   else if (page === "watchlist") { initWatchlist(); }
+  else if (page === "choose") { initChoose(); }
+  else if (page === "downloads") { initDownloads(); }
 })();

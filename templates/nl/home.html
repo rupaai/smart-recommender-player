@@ -2,6 +2,7 @@
 {% block title %}Northern Lights{% endblock %}
 {% block main %}
   <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <p class="nl-choose-cta"><a class="nl-btn-main" href="/nl/choose">Choose for us</a></p>
   <section id="nl-continue" class="nl-row" hidden aria-labelledby="nl-continue-h">
     <div class="nl-row-head"><h2 id="nl-continue-h">Continue watching</h2></div>
     <ul class="nl-scroller nl-scroller-wide" id="nl-continue-list"></ul>
@@ -12,6 +13,14 @@
     <div id="nl-picks-chips"></div>
     <ul class="nl-scroller nl-scroller-picks" id="nl-picks-list"></ul>
     <p id="nl-picks-empty" class="nl-meta" hidden></p>
+  </section>
+  <section id="nl-recent-added" class="nl-row" hidden aria-labelledby="nl-recent-added-h">
+    <div class="nl-row-head"><h2 id="nl-recent-added-h">Recently added</h2></div>
+    <ul class="nl-scroller" id="nl-recent-added-list"></ul>
+  </section>
+  <section id="nl-recent-watched" class="nl-row" hidden aria-labelledby="nl-recent-watched-h">
+    <div class="nl-row-head"><h2 id="nl-recent-watched-h">Recently watched</h2></div>
+    <ul class="nl-scroller" id="nl-recent-watched-list"></ul>
   </section>
   <section id="nl-movies" class="nl-row" hidden aria-labelledby="nl-movies-h">
     <div class="nl-row-head"><h2 id="nl-movies-h">Movies</h2><a id="nl-movies-all" href="/nl/movies">See all</a></div>
