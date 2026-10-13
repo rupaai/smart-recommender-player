@@ -12,16 +12,20 @@ point at our own proxy, and the pure helpers below strip any key from URLs and p
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import copy
 import os
 import posixpath
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import quote, unquote
 
 from services.device_profiles import BROWSER_PROFILE
+from services.nl_people import pick_audio_index, pick_subtitle_track
 from services.jellyfin_service import JellyfinService
 
 PROXY_PREFIX = "/nl/jf/"
@@ -360,33 +364,58 @@ class JellyfinPlayback:
         self._ids: Dict[str, str] = {}
         self._lock = threading.Lock()
         self._resolved_user: Optional[str] = None
+        self._resolved_users: Dict[str, str] = {}
+        self._as_user: contextvars.ContextVar = contextvars.ContextVar("nl_jellyfin_user", default=None)
         self._last_refresh: Optional[float] = None  # never scanned
 
     def _require(self) -> None:
-        if not self.jf.configured or not self.jf.user_id:
+        if not self.jf.configured or not (self.jf.user_id or self._as_user.get()):
             raise JellyfinUnavailable(
                 "Jellyfin is not configured (set JELLYFIN_URL, JELLYFIN_API_KEY and JELLYFIN_USER_ID in .env)."
             )
 
+    @contextlib.contextmanager
+    def as_user(self, raw_user: Optional[str]):
+        """Everything inside the block that asks for "the user" (progress, resume, UserData) uses this
+        Jellyfin user (an id or a user name) instead of JELLYFIN_USER_ID. None = the default user.
+        Set inside the worker thread that makes the calls, so concurrent requests never mix users."""
+        token = self._as_user.set(raw_user or None)
+        try:
+            yield
+        finally:
+            self._as_user.reset(token)
+
+    def resolve_user(self, raw: Optional[str], label: str = "JELLYFIN_USER_ID") -> str:
+        """A configured Jellyfin user as Jellyfin's 32-hex id. A user *name* is accepted too and looked
+        up once via GET /Users, since the id is easy to confuse with the login name."""
+        raw = (raw or "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{32}", raw.replace("-", "")):
+            return raw
+        cached = self._resolved_users.get(raw.lower())
+        if cached:
+            return cached
+        users = self._request("GET", "/Users") or []
+        for u in users:
+            if str(u.get("Name", "")).lower() == raw.lower() and u.get("Id"):
+                self._resolved_users[raw.lower()] = u["Id"]
+                return u["Id"]
+        raise JellyfinUnavailable(
+            f"{label} ({raw!r}) is not a Jellyfin user id or user name. "
+            "Find the id in Jellyfin: Dashboard > Users > the user (it's in the page address)."
+        )
+
     def _user_id(self) -> str:
-        """JELLYFIN_USER_ID as Jellyfin's 32-hex user id. A user *name* is accepted too and
-        looked up once via GET /Users, since the id is easy to confuse with the login name."""
+        """The Jellyfin user calls are made for: the as_user() override, else JELLYFIN_USER_ID."""
+        override = self._as_user.get()
+        if override:
+            self._require()
+            return self.resolve_user(override, "northern_lights.people jellyfin_user_id")
         if self._resolved_user:
             return self._resolved_user
         self._require()
         raw = (self.jf.user_id or "").strip()
-        if re.fullmatch(r"[0-9a-fA-F]{32}", raw.replace("-", "")):
-            self._resolved_user = raw
-            return raw
-        users = self._request("GET", "/Users") or []
-        for u in users:
-            if str(u.get("Name", "")).lower() == raw.lower() and u.get("Id"):
-                self._resolved_user = u["Id"]
-                return u["Id"]
-        raise JellyfinUnavailable(
-            f"JELLYFIN_USER_ID ({raw!r}) is not a Jellyfin user id or user name. "
-            "Find the id in Jellyfin: Dashboard > Users > your user (it's in the page address)."
-        )
+        self._resolved_user = self.resolve_user(raw)
+        return self._resolved_user
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         self._require()
@@ -479,6 +508,14 @@ class JellyfinPlayback:
         except Exception as e:
             raise JellyfinUnavailable(f"Jellyfin could not be reached ({type(e).__name__}).") from e
 
+    def _send_status(self, method: str, path: str, **kwargs: Any) -> int:
+        """Like _send but answers the HTTP status (a connection failure still raises JellyfinUnavailable)."""
+        self._require()
+        try:
+            return int(self.jf.session.request(method, f"{self.jf.base_url}{path}", timeout=15, **kwargs).status_code)
+        except Exception as e:
+            raise JellyfinUnavailable(f"Jellyfin could not be reached ({type(e).__name__}).") from e
+
     def item_details(self, jf_id: str) -> Dict[str, Any]:
         """The Jellyfin item for our user (UserData, episode numbers). {} if it cannot be read."""
         try:
@@ -495,7 +532,13 @@ class JellyfinPlayback:
         position_seconds: float,
         paused: bool = False,
         play_method: str = "DirectPlay",
+        user: Optional[str] = None,
     ) -> None:
+        """Tell Jellyfin where the viewer is: the session report as before M4 (Jellyfin's own housekeeping,
+        e.g. ending a transcode). With `user` (a configured person's Jellyfin user, M4) the position is
+        also written to that user's UserData, so "Both of us" can report one playback to two users.
+        The user-scoped PlayingItems endpoints are not used: Jellyfin 10.11 ignores their userId and
+        attributes them to the caller's session (the API key), not to the user."""
         paths = {
             "start": "/Sessions/Playing",
             "progress": "/Sessions/Playing/Progress",
@@ -503,16 +546,31 @@ class JellyfinPlayback:
         }
         if event not in paths:
             raise ValueError("event must be start, progress or stop")
+        ticks = seconds_to_ticks(position_seconds)
+        source = media_source_id or jf_id
         body = {
             "ItemId": jf_id,
-            "MediaSourceId": media_source_id or jf_id,
+            "MediaSourceId": source,
             "PlaySessionId": play_session_id,
-            "PositionTicks": seconds_to_ticks(position_seconds),
+            "PositionTicks": ticks,
             "IsPaused": bool(paused),
             "PlayMethod": play_method or "DirectPlay",
             "CanSeek": True,
         }
         self._send("POST", paths[event], json=body)
+        if user and event != "start":
+            uid = self.resolve_user(user, "northern_lights.people jellyfin_user_id")
+            status = self._send_status(
+                "POST",
+                f"/UserItems/{jf_id}/UserData",
+                params={"userId": uid},
+                json={
+                    "PlaybackPositionTicks": ticks,
+                    "LastPlayedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
+                },
+            )
+            if status >= 400:
+                raise JellyfinUnavailable(f"Jellyfin answered {status} when saving the position.")
 
     def set_played(self, jf_id: str, played: bool) -> None:
         if not valid_jellyfin_id(jf_id):
@@ -599,7 +657,12 @@ class JellyfinPlayback:
         subtitle_index: Optional[int] = None,
         start_seconds: float = 0.0,
         profile: Optional[Dict[str, Any]] = None,
+        prefer: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        """`prefer` ({audio_lang, subtitle_lang, subtitles_on}, from the viewer's prefs, M4) picks the
+        default tracks when the caller did not ask for any: audio in the preferred language, and a
+        subtitle track when subtitles are on by default (picture subtitles are burned in from the start;
+        a text track is reported as `default_subtitle_index` for the page to switch on)."""
         sources = item.get("sources") or []
         if not sources:
             raise ItemNotFound("This item has no media file.")
@@ -618,6 +681,29 @@ class JellyfinPlayback:
         if info.get("ErrorCode") or not media_sources:
             raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
         ms = media_sources[0]
+
+        default_subtitle_index = -1
+        if prefer and (audio_index is None or subtitle_index is None):
+            first = extract_tracks(ms, jf_id, ms.get("Id") or jf_id)
+            want_audio, want_sub = audio_index, subtitle_index
+            if audio_index is None:
+                pick = pick_audio_index(first["audio_tracks"], prefer.get("audio_lang"))
+                if pick is not None and pick != ms.get("DefaultAudioStreamIndex"):
+                    want_audio = pick
+            if subtitle_index is None and prefer.get("subtitles_on"):
+                track = pick_subtitle_track(first["subtitle_tracks"], prefer.get("subtitle_lang"))
+                if track is not None:
+                    if track.get("kind") == "image":
+                        want_sub = track["index"]
+                    else:
+                        default_subtitle_index = track["index"]
+            if want_audio != audio_index or want_sub != subtitle_index:
+                audio_index, subtitle_index = want_audio, want_sub
+                info = self.playback_info(jf_id, profile, audio_index, subtitle_index, start_seconds)
+                media_sources = info.get("MediaSources") or []
+                if info.get("ErrorCode") or not media_sources:
+                    raise NotPlayable(f"Jellyfin cannot play this file ({info.get('ErrorCode') or 'no media source'}).")
+                ms = media_sources[0]
 
         # A non-default audio track or burned-in subtitles cannot come from the file itself:
         # make Jellyfin transcode (it still copies the video when the browser can take it).
@@ -700,6 +786,7 @@ class JellyfinPlayback:
             "episode": episode,
             "audio_index": selected_audio,
             "subtitle_index": subtitle_index if subtitle_index is not None else -1,
+            "default_subtitle_index": default_subtitle_index,
             "resume_seconds": resume_ticks / _TICKS,
             "played": bool(user_data.get("Played")),
             **tracks,

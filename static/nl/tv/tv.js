@@ -428,10 +428,63 @@
     window.NLFocus.start();
   }
 
+  /* ------------------------------------------------------------- who, me */
+
+  function initWho() {
+    setStatus("");
+    window.NLFocus.remember(false);
+    window.NLFocus.start();
+  }
+
+  function langName(code) {
+    var list = window.NLPrefs.languages;
+    for (var i = 0; i < list.length; i++) { if (list[i][0] === code) { return list[i][1]; } }
+    return code ? code.toUpperCase() : "No preference";
+  }
+  // OK steps through "No preference" then each language; a D-pad has no dropdown.
+  function nextLang(code) {
+    var codes = [""].concat(window.NLPrefs.languages.map(function (l) { return l[0]; }));
+    var at = codes.indexOf(code || "");
+    return codes[(at + 1) % codes.length];
+  }
+
+  function initMe() {
+    var audio = document.getElementById("tv-pref-audio");
+    var sub = document.getElementById("tv-pref-sub");
+    var on = document.getElementById("tv-pref-on");
+    var status = document.getElementById("tv-pref-status");
+    setStatus("");
+    var prefs = null;
+    function paint() {
+      audio.textContent = "Audio language: " + langName(prefs.audio_lang);
+      sub.textContent = "Subtitle language: " + langName(prefs.subtitle_lang);
+      on.textContent = "";
+      on.appendChild(document.createTextNode("Subtitles on by default "));
+      on.appendChild(el("span", "tv-switch-state", prefs.subtitles_on ? "On" : "Off"));
+      on.setAttribute("aria-checked", String(!!prefs.subtitles_on));
+    }
+    function save(patch) {
+      Object.assign(prefs, patch);
+      paint();
+      status.textContent = "Saving…";
+      window.NLPrefs.save(patch).then(function () { status.textContent = "Saved"; });
+    }
+    window.NLPrefs.get().then(function (p) {
+      prefs = Object.assign({}, p);
+      paint();
+      window.NLFocus.start();
+    });
+    audio.addEventListener("click", function () { if (prefs) { save({ audio_lang: nextLang(prefs.audio_lang) || null }); } });
+    sub.addEventListener("click", function () { if (prefs) { save({ subtitle_lang: nextLang(prefs.subtitle_lang) || null }); } });
+    on.addEventListener("click", function () { if (prefs) { save({ subtitles_on: !prefs.subtitles_on }); } });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
   else if (page === "title") { initTitle(); }
   else if (page === "show") { initShow(); }
   else if (page === "search") { initSearch(); }
+  else if (page === "who") { initWho(); }
+  else if (page === "me") { initMe(); }
 })();

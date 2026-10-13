@@ -12,10 +12,11 @@
 <body class="tv-page-{{ page }}" data-page="{{ page }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
   <header class="tv-bar">
     <a class="tv-brand" href="/nl/tv/" aria-label="Northern Lights home">Northern Lights</a>
-    <nav class="tv-nav" data-nl-row="nav" data-nl-skip-initial aria-label="Sections">
+    {% if page != 'who' %}<nav class="tv-nav" data-nl-row="nav" data-nl-skip-initial aria-label="Sections">
       <a class="tv-pill" data-nl-focus href="/nl/tv/">Home</a>
       <a class="tv-pill" data-nl-focus href="/nl/tv/search">Search</a>
-    </nav>
+      {% if people_configured and viewer %}<a class="tv-pill" data-nl-focus href="/nl/tv/me" aria-label="{{ viewer.label }}: languages and who's watching">{{ viewer.label }}</a>{% endif %}
+    </nav>{% endif %}
     <span class="tv-foil" aria-hidden="true"></span>
   </header>
   <main id="tv-main">
@@ -24,6 +25,7 @@
   </main>
   <script src="/static/nl/nl.js"></script>
   <script src="/static/nl/tv/focus.js"></script>
+  <script src="/static/nl/prefs.js"></script>
   <script src="/static/nl/subtitles.js"></script>
   <script src="/static/nl/tv/tv.js"></script>
 </body>

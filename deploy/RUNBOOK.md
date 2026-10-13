@@ -97,6 +97,18 @@ GitHub → Actions → **Deploy** → Run workflow → branch `main` → Run. Wh
    sudo bash ~/couchcinema-deploy/bootstrap.sh --set JELLYFIN_USER_ID=PASTE_ID_HERE
    ```
 
+### 6b. A second Jellyfin user for "Who's watching" **[Labiba]** (optional, Northern Lights M4)
+Skip this and the player works as before with the single user from step 6. To give the two of you separate progress, languages and a "Both of us" button:
+1. Jellyfin → Dashboard → Users → **+**: add a user for your partner (not an administrator; enable access to the Movies and Shows libraries; the password is only for Jellyfin's own apps, Northern Lights never asks for it).
+2. Print both ids (same command as step 6, it lists every user):
+   ```
+   curl -s -H 'Authorization: MediaBrowser Token="PASTE_KEY_HERE"' http://localhost:8096/Users \
+     | python3 -c 'import json,sys; [print(u["Name"], u["Id"]) for u in json.load(sys.stdin)]'
+   ```
+3. In the repo, edit `deploy/config.server.yaml` (it has the block commented out): uncomment `northern_lights:` and fill in the two ids and the names you want on the screen (the partner's name is whatever you type; nothing is hard-coded). `profile_id` 1 and 2 are the two profiles of the Rate tab. A user *name* works in place of the id. Commit and deploy as usual: every deploy copies that file over `/srv/couchcinema/config.server.yaml`, so editing the copy on `mars` would be undone by the next deploy. (Jellyfin user ids are not secrets.)
+4. After the deploy, open `http://mars:8000/nl/`: you get "Who's watching?". Check once: play something as "Both of us" for a minute, then look in Jellyfin (Dashboard → Users → each user → Continue Watching, or each user's own web page) that **both** users show it.
+To go back to one viewer, comment the block out again.
+
 ### 7. Prowlarr indexers **[Labiba]**
 Open `http://mars:9696`, set a username and password when it asks, and add your indexers (the
 new Prowlarr starts empty; your Mac's indexers do not come across). The app already has the

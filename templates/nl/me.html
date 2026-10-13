@@ -1,0 +1,20 @@
+{% extends "nl/base.html" %}
+{% block title %}{{ viewer.label }} - Northern Lights{% endblock %}
+{% block main %}
+  <div class="nl-page-head">
+    <h1>{{ viewer.label }}</h1>
+    {% if people_configured %}<p class="nl-sub"><a href="/nl/who?next=/nl/">{% if viewer.both %}Change who&rsquo;s watching{% else %}Not {{ viewer.label }}? Switch who&rsquo;s watching{% endif %}</a></p>{% endif %}
+  </div>
+  <section class="nl-me" aria-labelledby="nl-me-h">
+    <h2 id="nl-me-h">Languages</h2>
+    <p class="nl-sub">Used when a film starts. You can still change tracks in the player.</p>
+    <form id="nl-prefs-form" class="nl-prefs" autocomplete="off">
+      <label class="nl-field"><span>Audio language</span><select id="nl-pref-audio"></select></label>
+      <label class="nl-field"><span>Subtitle language</span><select id="nl-pref-sub"></select></label>
+      <label class="nl-switch"><button id="nl-pref-on" class="nl-switch-btn" type="button" role="switch" aria-checked="false"><span class="nl-switch-knob"></span></button>
+        <span class="nl-switch-label">Subtitles on by default</span></label>
+      <p id="nl-pref-status" class="nl-note" role="status"></p>
+    </form>
+  </section>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/prefs.js"></script><script src="/static/nl/me.js"></script>{% endblock %}

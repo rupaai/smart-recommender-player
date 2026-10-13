@@ -11,8 +11,9 @@
  *     onClose: fn()
  *   });
  *
- * The search language is saved per device in localStorage (nl.subLang), English by default.
- * (M4 should move it to the per-person prefs.) Everything that comes from the network goes in
+ * The search language is the person's (NLPrefs, M4: saved on the server per person; localStorage nl.subLang
+ * is only the fallback / migration source), else their preferred subtitle language, else English.
+ * Everything that comes from the network goes in
  * through textContent. While open, the panel handles every key itself (arrows, OK, Back). */
 (function (global) {
   "use strict";
@@ -46,7 +47,8 @@
     return code.toUpperCase();
   }
   function savedLang() {
-    var v = lsGet(LANG_KEY);
+    var p = global.NLPrefs ? global.NLPrefs.peek() : null;
+    var v = (p && (p.search_lang || p.subtitle_lang)) || lsGet(LANG_KEY);
     return v && /^[a-z]{3}$/.test(v) ? v : DEFAULT_LANG;
   }
 
@@ -157,7 +159,7 @@
           b.appendChild(el("span", "nls-name", l[1]));
           b.addEventListener("click", function () {
             state.lang = l[0];
-            lsSet(LANG_KEY, l[0]);
+            if (global.NLPrefs) { global.NLPrefs.save({ search_lang: l[0] }); } else { lsSet(LANG_KEY, l[0]); }
             state.view = "results";
             search();
           });

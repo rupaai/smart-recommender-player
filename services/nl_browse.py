@@ -222,8 +222,23 @@ class NLBrowse:
         if changed:
             self.db.set_jellyfin_ids(changed)
 
-    def resume_cards(self) -> List[Dict[str, Any]]:
-        """Continue Watching. [] when Jellyfin is not available."""
+    def resume_cards(self, users: Optional[List[Optional[str]]] = None) -> List[Dict[str, Any]]:
+        """Continue Watching. [] when Jellyfin is not available. With several `users` ("Both of us",
+        M4) the lists are merged: a title either of them is part way through shows once, at the
+        further position. With none given, the current Jellyfin user (see JellyfinPlayback.as_user)."""
+        if not users or len(users) < 2:
+            return self._resume_cards_one()
+        merged: Dict[int, Dict[str, Any]] = {}
+        for u in users:
+            with self.pb.as_user(u):
+                cards = self._resume_cards_one()
+            for c in cards:
+                old = merged.get(c["media_item_id"])
+                if old is None or c["resume_seconds"] > old["resume_seconds"]:
+                    merged[c["media_item_id"]] = c
+        return list(merged.values())
+
+    def _resume_cards_one(self) -> List[Dict[str, Any]]:
         try:
             data = self.pb._request(
                 "GET", f"/Users/{self._uid()}/Items/Resume",
@@ -283,14 +298,17 @@ class NLBrowse:
         exists = self.pb.file_exists
         return [r for r in self.db.get_library_items(media_type) if any(exists(p) for p in r.get("file_paths") or [])]
 
-    def library(self, media_type: str, limit: Optional[int] = None, with_progress: bool = True) -> List[Dict[str, Any]]:
+    def library(
+        self, media_type: str, limit: Optional[int] = None, with_progress: bool = True,
+        users: Optional[List[Optional[str]]] = None,
+    ) -> List[Dict[str, Any]]:
         """Cards for movies or shows. Movies carry a progress bar when partly watched, else
         "New" for the latest additions. One badge at most."""
         rows = self._on_disk(media_type)
         mark_new(rows)
         progress: Dict[int, int] = {}
         if with_progress and media_type == "movie":
-            progress = {c["media_item_id"]: c["progress"] for c in self.resume_cards() if c["kind"] == "movie"}
+            progress = {c["media_item_id"]: c["progress"] for c in self.resume_cards(users) if c["kind"] == "movie"}
         if limit:
             rows = sorted(rows, key=lambda r: r.get("added_at") or "", reverse=True)[:limit]
         return [self._card(r, progress.get(r["id"])) for r in rows]
@@ -316,8 +334,8 @@ class NLBrowse:
             "href": f"/nl/{'show' if is_show else 'title'}/{row['id']}",
         }
 
-    def home(self) -> Dict[str, Any]:
-        cont = self.resume_cards()
+    def home(self, users: Optional[List[Optional[str]]] = None) -> Dict[str, Any]:
+        cont = self.resume_cards(users)
         progress = {c["media_item_id"]: c["progress"] for c in cont if c["kind"] == "movie"}
         out: Dict[str, Any] = {"continue_watching": cont}
         for key, mtype in (("movies", "movie"), ("shows", "tv")):
@@ -331,7 +349,7 @@ class NLBrowse:
 
     # ---------------------------------------------------------------- details
 
-    def title(self, item_id: int) -> Optional[Dict[str, Any]]:
+    def title(self, item_id: int, users: Optional[List[Optional[str]]] = None) -> Optional[Dict[str, Any]]:
         item = self.db.get_nl_title(item_id)
         if not item:
             return None
@@ -379,7 +397,7 @@ class NLBrowse:
         if jf_id:
             base["backdrop"] = image_url(jf_id, "Backdrop", 1280)
             base["image_fallback"] = image_url(jf_id, "Primary", 500)
-            details = self.pb.item_details(jf_id)
+            details = self._further_details(jf_id, users)
             if details:
                 st = progress_of(details)
                 base.update(jellyfin=True, played=st["played"], progress=st["progress"], resume_seconds=st["position_seconds"])
@@ -388,6 +406,21 @@ class NLBrowse:
         base["resume_href"] = play_href(item["id"], resume=True)
         base["restart_href"] = play_href(item["id"], resume=False)
         return base
+
+    def _further_details(self, jf_id: str, users: Optional[List[Optional[str]]]) -> Dict[str, Any]:
+        """The Jellyfin item for the current user; for "Both of us" the one of the two who is further in."""
+        if not users or len(users) < 2:
+            return self.pb.item_details(jf_id)
+        best: Dict[str, Any] = {}
+        best_pos = -1.0
+        for u in users:
+            with self.pb.as_user(u):
+                details = self.pb.item_details(jf_id)
+            st = progress_of(details) if details else None
+            pos = -1.0 if st is None else (st["position_seconds"] if not st["played"] else 0.0)
+            if details and (pos > best_pos or not best):
+                best, best_pos = details, pos
+        return best
 
     def show(self, item_id: int) -> Optional[Dict[str, Any]]:
         """Seasons, episodes with watched state and the Next up episode for one show."""

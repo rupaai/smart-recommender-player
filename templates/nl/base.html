@@ -17,6 +17,7 @@
         <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
         <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
       </nav>
+      {% if people_configured and viewer %}<a class="nl-viewer" href="/nl/me"{% if active == 'me' %} aria-current="page"{% endif %} aria-label="{{ viewer.label }}: languages and who's watching">{{ viewer.label }}</a>{% endif %}
       <form class="nl-search" id="nl-search-form" role="search" autocomplete="off">
         <label class="nl-visually-hidden" for="nl-q">Search movies, shows and episodes</label>
         <input id="nl-q" name="q" type="search" placeholder="Search movies, shows, episodes" enterkeyhint="search"
@@ -35,6 +36,7 @@
     <a href="/nl/"{% if active == 'home' %} aria-current="page"{% endif %}>Home</a>
     <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
     <a href="/nl/shows"{% if active == 'shows' %} aria-current="page"{% endif %}>Shows</a>
+    {% if people_configured and viewer %}<a href="/nl/me"{% if active == 'me' %} aria-current="page"{% endif %}>{{ viewer.label }}</a>{% endif %}
   </nav>
 
   <script src="/static/nl/nl.js"></script>
