@@ -57,6 +57,7 @@ from services.jellyfin_playback import (
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
+from services import nl_downloads
 from services import nl_reactions
 from services import nl_together
 from services.nl_choose import NLChoose, clean_tz
@@ -144,6 +145,7 @@ def reload_models() -> None:
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
 torrent_downloader = TorrentDownloader(config, db_manager=db)
+download_requests = nl_downloads.DownloadRequests()   # M10a: what Retry needs; the magnet link never leaves the server
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
@@ -1703,6 +1705,60 @@ async def nl_veto_clear(item_id: int, request: Request, kind: str = Query("never
         raise _picks_error(e) from e
 
 
+# --- Northern Lights downloads (M10a): the same downloader and store as the old Download tab ---
+def _nl_downloads_payload() -> Dict[str, Any]:
+    snapshot = dict(downloads_store)
+    briefs = db.get_download_briefs([i for i in snapshot if isinstance(i, int)])
+    return nl_downloads.build_list(
+        snapshot,
+        download_requests,
+        lambda i: briefs.get(i),
+        lambda i: bool((briefs.get(i) or {}).get("has_file")),
+    )
+
+
+@app.get("/api/nl/downloads")
+async def nl_downloads_list() -> Dict[str, Any]:
+    """Every download the downloader knows: queued, downloading (speed and time left), importing, ready
+    (with a Play link) or failed (with a plain-words reason and Retry). No magnet links, no file paths."""
+    return await asyncio.to_thread(_nl_downloads_payload)
+
+
+@app.post("/api/nl/downloads/{item_id}/retry")
+async def nl_downloads_retry(item_id: int) -> Dict[str, Any]:
+    """Starts a failed or stopped download again from the link it was first started with."""
+    entry = downloads_store.get(item_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="That download isn't in the list any more.")
+    if nl_downloads.state_of(entry) not in nl_downloads.RETRY_STATES:
+        raise HTTPException(status_code=409, detail="That download is not stopped, so there is nothing to retry.")
+    req = download_requests.get(item_id)
+    if req is None:
+        raise HTTPException(
+            status_code=404,
+            detail="The app was restarted since this started, so it no longer has the link. Search for the title again.",
+        )
+    downloads_store[item_id] = {"movie_id": item_id, "status": "connecting", "progress": 0.0, "error": None,
+                                "name": req["title"], "media_type": req["media_type"]}
+    asyncio.create_task(
+        torrent_downloader.download(req["magnet"], item_id, req["title"], media_type=req["media_type"])
+    )
+    return {"success": True, "id": item_id}
+
+
+@app.delete("/api/nl/downloads/{item_id}")
+async def nl_downloads_dismiss(item_id: int) -> Dict[str, Any]:
+    """Clears a failed, stopped or finished download from the list (the record only; files are never touched)."""
+    entry = downloads_store.get(item_id)
+    if entry is None:
+        return {"success": True}
+    if nl_downloads.state_of(entry) not in nl_downloads.DISMISS_STATES:
+        raise HTTPException(status_code=409, detail="That download is still running.")
+    downloads_store.pop(item_id, None)
+    download_requests.forget(item_id)
+    return {"success": True}
+
+
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
     return _nl_page(request, "nl/home.html", {"active": "home"})
@@ -1736,6 +1792,11 @@ async def nl_watchlist_page(request: Request) -> Any:
 @app.get("/nl/choose", response_class=HTMLResponse)
 async def nl_choose_page(request: Request) -> Any:
     return _nl_page(request, "nl/choose.html", {"active": "choose"})
+
+
+@app.get("/nl/downloads", response_class=HTMLResponse)
+async def nl_downloads_page(request: Request) -> Any:
+    return _nl_page(request, "nl/downloads.html", {"active": "downloads"})
 
 
 @app.get("/nl/me", response_class=HTMLResponse)
@@ -1772,6 +1833,11 @@ async def nl_tv_watchlist(request: Request) -> Any:
 @app.get("/nl/tv/choose", response_class=HTMLResponse)
 async def nl_tv_choose(request: Request) -> Any:
     return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, tv=True)
+
+
+@app.get("/nl/tv/downloads", response_class=HTMLResponse)
+async def nl_tv_downloads(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, tv=True)
 
 
 @app.get("/nl/tv/me", response_class=HTMLResponse)
@@ -2410,6 +2476,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
 
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
+        download_requests.remember(movie_id, req.magnet_link, clean_movie_title, req.media_type)
         asyncio.create_task(
             torrent_downloader.download(
                 req.magnet_link,
