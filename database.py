@@ -1427,6 +1427,22 @@ class DatabaseManager:
             item["added_at"] = max((s["created_at"] or "") for s in item["sources"]) or None
             return item
 
+    def get_download_briefs(self, item_ids: List[int]) -> Dict[int, Dict[str, Any]]:
+        """{id: {title, media_type, has_file}} for the Downloads screen (M10a); unknown ids are left out.
+        `has_file` = the title has a registered source file, i.e. it can be played."""
+        ids = [int(i) for i in dict.fromkeys(item_ids) if isinstance(i, int) and i > 0]
+        if not ids:
+            return {}
+        marks = ",".join("?" for _ in ids)
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT mi.id, mi.title, mi.media_type, "
+                f"(SELECT COUNT(*) FROM media_sources ms WHERE ms.media_item_id = mi.id) AS files "
+                f"FROM media_items mi WHERE mi.id IN ({marks});",
+                ids,
+            ).fetchall()
+        return {r["id"]: {"title": r["title"], "media_type": r["media_type"], "has_file": r["files"] > 0} for r in rows}
+
     def get_sources_by_paths(self, paths: List[str]) -> Dict[str, Dict[str, Any]]:
         """{file_path: source row + media_type/title of its item} for the exact paths given."""
         paths = [p for p in dict.fromkeys(paths) if p]

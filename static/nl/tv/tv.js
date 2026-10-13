@@ -896,6 +896,13 @@
     window.NLChoose.mount(document.getElementById("tv-choose"), { tv: true, href: tvHref, status: setStatus });
   }
 
+  /* ----------------------------------------------------------- downloads (M10a) */
+
+  function initDownloads() {
+    window.NLFocus.remember(false);
+    window.NLDownloads.mount(document.getElementById("tv-downloads"), { tv: true, href: tvHref, status: setStatus });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -906,4 +913,5 @@
   else if (page === "me") { initMe(); }
   else if (page === "watchlist") { initWatchlist(); }
   else if (page === "choose") { initChoose(); }
+  else if (page === "downloads") { initDownloads(); }
 })();
