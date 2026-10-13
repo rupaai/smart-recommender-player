@@ -148,6 +148,7 @@ class DatabaseManager:
             self._migrate_v17_nl_together(cursor)
             self._migrate_v18_nl_choosing(cursor)
             self._migrate_v19_nl_spoilers(cursor)
+            self._migrate_v20_nl_settings(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -920,6 +921,25 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 19;")
             print("[Database] Migration v19 applied: nl_person_prefs.hide_spoilers added.")
 
+    def _migrate_v20_nl_settings(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M10c (playback and display settings), all on nl_person_prefs and all NULL = "not set":
+
+          skip_seconds   10 / 15 / 30 / 60: how far the skip buttons jump
+          autoplay       0 / 1: start the next episode by itself, for shows with no switch of their own (NULL = on)
+          quality_kbps   8000 / 4000 / 2000 / 1000: highest stream rate to ask Jellyfin for (NULL = Auto)
+          picture_fit    fit / fill / original
+
+        Additive only (ALTER TABLE ... ADD COLUMN).
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {r[1] for r in cursor.execute("PRAGMA table_info(nl_person_prefs);").fetchall()}
+        for name, kind in (("skip_seconds", "INTEGER"), ("autoplay", "INTEGER"), ("quality_kbps", "INTEGER"), ("picture_fit", "TEXT")):
+            if name not in cols:
+                cursor.execute(f"ALTER TABLE nl_person_prefs ADD COLUMN {name} {kind};")
+        if version < 20:
+            cursor.execute("PRAGMA user_version = 20;")
+            print("[Database] Migration v20 applied: nl_person_prefs.skip_seconds/autoplay/quality_kbps/picture_fit added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1487,6 +1507,14 @@ class DatabaseManager:
                 changed += cur.rowcount
         return changed
 
+    def get_show_autoplay_row(self, media_item_id: int) -> Optional[bool]:
+        """The show's own autoplay switch, or None when nobody ever touched it (M10c: then the person's default applies)."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT autoplay FROM nl_show_prefs WHERE media_item_id = ?;", (media_item_id,)
+            ).fetchone()
+        return None if row is None else bool(row["autoplay"])
+
     def get_show_autoplay(self, media_item_id: int) -> bool:
         """Autoplay of the next episode for this show; on unless it was switched off."""
         with self.get_connection() as conn:
@@ -1729,18 +1757,23 @@ class DatabaseManager:
             "sub_style": style,
             "search_lang": row["search_lang"],
             "hide_spoilers": None if row["hide_spoilers"] is None else bool(row["hide_spoilers"]),
+            "skip_seconds": row["skip_seconds"],
+            "autoplay": None if row["autoplay"] is None else bool(row["autoplay"]),
+            "quality_kbps": row["quality_kbps"],
+            "picture_fit": row["picture_fit"],
         }
 
     def set_person_prefs(self, person_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         """Updates the given (already validated) pref fields and leaves the others alone."""
-        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang", "hide_spoilers")
+        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang", "hide_spoilers",
+                   "skip_seconds", "autoplay", "quality_kbps", "picture_fit")
         values: Dict[str, Any] = {}
         for key in allowed:
             if key in fields:
                 v = fields[key]
                 if key == "sub_style":
                     v = json.dumps(v, separators=(",", ":")) if v else None
-                elif key in ("subtitles_on", "hide_spoilers"):
+                elif key in ("subtitles_on", "hide_spoilers", "autoplay"):
                     v = None if v is None else (1 if v else 0)
                 values[key] = v
         with self.get_connection() as conn:

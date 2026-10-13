@@ -60,6 +60,7 @@ from services.nl_picks import NLPicks, PicksError, parse_max_runtime
 from services import nl_downloads
 from services import nl_health
 from services import nl_reactions
+from services import nl_settings
 from services import nl_together
 from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
@@ -916,12 +917,13 @@ async def nl_play_info(
     caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
     source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
     client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
+    max_kbps: Optional[int] = Query(None, ge=0, le=200000, description="Quality for this viewing: 8000, 4000, 2000 or 1000 kbit/s; 0 = Auto; absent = the person's default"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
     default tracks from their language prefs, and Resume from their own progress (the further of the
     two for "Both of us", with a note when they are in different places)."""
-    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client)
+    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client, max_kbps)
 
 
 async def _nl_play(
@@ -933,9 +935,22 @@ async def _nl_play(
     caps: Optional[str],
     source: Optional[int],
     client: Optional[str],
+    max_kbps: Optional[int] = None,
 ) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
-    prefer = _nl_effective_prefs(viewer).public()
+    prefs = _nl_effective_prefs(viewer)
+    prefer = prefs.public()
+    # M10c, P19: this viewing's quality (the Picture menu) wins, else the person's default; 0 = Auto.
+    if max_kbps is None:
+        quality = prefs.quality_kbps
+    elif max_kbps == 0:
+        quality = None
+    elif nl_settings.valid_quality(max_kbps):
+        quality = max_kbps
+    else:
+        raise HTTPException(status_code=400, detail="Quality must be 8000, 4000, 2000 or 1000 (kbit/s), or 0 for Auto.")
+    if client == "cast":
+        quality = None   # the Chromecast has its own profile ceiling
     item = db.get_nl_title(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
@@ -948,7 +963,8 @@ async def _nl_play(
     try:
         profile = profile_for(client, caps)
         info = await asyncio.to_thread(
-            _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer
+            _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer,
+            quality, "This TV" if client == "tv" else ("This Chromecast" if client == "cast" else "This browser"),
         )
         states: Dict[str, Dict[str, Any]] = {}
         if nl_people.configured and info.get("jellyfin_id"):
@@ -959,6 +975,7 @@ async def _nl_play(
         raise HTTPException(status_code=503, detail=str(e))
     except NotPlayable as e:
         raise HTTPException(status_code=415, detail=str(e))
+    info["quality"] = {**(info.get("quality") or {}), "default_kbps": prefs.quality_kbps, "options": nl_settings.quality_options()}
     info["media_item_id"] = item_id
     info["media_type"] = item.get("media_type") or "movie"
     info["source_id"] = chosen["id"]
@@ -1004,12 +1021,12 @@ async def nl_cast_play(
     return cast_payload(info, nl_cast, nl_cast_tokens)
 
 
-def _stream_for_viewer(item, audio, subtitle, start, profile, prefer):
+def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser"):
     if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on")):
         prefer = None
     if prefer:
-        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer)
-    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile)
+        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device)
+    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device)
 
 
 def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -1398,6 +1415,7 @@ async def nl_show_data(item_id: int, request: Request) -> Dict[str, Any]:
     if not data:
         raise HTTPException(status_code=404, detail="That show isn't in the library.")
     await asyncio.to_thread(_add_together_to_show, data, item_id, viewer)
+    data["autoplay"] = await asyncio.to_thread(_autoplay_for, item_id, viewer, data.get("autoplay"))
     return data
 
 
@@ -1553,7 +1571,19 @@ async def nl_player_extras(
 async def nl_next_episode(request: Request, item_id: int, source: int = Query(..., ge=1)) -> Dict[str, Any]:
     """The episode after `source` for the player's next-episode card (has_next false at the end)."""
     viewer = _nl_viewer_or_default(request)
-    return await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.next_episode, item_id, source)
+    data = await asyncio.to_thread(_as_user, viewer.jellyfin_users[0], nl_browse.next_episode, item_id, source)
+    if isinstance(data, dict) and "autoplay" in data:
+        data["autoplay"] = await asyncio.to_thread(_autoplay_for, item_id, viewer, data["autoplay"])
+    return data
+
+
+def _autoplay_for(item_id: int, viewer: Viewer, fallback: Any) -> bool:
+    """Start the next episode by itself? The show's own switch if anyone ever set it, else this viewer's default
+    (M10c, H5; on unless they turned it off)."""
+    own = db.get_show_autoplay_row(item_id)
+    if own is not None:
+        return own
+    return bool(_nl_effective_prefs(viewer).autoplay)
 
 
 @app.get("/api/nl/search")
