@@ -202,7 +202,7 @@ class PeopleJellyfin(nl_fake.FakeJellyfin):
             LAB: [self._item("jfA", ALPHA, 40, "Movie", "Alpha", 100)],
             PAR: [self._item("jfA", ALPHA, 45, "Movie", "Alpha", 100), self._item("jfS1E2", EPS[(1, 2)], 25, "Episode", "Second", 50)],
         }
-        self.reports = []        # (method, path, params) for /Users/x/PlayingItems and PlayedItems
+        self.reports = []        # (method, path, params|json) for UserData writes (/UserData/<uid>/<item>) and PlayedItems
         self.session_reports = []
         self.fail_users = set()
         self.playback_bodies = []
@@ -217,6 +217,13 @@ class PeopleJellyfin(nl_fake.FakeJellyfin):
         params = kw.get("params") or {}
         if self.down:
             return super().request(method, url, **kw)
+        mu = re.match(r"^/UserItems/(\w+)/UserData$", path)
+        if mu and method == "POST":
+            uid = params.get("userId")
+            self.reports.append((method, f"/UserData/{uid}/{mu.group(1)}", dict(kw.get("json") or {})))
+            if uid in self.fail_users:
+                return FakeResponse(500, json_data={})
+            return FakeResponse(json_data={})
         m = re.match(r"^/Users/([0-9a-f]{32})/(.*)$", path)
         if m:
             uid, rest = m.group(1), m.group(2)
@@ -387,26 +394,31 @@ def run(tmp):
     fake.reports.clear()
     fake.session_reports.clear()
     r = client.post("/api/nl/progress", json=body, headers=cookie("labiba"))
-    check("Labiba: one report, to her user", r.status_code == 200 and [p for _, p, _ in fake.reports] == [f"/Users/{LAB}/PlayingItems/jfA/Progress"] and fake.session_reports == [], fake.reports)
+    UD = lambda uid: f"/UserData/{uid}/jfA"  # noqa: E731
+    check("Labiba: her position saved to her user, plus the one session report", r.status_code == 200 and [p for _, p, _ in fake.reports] == [UD(LAB)]
+          and [p for _, p, _ in fake.session_reports] == ["/Sessions/Playing/Progress"], (fake.reports, fake.session_reports))
     prm = fake.reports[0][2]
-    check("... with the position in ticks, pause state and session", prm["PositionTicks"] == 615000000 and prm["IsPaused"] == "true" and prm["PlaySessionId"] == "ps1" and prm["MediaSourceId"] == "ms1", prm)
+    check("... with the position in ticks and a played date", prm["PlaybackPositionTicks"] == 615000000 and prm["LastPlayedDate"].endswith("Z"), prm)
     fake.reports.clear()
     r = client.post("/api/nl/progress", json=body, headers=cookie("partner"))
-    check("the partner: one report, to their user only", [p for _, p, _ in fake.reports] == [f"/Users/{PAR}/PlayingItems/jfA/Progress"], fake.reports)
+    check("the partner: saved to their user only", [p for _, p, _ in fake.reports] == [UD(PAR)], fake.reports)
     fake.reports.clear()
     r = client.post("/api/nl/progress", json=body, headers=cookie("both"))
-    check("Both of us: the same playback reported to both users", r.status_code == 200 and sorted(p for _, p, _ in fake.reports) ==
-          sorted([f"/Users/{LAB}/PlayingItems/jfA/Progress", f"/Users/{PAR}/PlayingItems/jfA/Progress"]), fake.reports)
-    check("... with the same position for both", {x[2]["PositionTicks"] for x in fake.reports} == {615000000})
-    for event, method, suffix in (("start", "POST", ""), ("stop", "DELETE", "")):
-        fake.reports.clear()
-        client.post("/api/nl/progress", json={**body, "event": event}, headers=cookie("both"))
-        check(f"{event} reaches both users ({method})", sorted((m, p) for m, p, _ in fake.reports) ==
-              sorted([(method, f"/Users/{LAB}/PlayingItems/jfA"), (method, f"/Users/{PAR}/PlayingItems/jfA")]), fake.reports)
+    check("Both of us: the same position saved for both users", r.status_code == 200 and sorted(p for _, p, _ in fake.reports) ==
+          sorted([UD(LAB), UD(PAR)]), fake.reports)
+    check("... with the same position for both", {x[2]["PlaybackPositionTicks"] for x in fake.reports} == {615000000})
+    fake.reports.clear()
+    fake.session_reports.clear()
+    client.post("/api/nl/progress", json={**body, "event": "start"}, headers=cookie("both"))
+    check("start: session reports only, no position written", fake.reports == [] and fake.session_reports
+          and all(p == "/Sessions/Playing" for _, p, _ in fake.session_reports), (fake.reports, fake.session_reports))
+    fake.reports.clear()
+    client.post("/api/nl/progress", json={**body, "event": "stop"}, headers=cookie("both"))
+    check("stop saves the position for both users", sorted(p for _, p, _ in fake.reports) == sorted([UD(LAB), UD(PAR)]), fake.reports)
     fake.reports.clear()
     fake.fail_users = {PAR}
     r = client.post("/api/nl/progress", json=body, headers=cookie("both"))
-    check("Both: if one user's report fails the other still lands and the request succeeds", r.status_code == 200 and any(LAB in p for _, p, _ in fake.reports), (r.status_code, fake.reports))
+    check("Both: if one user's save fails the other still lands and the request succeeds", r.status_code == 200 and UD(LAB) in [p for _, p, _ in fake.reports], (r.status_code, fake.reports))
     fake.fail_users = {PAR, LAB}
     fake.session_reports.clear()
     r = client.post("/api/nl/progress", json=body, headers=cookie("both"))
@@ -414,10 +426,10 @@ def run(tmp):
     fake.fail_users = set()
     fake.reports.clear()
     client.post("/api/nl/progress", json=body)
-    check("no cookie in people mode: the first person (pages ask first)", [p for _, p, _ in fake.reports] == [f"/Users/{LAB}/PlayingItems/jfA/Progress"], fake.reports)
+    check("no cookie in people mode: the first person (pages ask first)", [p for _, p, _ in fake.reports] == [UD(LAB)], fake.reports)
     fake.reports.clear()
     client.post("/api/nl/progress", json=body, headers=cookie("stranger"))
-    check("an unknown cookie is handled like no cookie", [p for _, p, _ in fake.reports] == [f"/Users/{LAB}/PlayingItems/jfA/Progress"], fake.reports)
+    check("an unknown cookie is handled like no cookie", [p for _, p, _ in fake.reports] == [UD(LAB)], fake.reports)
     r = client.post("/api/nl/progress", json={**body, "jellyfin_id": "../x"}, headers=cookie("both"))
     check("a bad item id is still refused", r.status_code == 400)
     fake.reports.clear()

@@ -20,6 +20,7 @@ import posixpath
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import quote, unquote
 
@@ -533,9 +534,11 @@ class JellyfinPlayback:
         play_method: str = "DirectPlay",
         user: Optional[str] = None,
     ) -> None:
-        """Tell Jellyfin where the viewer is. With `user` (a configured person's Jellyfin user, M4) the
-        report is made for that user through the user-scoped playing endpoints, so "Both of us" can
-        report the same playback to two users; without it, the session endpoints as before M4."""
+        """Tell Jellyfin where the viewer is: the session report as before M4 (Jellyfin's own housekeeping,
+        e.g. ending a transcode). With `user` (a configured person's Jellyfin user, M4) the position is
+        also written to that user's UserData, so "Both of us" can report one playback to two users.
+        The user-scoped PlayingItems endpoints are not used: Jellyfin 10.11 ignores their userId and
+        attributes them to the caller's session (the API key), not to the user."""
         paths = {
             "start": "/Sessions/Playing",
             "progress": "/Sessions/Playing/Progress",
@@ -545,23 +548,6 @@ class JellyfinPlayback:
             raise ValueError("event must be start, progress or stop")
         ticks = seconds_to_ticks(position_seconds)
         source = media_source_id or jf_id
-        if user:
-            uid = self.resolve_user(user, "northern_lights.people jellyfin_user_id")
-            base = f"/Users/{uid}/PlayingItems/{jf_id}"
-            common = {"MediaSourceId": source, "PlaySessionId": play_session_id}
-            if event == "start":
-                status = self._send_status("POST", base, params={**common, "CanSeek": "true", "PlayMethod": play_method or "DirectPlay"})
-            elif event == "progress":
-                status = self._send_status("POST", base + "/Progress", params={
-                    **common, "PositionTicks": ticks, "IsPaused": "true" if paused else "false",
-                    "PlayMethod": play_method or "DirectPlay", "CanSeek": "true"})
-            else:
-                status = self._send_status("DELETE", base, params={**common, "PositionTicks": ticks})
-            if status < 400:
-                return
-            if status not in (404, 405):
-                raise JellyfinUnavailable(f"Jellyfin answered {status} for the playing report.")
-            # A Jellyfin without the user-scoped endpoint: use the session one.
         body = {
             "ItemId": jf_id,
             "MediaSourceId": source,
@@ -572,6 +558,19 @@ class JellyfinPlayback:
             "CanSeek": True,
         }
         self._send("POST", paths[event], json=body)
+        if user and event != "start":
+            uid = self.resolve_user(user, "northern_lights.people jellyfin_user_id")
+            status = self._send_status(
+                "POST",
+                f"/UserItems/{jf_id}/UserData",
+                params={"userId": uid},
+                json={
+                    "PlaybackPositionTicks": ticks,
+                    "LastPlayedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
+                },
+            )
+            if status >= 400:
+                raise JellyfinUnavailable(f"Jellyfin answered {status} when saving the position.")
 
     def set_played(self, jf_id: str, played: bool) -> None:
         if not valid_jellyfin_id(jf_id):
