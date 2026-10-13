@@ -162,6 +162,9 @@ def test_pure():
             return super().get(url, **kw)
 
     store = {1: {"status": "downloading", "total_size": 5, "progress": 1}, 2: {"status": "connecting"}, 3: {"status": "error", "error": "x"}, 4: {"status": "completed"}}
+    # A fake, roomy disk: the real one (a CI runner has little free space) would make the level "bad".
+    real_usage = nh.shutil.disk_usage
+    nh.shutil.disk_usage = lambda p: namedtuple("Usage", "total used free")(500 * GB, 100 * GB, 400 * GB)
     h = nh.Health({"torrent": {"download_dir": ROOT}}, Svc(CountingSession()), store, clock=lambda: clock[0])
     first = h.status()
     n = len(calls)
@@ -173,7 +176,8 @@ def test_pure():
     check("queue: downloading + queued are active, the failure is counted, finished is neither", first["queue"] == {"active": 2, "downloading": 1, "queued": 1, "importing": 0, "failed": 1}, first["queue"])
     check("a failed download makes the level a warning", first["level"] == "warn", first["level"])
     store.pop(3)
-    check("without it, ok (queue is read fresh each time)", h.status()["level"] in ("ok", "warn") and h.status()["queue"]["failed"] == 0)
+    check("without it, ok (queue is read fresh each time)", h.status()["level"] == "ok" and h.status()["queue"]["failed"] == 0)
+    nh.shutil.disk_usage = real_usage
 
 
 def run(tmp):
