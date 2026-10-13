@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e8e6e1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex">
+  <title>Type for the TV - Northern Lights</title>
+  <link rel="stylesheet" href="/static/nl/nl.css">
+  <link rel="stylesheet" href="/static/nl/type.css">
+</head>
+<body class="nl-page-type" data-code="{{ code }}">
+  <main class="nlt">
+    <p class="nlt-brand">Northern Lights</p>
+    {% if code %}
+    <h1>Type for the TV</h1>
+    <p class="nlt-sub">Code <strong class="nlt-code">{{ code }}</strong>. What you type shows up in the TV&rsquo;s search.</p>
+    <form id="nlt-form" class="nlt-form" autocomplete="off">
+      <label class="nl-visually-hidden" for="nlt-q">Search text for the TV</label>
+      <input id="nlt-q" name="q" type="search" maxlength="100" autocomplete="off" autocapitalize="none" autocorrect="off"
+             spellcheck="false" enterkeyhint="search" placeholder="Movie, show or episode" autofocus>
+      <button class="nl-btn-main" type="submit">Search on the TV</button>
+    </form>
+    <p id="nlt-status" class="nlt-status" role="status" aria-live="polite">Connecting&hellip;</p>
+    {% else %}
+    <h1>Type for the TV</h1>
+    {% if message %}<p class="nlt-error" role="alert">{{ message }}</p>{% endif %}
+    <p class="nlt-sub">Enter the code that is shown on the TV&rsquo;s search page.</p>
+    <form class="nlt-form" method="get" action="/nl/type" autocomplete="off">
+      <label class="nl-visually-hidden" for="nlt-code">Code from the TV</label>
+      <input id="nlt-code" class="nlt-code-input" name="code" type="text" maxlength="12" autocomplete="off" autocapitalize="characters"
+             autocorrect="off" spellcheck="false" inputmode="text" placeholder="K7M2QD" autofocus>
+      <button class="nl-btn-main" type="submit">Connect</button>
+    </form>
+    {% endif %}
+    <span class="nl-foil" aria-hidden="true"></span>
+  </main>
+  {% if code %}<script src="/static/nl/type.js"></script>{% endif %}
+</body>
+</html>

@@ -139,6 +139,8 @@ What the Chromecast can play: H.264 video with AAC or MP3 audio (an mp4 that alr
 
 If it does not work: no Cast icon means the page is not HTTPS, the browser is not Chrome, or no Chromecast answered on the same network. The Chromecast showing "can't play" usually means `cast_base_url` is not reachable from the Chromecast (test it from another device on the Wi-Fi) or the cast session is older than 6 hours.
 
+**Phone keyboard for TV search (Northern Lights M8b).** Nothing to set up. On the TV's Search page there is a code and a QR; scan it (or open the same address plus `/nl/type` and type the code) on a phone on the same network and what you type appears on the TV. Codes last 10 minutes and are forgotten when the app restarts (the TV makes a new one by itself). If the phone cannot open the page, it cannot reach the address the TV page uses.
+
 ### 7. Prowlarr indexers **[Labiba]**
 Open `http://mars:9696`, set a username and password when it asks, and add your indexers (the
 new Prowlarr starts empty; your Mac's indexers do not come across). The app already has the
