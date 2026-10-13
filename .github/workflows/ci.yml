@@ -37,9 +37,14 @@ jobs:
       - uses: actions/checkout@v7
       # Docker Hub rate-limits anonymous pulls from shared runners (429s, timeouts), so
       # the base image and BuildKit come from the AWS public mirror of the same images.
-      - uses: docker/setup-buildx-action@v4
+      # The mirror rate-limits too ("toomanyrequests"), so BuildKit falls back to Docker Hub.
+      - id: buildx_ecr
+        uses: docker/setup-buildx-action@v4
+        continue-on-error: true
         with:
           driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
+      - if: steps.buildx_ecr.outcome == 'failure'
+        uses: docker/setup-buildx-action@v4
       # Pushes publish; pull requests just prove the image builds.
       - name: Log in to GHCR
         if: github.event_name == 'push'
