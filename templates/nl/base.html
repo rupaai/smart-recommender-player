@@ -12,6 +12,7 @@
   <header class="nl-bar">
     <div class="nl-bar-inner">
       <a class="nl-brand" href="/nl/" aria-label="Northern Lights home">Northern Lights</a>
+      <div class="nl-health" id="nl-health" role="status" hidden></div>
       <nav class="nl-nav" aria-label="Sections">
         <a href="/nl/"{% if active == 'home' %} aria-current="page"{% endif %}>Home</a>
         <a href="/nl/movies"{% if active == 'movies' %} aria-current="page"{% endif %}>Movies</a>
@@ -47,6 +48,7 @@
   <script src="/static/nl/watch.js"></script>
   <script src="/static/nl/polish.js"></script>
   <script src="/static/nl/couple.js"></script>
+  <script src="/static/nl/health.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

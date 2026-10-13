@@ -231,3 +231,12 @@ button { font: inherit; color: inherit; }
 .tv-dl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1.25rem; padding: 0.75rem 0.5rem; }
 .tv-dl-empty { padding: 1.5rem var(--side); color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .tv-dl-fill { transition: none; } }
+
+/* ---- M10b: compact status in the bar (text only, not focusable) */
+.tv-health { position: absolute; right: var(--side); top: 0.3rem; display: flex; align-items: center; gap: 1rem;
+  font-size: 1.5rem; line-height: 1.5; font-weight: 700; color: var(--text-2); }
+.tv-health-dot { width: 1rem; height: 1rem; border-radius: 50%; background: var(--ready); flex: none; }
+.tv-health[data-level="warn"] .tv-health-dot { background: #e0a43a; }
+.tv-health[data-level="bad"] .tv-health-dot { background: #ff6b5b; }
+.tv-health-part.is-bad { color: #ff8f7f; }
+.tv-health-part.is-warn { color: #f0c36a; }

@@ -104,6 +104,14 @@ torrent_ranking:
 # is not already using it) and set cast_base_url. See deploy/RUNBOOK.md "Casting".
 #  cast_base_url: http://192.168.1.50:8000     # the server's LAN address and port, no path
 #  cast_receiver_app_id: ""                    # "" = Google's Default Media Receiver; else your registered 8-character app id
+#
+# Links on the admin page (/nl/admin, M10b, optional): your Jellystat, Uptime Kuma and Dozzle addresses.
+# Only plain http or https links are used; leave one out and it has no link. (Env NL_JELLYSTAT_URL,
+# NL_UPTIME_KUMA_URL and NL_DOZZLE_URL do the same and win over this.)
+#  tools:
+#    jellystat: http://mars:3000
+#    uptime_kuma: http://mars:3001
+#    dozzle: http://mars:8888
 
 # libtorrent configuration
 torrent:

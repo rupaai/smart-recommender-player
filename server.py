@@ -11,7 +11,7 @@ import os
 import shutil
 import socket
 from typing import Any, Dict, List, Literal, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 import uvicorn
@@ -58,6 +58,7 @@ from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
 from services import nl_downloads
+from services import nl_health
 from services import nl_reactions
 from services import nl_together
 from services.nl_choose import NLChoose, clean_tz
@@ -149,6 +150,7 @@ download_requests = nl_downloads.DownloadRequests()   # M10a: what Retry needs; 
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
+nl_health_state = nl_health.Health(config, jellyfin_service, downloads_store)   # M10b: header status and admin
 jellyfin_playback = JellyfinPlayback(jellyfin_service)  # Northern Lights player (M0)
 nl_browse = NLBrowse(db, jellyfin_playback)  # Northern Lights browse (M2); search is wired in below
 
@@ -1759,6 +1761,73 @@ async def nl_downloads_dismiss(item_id: int) -> Dict[str, Any]:
     return {"success": True}
 
 
+# --- Northern Lights health and admin (M10b): only what the existing status endpoints already show ---
+def _host_only(url: Optional[str]) -> Optional[str]:
+    """Jellyfin's address as host:port, with no scheme, user name or path."""
+    try:
+        parts = urlsplit(url or "")
+        if not parts.hostname:
+            return None
+        return parts.hostname + (f":{parts.port}" if parts.port else "")
+    except ValueError:
+        return None
+
+
+def _nl_admin_payload() -> Dict[str, Any]:
+    diag = jellyfin_service.diagnostics()
+    disk = dict(nl_health_state.disk_state())
+    disk["media_used_bytes"] = nl_health_state.media_used()
+    return {
+        "health": nl_health_state.status(),
+        "jellyfin": {
+            "configured": bool(diag.get("configured")),
+            "server_online": bool(diag.get("server_online")),
+            "host": _host_only(diag.get("base_url")),
+            "settings_present": {k: bool(v) for k, v in (diag.get("env") or {}).items()},   # yes / no only, never the values
+            "realtime_monitor": diag.get("realtime_monitor"),
+            "libraries": [
+                {"name": lib.get("name"), "type": lib.get("collection_type"), "locations": lib.get("locations") or [],
+                 "realtime_monitor": lib.get("realtime_monitor")}
+                for lib in (diag.get("libraries") or [])
+            ],
+        },
+        "disk": disk,
+        "tools": nl_health.tool_links(config),
+    }
+
+
+@app.get("/api/nl/health")
+async def nl_health_status() -> Dict[str, Any]:
+    """The compact header status: Jellyfin reachable, free disk space, download queue size. Cheap: checks are
+    cached for a few seconds. Carries no address, key or path."""
+    return await asyncio.to_thread(nl_health_state.status)
+
+
+@app.get("/api/nl/admin")
+async def nl_admin_data() -> Dict[str, Any]:
+    """The admin screen's data: the status above, Jellyfin's diagnostics (libraries and where they point),
+    disk use against the limits, and the Jellystat / Uptime Kuma / Dozzle links that are configured."""
+    return await asyncio.to_thread(_nl_admin_payload)
+
+
+@app.post("/api/nl/admin/repair")
+async def nl_admin_repair() -> Dict[str, Any]:
+    """Library repair (the same action as POST /api/jellyfin/repair), answered with a short summary only."""
+    report = await asyncio.to_thread(jellyfin_service.repair_libraries)
+    nl_health_state.forget()
+    return {
+        "ok": not report.get("error") and all(
+            lib.get("result") in ("already-attached", "created", "path-added", "recreated") for lib in report.get("libraries", [])
+        ),
+        "error": report.get("error"),
+        "libraries": [
+            {"library": lib.get("library"), "result": lib.get("result") or lib.get("error"), "hint": lib.get("hint")}
+            for lib in report.get("libraries", [])
+        ],
+        "refresh_triggered": bool(report.get("refresh_triggered")),
+    }
+
+
 @app.get("/nl/", response_class=HTMLResponse)
 async def nl_home(request: Request) -> Any:
     return _nl_page(request, "nl/home.html", {"active": "home"})
@@ -1797,6 +1866,12 @@ async def nl_choose_page(request: Request) -> Any:
 @app.get("/nl/downloads", response_class=HTMLResponse)
 async def nl_downloads_page(request: Request) -> Any:
     return _nl_page(request, "nl/downloads.html", {"active": "downloads"})
+
+
+@app.get("/nl/admin", response_class=HTMLResponse)
+async def nl_admin_page(request: Request) -> Any:
+    """Web only: there is deliberately no TV version and no link from the TV pages."""
+    return _nl_page(request, "nl/admin.html", {"active": "admin"})
 
 
 @app.get("/nl/me", response_class=HTMLResponse)
