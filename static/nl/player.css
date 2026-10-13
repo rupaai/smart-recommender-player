@@ -1,0 +1,258 @@
+/* Northern Lights player: dark, quiet, full-bleed video with an overlay that hides itself. */
+:root {
+  --nl-ink: #f2f0ec;
+  --nl-ink-2: #b9b6c2;
+  --nl-line: rgba(255, 255, 255, 0.22);
+  --nl-accent: #ff6a2b;
+  --nl-panel: rgba(18, 17, 24, 0.94);
+  --nl-tap: 48px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: #000; color: var(--nl-ink);
+  font-family: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+[hidden] { display: none !important; }
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--nl-ink); outline-offset: 2px; }
+
+.nl-player { position: fixed; inset: 0; background: #000; user-select: none; -webkit-user-select: none; }
+.nl-player:not(.controls-visible) { cursor: none; }
+.nl-player video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+video::cue { background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 1.15em; }
+
+/* overlay */
+.nl-controls { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between;
+  opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
+.controls-visible .nl-controls { opacity: 1; pointer-events: auto; }
+.nl-top, .nl-bottom { padding: 12px max(16px, env(safe-area-inset-left)); position: relative; z-index: 1; }
+.nl-top { display: flex; align-items: center; gap: 8px; padding-top: max(12px, env(safe-area-inset-top));
+  background: linear-gradient(rgba(0, 0, 0, 0.7), transparent); }
+.nl-bottom { padding-bottom: max(12px, env(safe-area-inset-bottom));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.78)); }
+.nl-titles { min-width: 0; }
+.nl-title { font-size: 1.1rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nl-episode { font-size: 0.85rem; color: var(--nl-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+svg .fill { fill: currentColor; stroke: none; }
+.nl-btn { min-width: var(--nl-tap); height: var(--nl-tap); padding: 0 10px; border: 0; border-radius: 12px;
+  background: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.nl-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.nl-btn:active { background: rgba(255, 255, 255, 0.2); }
+.nl-text-btn { font-size: 0.9rem; font-weight: 600; }
+.nl-skip svg { width: 32px; height: 32px; }
+.nl-skip text { font: 700 8px/1 system-ui, sans-serif; fill: currentColor; stroke: none; text-anchor: middle; }
+
+.nl-chip { min-width: 56px; height: 36px; margin-left: 4px; padding: 0 12px; border-radius: 999px;
+  border: 1px solid var(--nl-line); background: rgba(255, 255, 255, 0.08); font-size: 0.85rem; font-weight: 700; }
+.nl-chip:hover { background: rgba(255, 255, 255, 0.18); }
+
+.nl-center { position: absolute; left: 50%; top: 50%; width: 84px; height: 84px; margin: -42px 0 0 -42px;
+  border-radius: 50%; border: 1px solid var(--nl-line); background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center; }
+.nl-center svg { width: 40px; height: 40px; }
+.nl-center:hover { background: rgba(0, 0, 0, 0.65); }
+
+.nl-seek-row { display: flex; align-items: center; gap: 12px; }
+.nl-time { font-size: 0.85rem; font-variant-numeric: tabular-nums; color: var(--nl-ink); min-width: 3.2em; }
+.nl-time-end { text-align: right; white-space: nowrap; }
+.nl-total { color: var(--nl-ink-2); }
+.nl-button-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0 8px; }
+.nl-group { display: flex; align-items: center; flex-wrap: wrap; }
+.nl-group-end { margin-left: auto; }
+
+/* range inputs: a thin track, a big hit area */
+.nl-range { -webkit-appearance: none; appearance: none; background: transparent; margin: 0; height: var(--nl-tap); cursor: pointer;
+  --pct: 0%; --buf: 0%; }
+.nl-seek { flex: 1; min-width: 0; }
+.nl-volume { width: 90px; }
+.nl-range::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
+  background: linear-gradient(to right, var(--nl-accent) var(--pct), rgba(255, 255, 255, 0.45) var(--pct), rgba(255, 255, 255, 0.45) var(--buf), rgba(255, 255, 255, 0.2) var(--buf)); }
+.nl-range::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.2); }
+.nl-range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--nl-accent); }
+.nl-range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: #fff; border: 0; }
+.nl-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 0; }
+
+/* menus */
+.nl-menu { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(var(--nl-tap) * 2 + 36px + env(safe-area-inset-bottom));
+  min-width: 220px; max-width: calc(100vw - 32px); max-height: 50vh; overflow-y: auto; padding: 6px; z-index: 3;
+  background: var(--nl-panel); border: 1px solid var(--nl-line); border-radius: 14px; }
+.nl-menu-title { padding: 8px 12px 4px; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--nl-ink-2); }
+.nl-menu button { display: flex; width: 100%; min-height: var(--nl-tap); align-items: center; gap: 10px; padding: 8px 12px;
+  border: 0; border-radius: 10px; background: transparent; text-align: left; font-size: 0.95rem; }
+.nl-menu button:hover { background: rgba(255, 255, 255, 0.12); }
+.nl-menu button[aria-checked="true"] { font-weight: 700; }
+.nl-menu .tick { width: 1.1em; color: var(--nl-accent); }
+
+/* toast, spinner */
+.nl-toast { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); padding: 8px 16px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7); font-size: 0.95rem; font-weight: 600; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 4; }
+.nl-toast.on { opacity: 1; }
+.nl-buffering { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; pointer-events: none; }
+.nl-buffering span { display: block; width: 100%; height: 100%; border-radius: 50%; border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff; animation: nl-spin 0.9s linear infinite; }
+@keyframes nl-spin { to { transform: rotate(360deg); } }
+
+/* full-screen messages */
+.nl-screen { position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(0, 0, 0, 0.82); }
+.nl-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: center; }
+.nl-card-title { white-space: pre-line; margin: 0 0 8px; font-size: 1.25rem; font-weight: 700; line-height: 1.35; }
+.nl-primary, .nl-secondary { display: flex; align-items: center; justify-content: center; min-height: 52px; padding: 0 20px;
+  border-radius: 12px; font-size: 1rem; font-weight: 700; text-decoration: none; }
+.nl-primary { border: 0; background: var(--nl-accent); color: #1d1b29; }
+.nl-secondary { border: 1px solid var(--nl-line); background: transparent; color: var(--nl-ink); }
+.nl-hint { margin: 8px 0 0; font-size: 0.85rem; color: var(--nl-ink-2); }
+.nl-help dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; text-align: left; margin: 0; }
+.nl-help dt { font-weight: 700; white-space: nowrap; }
+.nl-help dd { margin: 0; color: var(--nl-ink-2); }
+
+/* next-episode card (P11) */
+.nl-next { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 4;
+  width: min(300px, calc(100vw - 32px)); padding: 14px; border-radius: 14px; background: var(--nl-panel); border: 1px solid var(--nl-line);
+  display: flex; flex-direction: column; gap: 6px; transition: bottom 0.2s; }
+.nl-next[hidden] { display: none; }
+.controls-visible .nl-next { bottom: calc(var(--nl-tap) * 2 + 44px + env(safe-area-inset-bottom)); }
+.nl-next-label { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--nl-ink-2); }
+.nl-next-title { font-size: 1.05rem; font-weight: 700; line-height: 1.3; }
+.nl-next-count { min-height: 1.3em; font-size: 0.9rem; color: var(--nl-accent); font-weight: 700; }
+.nl-next-actions { display: flex; gap: 8px; margin-top: 4px; }
+.nl-next-actions .nl-primary, .nl-next-actions .nl-secondary { flex: 1; min-height: 44px; }
+
+@media (max-width: 640px) {
+  .nl-volume, .nl-total { display: none; }
+  .nl-chip { margin-left: 0; }
+  .nl-btn { padding: 0 8px; }
+  .nl-center { width: 76px; height: 76px; margin: -38px 0 0 -38px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nl-controls, .nl-toast, .nl-next { transition: none; }
+  .nl-buffering span { animation-duration: 2.4s; }
+}
+
+/* ---- TV (M3): ?tv=1 or inside the Android app. 1920x1080 is the design size (1rem = 16px there),
+   text is at least 1.5rem, focus is a ring plus a glow, nothing needs a pointer. */
+html.tv { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; }
+.nl-player.tv { --nl-tap: 5rem; font-size: 1.5rem; }
+.tv .nl-top, .tv .nl-bottom { padding-left: 5rem; padding-right: 5rem; }
+.tv .nl-top { padding-top: 3rem; gap: 1.5rem; }
+.tv .nl-bottom { padding-bottom: 3rem; }
+.tv .nl-title { font-size: 2.25rem; }
+.tv .nl-episode { font-size: 1.5rem; }
+.tv .nl-time { font-size: 1.5rem; min-width: 4.5em; }
+.tv .nl-btn { border-radius: 1rem; padding: 0 1.25rem; }
+.tv .nl-btn svg { width: 3rem; height: 3rem; }
+.tv .nl-skip svg { width: 3.5rem; height: 3.5rem; }
+.tv .nl-text-btn { font-size: 1.5rem; }
+.tv .nl-chip { height: 4rem; min-width: 5.5rem; padding: 0 1.5rem; font-size: 1.5rem; margin-left: 1rem; }
+.tv .nl-range::-webkit-slider-runnable-track { height: 0.5rem; border-radius: 0.25rem; }
+.tv .nl-range::-webkit-slider-thumb { width: 2rem; height: 2rem; margin-top: -0.75rem; }
+.tv .nl-toast { font-size: 1.5rem; padding: 0.75rem 2rem; }
+.tv .nl-center { display: none; }          /* OK pauses; no pointer to press the big button */
+.tv #nl-mute, .tv #nl-volume, .tv #nl-fs { display: none; }   /* the TV has its own volume and is always full screen */
+.tv :focus-visible, .tv :focus { outline: none; }
+.tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: #1d1b29; transform: scale(1.08);
+  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
+.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2rem 0.4rem rgba(255, 106, 43, 0.55); }
+.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0 1.5rem rgba(255, 106, 43, 0.4); }
+.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.25rem; padding: 0.75rem; }
+.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; }
+.tv .nl-menu button { font-size: 1.5rem; min-height: 4.5rem; border-radius: 0.9rem; gap: 1rem; }
+.tv .nl-menu button:focus { background: var(--nl-ink); color: #1d1b29; box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu .tick { width: 1.5rem; }
+.tv .nl-card { width: min(36rem, 100%); gap: 1.25rem; }
+.tv .nl-card-title { font-size: 2rem; }
+.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; }
+.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.06); background: var(--nl-ink); color: #1d1b29;
+  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
+.tv .nl-primary:focus { background: var(--nl-accent); border: 0.2rem solid var(--nl-ink); }
+.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.25rem; bottom: 3rem; }
+.controls-visible.tv .nl-next { bottom: calc(var(--nl-tap) * 2 + 6rem); }
+.tv .nl-next-label, .tv .nl-next-count { font-size: 1.5rem; }
+.tv .nl-next-title { font-size: 1.75rem; }
+.tv .nl-next-actions .nl-primary, .tv .nl-next-actions .nl-secondary { min-height: 4.5rem; }
+.tv .nl-buffering { width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; }
+
+/* Inside the Android app (bridge v2) Media3 draws the video BEHIND the WebView, so the page is
+   transparent and the <video> element stays unused; our controls draw on top of the picture. */
+html.native, html.native body, .nl-player.native { background: transparent !important; }
+.nl-player.native video { display: none !important; }
+
+/* An old app (bridge v1) draws its own controls: the page is only the shell for the resume question,
+   errors and the loading spinner. */
+.nl-player.native-v1 video, .nl-player.native-v1 .nl-controls, .nl-player.native-v1 .nl-next { display: none !important; }
+
+/* Subtitle menu extras (M5): actions, the delay stepper. */
+.nl-menu .nl-menu-action { border-top: 1px solid var(--nl-line); border-radius: 0 0 10px 10px; }
+.nl-menu .nl-menu-action + .nl-menu-action { border-top: 0; border-radius: 10px; }
+.nl-stepper { display: flex; align-items: center; gap: 8px; min-height: var(--nl-tap); padding: 4px 12px; font-size: 0.95rem; }
+.nl-stepper-label { flex: 1; font-variant-numeric: tabular-nums; }
+.nl-menu .nl-stepper button { width: var(--nl-tap); min-height: 40px; justify-content: center; padding: 0; border: 1px solid var(--nl-line);
+  border-radius: 999px; font-size: 1.3rem; font-weight: 700; }
+.tv .nl-stepper { min-height: 4.5rem; padding: 0.5rem 1.25rem; font-size: 1.5rem; gap: 1rem; }
+.tv .nl-menu .nl-stepper button { width: 5rem; min-height: 4rem; font-size: 2rem; border-radius: 999px; }
+.tv .nl-menu .nl-stepper button:focus { background: var(--nl-ink); color: #1d1b29; box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+
+/* ---- M7a polish: seek-bar thumbnails, chapter ticks, skip intro / next episode, speed, phone gestures. */
+.nl-player video, .nl-controls { touch-action: none; }   /* the page owns taps and swipes on the picture */
+.nl-seek-wrap { position: relative; flex: 1; min-width: 0; display: flex; align-items: center; --nl-thumb-d: 16px; }
+.nl-seek-wrap .nl-seek { width: 100%; }
+.nl-ticks { position: absolute; left: 0; right: 0; top: 50%; height: 0; pointer-events: none; }
+.nl-ticks i { position: absolute; top: -4px; width: 2px; height: 8px; margin-left: -1px; border-radius: 1px; background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  left: calc(var(--nl-thumb-d) / 2 + (100% - var(--nl-thumb-d)) * var(--f)); }
+
+/* the thumbnail bubble above the bar; --x is the pixel position the bubble is centred on */
+.nl-thumb { position: absolute; bottom: calc(100% + 4px); left: 0; transform: translateX(-50%); z-index: 2; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; }
+.nl-thumb-img { box-sizing: content-box; border-radius: 8px; border: 2px solid rgba(255, 255, 255, 0.85); background-color: #000; background-repeat: no-repeat;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55); }
+.nl-thumb-img.none { display: none; }
+.nl-thumb-time, .nl-thumb-chapter { padding: 2px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.72); font-size: 0.85rem;
+  font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; max-width: 60vw; overflow: hidden; text-overflow: ellipsis; }
+.nl-thumb-chapter { font-weight: 600; color: var(--nl-ink-2); }
+
+/* skip intro / next episode button */
+.nl-seg { position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); z-index: 4;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: min(260px, calc(100vw - 32px)); transition: bottom 0.2s; }
+.nl-seg[hidden] { display: none; }
+.controls-visible .nl-seg { bottom: calc(var(--nl-tap) * 2 + 44px + env(safe-area-inset-bottom)); }
+.nl-seg .nl-primary { min-height: 48px; }
+.nl-seg .nl-secondary { min-height: 40px; font-size: 0.85rem; background: rgba(18, 17, 24, 0.85); }
+.nl-seg .nl-secondary[aria-pressed="true"] { border-color: var(--nl-accent); color: var(--nl-accent); }
+#nl-speed { min-width: 3.4em; font-variant-numeric: tabular-nums; }
+
+.tv .nl-seg { right: 5rem; width: 30rem; bottom: 3rem; gap: 0.75rem; }
+.controls-visible.tv .nl-seg { bottom: calc(var(--nl-tap) * 2 + 6rem); }
+.tv .nl-seg .nl-primary { min-height: 5rem; }
+.tv .nl-seg .nl-secondary { min-height: 4rem; font-size: 1.5rem; }
+.tv .nl-seek-wrap { --nl-thumb-d: 2rem; }
+.tv .nl-ticks i { width: 0.25rem; height: 1.25rem; top: -0.625rem; margin-left: -0.125rem; }
+.tv .nl-thumb-time, .tv .nl-thumb-chapter { font-size: 1.5rem; padding: 0.25rem 1.25rem; }
+.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; }
+@media (max-width: 640px) {
+  #nl-chapters, #nl-speed { padding: 0 6px; }
+}
+
+/* Casting (M8): the phone is the remote. The empty <video> sits behind; the controls stay up, the card sits between the bars. */
+.nl-player.casting { background: radial-gradient(120% 90% at 50% 40%, #1d1b29 0%, #000 70%); }
+.nl-player.casting::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: linear-gradient(90deg, #08714d, #0a6378, #4a30bd, #9c1f6b, #2fc495); z-index: 3; pointer-events: none; }
+.nl-cast-panel { position: absolute; left: 0; right: 0; top: 72px; bottom: 168px; z-index: 2; display: flex; align-items: center;
+  justify-content: center; padding: 0 24px; pointer-events: none; }
+.nl-cast-card { width: min(420px, 100%); display: flex; flex-direction: column; gap: 12px; text-align: center; pointer-events: auto; }
+.nl-cast-device { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.nl-cast-panel .nl-hint { margin: 0 0 8px; color: var(--nl-ink-2); font-size: 0.9rem; }
+.nl-cast-panel .nl-secondary { min-height: 48px; }
+.casting .nl-center { display: none; }
+#nl-cast.on { color: var(--nl-accent); }
+.casting .nl-player video, .nl-player.casting video { visibility: hidden; }
+
+/* M9c: "How was it?" after finishing (W10) */
+.nl-react-options { display: flex; flex-direction: column; gap: 12px; }
+
+/* ---- M10c: picture size (P18), the menu's notes */
+.nl-player.fit-fill video { object-fit: cover; }
+.nl-player.fit-original video { object-fit: none; }
+.nl-menu-note { padding: 6px 12px 8px; max-width: 22rem; font-size: 0.85rem; line-height: 1.35; color: var(--nl-ink-2); }
+.tv .nl-menu-note { font-size: 1.5rem; max-width: 36rem; padding: 0.5rem 1.25rem 0.75rem; }

@@ -94,6 +94,29 @@ torrent_ranking:
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
 
+# Northern Lights "Who's watching" (M4). Leave it commented and the app has one viewer
+# (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
+# fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, deploy.
+# profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
+northern_lights:
+  people:
+    - {id: labibakanij,  name: Labiba,          jellyfin_user_id: c07f6a015a284420a5931235097df58f, profile_id: 1}
+    - {id: gabstevens, name: Gabriele,    jellyfin_user_id: 89576f27230e419ead0664b1486376bd, profile_id: 2}
+#
+# Casting to a Chromecast (M8, optional): the Chromecast is not on Tailscale, so it needs the address
+# it can reach this server at on your home network. Uncomment `northern_lights:` (if the people block above
+# is not already using it) and set cast_base_url. See deploy/RUNBOOK.md "Casting".
+#  cast_base_url: http://192.168.1.50:8000     # the server's LAN address and port, no path
+#  cast_receiver_app_id: ""                    # "" = Google's Default Media Receiver; else your registered 8-character app id
+#
+# Links on the admin page (/nl/admin, M10b, optional): your Jellystat, Uptime Kuma and Dozzle addresses.
+# Only plain http or https links are used; leave one out and it has no link. (Env NL_JELLYSTAT_URL,
+# NL_UPTIME_KUMA_URL and NL_DOZZLE_URL do the same and win over this.)
+#  tools:
+#    jellystat: http://mars:3000
+#    uptime_kuma: http://mars:3001
+#    dozzle: http://mars:8888
+
 # libtorrent configuration
 torrent:
   # Port range for incoming connections

@@ -1,592 +1,124 @@
-# 🤖 MASTER AI HANDOVER & ARCHITECTURE SPECIFICATION
-> **Document Purpose:** Hand this document to any AI model or engineer to instantly onboard them on the codebase, architecture, conventions, and status so they can seamlessly pick up development without losing context.
-
-## Branches and open PRs (keep this current)
-The user finds branches hard to track, so every chat updates this list when it opens or merges a PR.
-- `main`: what runs. Merged: Recommender v2 Phases 1–3 (PR #2), questions pop-up (#3), verdict ratings and rate card (#5, #6), taste model (#8, **off by default**, §10.8), "This or that" (#7, §10.8) and per-season TV verdicts (#9, §10.9; schema v10). It arrived through #9, which contained #7.
-- `watch-later`: merged into `main` as PR #12 (shared Watch later list, schema v11, §12).
-- `claude/project-thread-b2x7hx` (PR "Deployment plan", opened 2026-10-09): adds `docs/DEPLOYMENT_PLAN.md` only, no code (§13).
-- `deploy/phase-1` (PR "Deploy phase 1: portable app", M1): `make check`, `CONFIG_PATH`/`MODELS_DIR`, `deploy/config.server.yaml`, `/healthz`. Then `deploy/phase-2` (PR "Deploy phase 2: containers"; Docker, builds on 1) and `deploy/phase-3` (PR "Deploy phase 3: CI"; CI, builds on 2); merge in that order. The "Deployment plan" PR (#13) is merged.
-- M1 (phases 1, 2, 3) is merged. M2 (stacked, merge in order): `deploy/phase-4` (PR "Deploy phase 4: server setup script"), then `deploy/phase-5` (PR "Deploy phase 5: one-button deploy") and `deploy/phase-8` (alerts).
-- M2 (phases 4, 5, 8) is merged and live on `mars`. M3: `deploy/phase-6` merged as PR #26; `deploy/phase-7` merged as PR #27.
-- `claude/project-thread-eepc0c` (PR "Northern Lights: foil name and download details", opened 2026-10-09): renames the app, adds the aurora foil and puts speed and time left back on downloads (§9).
-- `vibe/t0-always-ask` (PR #31 "Vibe questions open on every search", merged 2026-10-12): the questions pop-up opens on every search when asking is on (§10.6, vibe-questions plan T0).
-- `vibe/t1-moods` (PR "Mood map: moods as data", opened 2026-10-12): `services/vibe_moods.py`, the 30 moods, 6 groups and `fit()` as data, not wired in (§10.10, vibe-questions plan T1). PR #31 (T0) is merged.
-- `vibe/t2-mood-session` (PR "Mood session: belief and question picker", opened 2026-10-12, builds on `vibe/t1-moods`): `services/mood_questions.py` and `services/mood_popup.py` (`MoodSession`), not wired in (§10.10, vibe-questions plan T2).
-- `vibe/t3-mood-ranking` (merged): `MoodSession` ranks by mood mix, `recommender.mood_weight` in config (§10.10, vibe-questions plan T3).
-- `vibe/t4-mood-wireup` (no PR yet, off `main` after T1-T3): `/api/discover/*` use `MoodSession`, responses carry `moods`, the results header shows "Tonight: …" (§10.6, §10.10, vibe-questions plan T4).
-- `claude/project-thread-eepc0c` (PR #28 "Northern Lights: foil name and download details"): merged 2026-10-10. Renamed the app, added the aurora foil and put speed and time left back on downloads (§9).
-- `claude/project-thread-dd4fw5` (PR "Say why the vibe questions didn't open", opened 2026-10-10): §10.6 "Why it may not open".
-- `ui-polish-dark`: unused dark design; the user asked for it to be deleted (needs doing on GitHub, this sandbox can't delete remote branches).
-- Workflow: each chat starts from `main`, works on one branch, opens one PR, and the user merges it.
-
----
-
-## 1. PROJECT ESSENCE & HARDWARE BUDGET
-
-- **Product:** CouchCinema / Smart Movie Streamer — a self-hosted, lightweight personal cinema companion and recommender running on a **Raspberry Pi (4 or 5)**, Mac, or Linux/PC with **zero mandatory cloud dependencies**.
-- **Target Footprint:**
-  - Peak RAM: $< 1.2\text{ GB}$ (FastAPI ~60MB, SQLite ~20MB, Libtorrent ~80MB).
-  - Storage: Embedded SQLite (`catalogue.db`) + local media folders.
-- **Dual Core Discovery Pipelines:**
-  1. **Direct Torrent Search & Acquisition:** Direct search across YTS & Apibay with live 1s polling, cancelable background downloads, quality/size sorting, and automated Jellyfin organization.
-  2. **Smart Mood Recommender:** Candidate filtering, runtime/era/genre narrowing, taste scoring from user watch history ($\ge 7.0$), rating rules ($\ge 6.0$, with guilty-pleasure suppression), and optional ONNX vector embedding drop-in.
-  3. **Decoupled Training Module (`/training`):** Off-device fine-tuning of `bge-small-en-v1.5` on Mac MPS GPU / Colab, exported to ONNX for optional ARM64 inference.
-
----
-
-## 2. REPOSITORY FILE STRUCTURE
-
-```text
-smart_movie_streamer/
-├── config.yaml               # Target paths (media_folders), port config, player settings
-├── .env                      # TMDB_API_KEY, JELLYFIN_URL, JELLYFIN_API_KEY, JELLYFIN_USER_ID
-├── database.py               # SQLite DatabaseManager (media_items, media_sources, watch_history)
-├── server.py                 # FastAPI web application routes, static mounting, background tasks
-├── services/                 # MODULAR CORE SERVICES
-│   ├── __init__.py
-│   ├── torrent_service.py    # TorrentSearcher (+ optional ProwlarrSearcher), TorrentDownloader, organizer
-│   ├── jellyfin_service.py   # JellyfinService: library auto-setup, refresh + visibility polling, diagnostics
-│   ├── recommender_service.py# Mood mappings, taste scoring, rating suppression, ONNX drop-in
-│   └── generative_retriever.py # TIGER generative retrieval engine (parallel; feature-flag routed)
-├── scanner.py                # Local filesystem media scanner & filename parsing
-├── enricher.py               # TMDB metadata enricher
-├── tests/
-│   ├── test_organizer.py     # Offline organizer & parser tests (uv run python tests/test_organizer.py)
-│   └── test_searcher.py      # Offline Prowlarr adapter tests (uv run python tests/test_searcher.py)
-├── templates/
-│   └── index.html            # PWA shell (Recommender, Direct Download, History tabs, player modal)
-├── static/
-│   ├── app.js                # Frontend SPA controller, direct search, 1s HTTP polling, rating modal
-│   ├── styles.css            # Dark mode responsive cinema styling, badges, progress bars
-│   ├── sw.js                 # Service worker for offline caching
-│   └── manifest.json         # PWA installation manifest
-├── training/                 # DECOUPLED OFFLINE TRAINING MODULE
-│   ├── README.md             # Execution guides (embedding fine-tune + TIGER pipeline Steps A–H)
-│   ├── movie_triplets.json   # 15 curated anchor/positive/negative triplets
-│   ├── train_mps.py          # PyTorch fine-tuner (auto-detects Apple Silicon MPS, CUDA, CPU)
-│   ├── export_onnx.py        # ONNX model exporter with CPU optimization
-│   ├── prepare_semantic_data.py # TIGER Stage A: catalog text corpus -> bge embeddings
-│   ├── train_rqvae.py        # TIGER Stage B: RQ-VAE -> 3-level semantic IDs (K=256, D=64)
-│   ├── bootstrap_sequences.py   # TIGER Stage D: watch-history / MovieLens / synthetic sequences
-│   ├── train_tiger_predictor.py # TIGER Stage C: causal Transformer over semantic ID triplets
-│   └── export_tiger_onnx.py  # TIGER Stage F: ONNX export + INT8 quantize + prefix trie + gates
-├── utils/                    # Developer maintenance tools
-│   ├── view_db.py            # SQLite database inspector
-│   ├── virtual_updater.py    # Media source updater
-│   ├── add_prowlarr_indexers.py  # Idempotent safe-indexer setup for Prowlarr
-│   ├── build_full_catalogue.py   # Full TMDB catalogue builder (10k movies + 10k TV, resumable)
-│   └── backfill_vote_counts.py   # Resumable TMDB vote-count backfill for the recommender quality-cut funnel
-├── sample_library/           # Realistic 0-byte dummy video files for instant zero-download tests
-└── catalogue.db              # SQLite catalogue database (generated)
-```
-
----
-
-## 3. DATABASE SCHEMA & DATA MODEL (`catalogue.db`)
-
-Managed by `database.py` via `DatabaseManager`:
-
-### `media_items`
-Canonical metadata for movies and TV shows:
-- `id` (INTEGER PRIMARY KEY)
-- `media_type` (TEXT: `'movie'` or `'tv'`, default `'movie'`)
-- `tmdb_id` (INTEGER, `UNIQUE(media_type, tmdb_id)` — migrated from global UNIQUE via schema v1 because TMDB movie and TV id spaces overlap)
-- `title` (TEXT NOT NULL)
-- `original_title` (TEXT)
-- `release_year` (INTEGER)
-- `overview` (TEXT)
-- `genres` (TEXT: comma-separated names, e.g. `"Action, Sci-Fi"`)
-- `genre_ids` (TEXT: comma-separated TMDB IDs)
-- `rating` (REAL: TMDB rating 0.0 - 10.0)
-- `vote_count` (INTEGER: TMDB vote count — added by schema v2 as an idempotent `ALTER TABLE`. 0 = not backfilled yet, -1 = confirmed missing on TMDB. Powers the recommender's SQL quality-cut funnel; backfilled by `utils/backfill_vote_counts.py`)
-- `runtime` (INTEGER: duration in minutes)
-- `poster_url` (TEXT: TMDB poster URL)
-- `tier2_keywords` (TEXT: cached TMDB keywords/themes)
-- `tier2_reviews_summary` (TEXT: cached public review consensus excerpt)
-- `tier2_profiled_at` (TIMESTAMP)
-
-### `media_sources`
-Physical media files associated with items:
-- `id` (INTEGER PRIMARY KEY)
-- `media_item_id` (INTEGER REFERENCES media_items(id) ON DELETE CASCADE)
-- `source_type` (TEXT: `'local'` or `'virtual'`)
-- `file_path` (TEXT UNIQUE NOT NULL: absolute path)
-- `parsed_title` (TEXT)
-- `parsed_year` (INTEGER)
-- `season_number` (INTEGER: NULL for movies, e.g. 1 for S01)
-- `episode_number` (INTEGER: NULL for movies, e.g. 2 for E02)
-- `file_size` (INTEGER: bytes)
-
-### `watch_history`
-User review impressions fueling the taste profile:
-- `id` (INTEGER PRIMARY KEY)
-- `media_item_id` (INTEGER REFERENCES media_items(id) ON DELETE CASCADE)
-- `watched_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
-- `user_rating` (REAL: 1.0 to 10.0 star rating)
-- `notes` (TEXT: user review notes)
-
-### `watch_later` (schema v11)
-Shared list, one row per person per title: `id`, `media_item_id` (CASCADE), `profile_id` (CASCADE, from `profiles`), `added_at`, `done_at`, `done_reason` (`'rated'` | `'watched'`), `UNIQUE(media_item_id, profile_id)`, index on `(done_at, added_at)`. See §12.
-
-### Key Database Methods
-- `get_user_taste_profile(min_rating=7.0)`: Computes frequency maps of preferred genres and keywords weighted by user star ratings.
-- `get_or_create_media_item(title, release_year, media_type)`: Ensures an arbitrary search term is registered with a canonical ID before downloading.
-- `get_candidates(...)`: Uses `LEFT JOIN media_sources` to retrieve media matching genre and watch status.
-
----
-
-## 4. SUBSYSTEM SPECIFICATIONS
-
-### A. Direct Search & Download (`services/torrent_service.py`)
-1. **Searcher:**
-   - Primary: YTS official API (`https://yts.mx/api/v2/list_movies.json`).
-   - Fallback: Apibay (`https://apibay.org/q.php`).
-   - Filtering: Drops dead torrents ($0$ seeds) and shortcut files ($< 500\text{ MB}$).
-   - Sorting: `sort_by_size=True` (smallest size first) or `sort_by_size=False` (4K/1080p high quality + seeds first).
-   - Inferred quality badge: `4K/2160p`, `1080p`, `720p`, `Compact`.
-2. **Downloader:**
-   - Non-blocking execution via `asyncio.create_task()`.
-   - Global in-memory dictionary `downloads_store[movie_id]` tracking percentage, download speed, total size, downloaded size, and status (`connecting`, `downloading`, `organizing`, `completed`, `cancelled`, `error`).
-   - Supports download cancellation and cleanup.
-3. **Jellyfin Auto-Organization (pure `organize_media_files()` + async verify):**
-   - **Movies:** `<movie_target>/Movie Title (Year)/Movie Title (Year).ext`, subtitles beside it as `Movie Title (Year).en.srt` (+`.forced`/`.sdh` flags preserved).
-   - **TV Shows:** `<tv_target>/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` for **every** video file (season packs); multi-episode files → `SXXEYY-EZZ`; subtitles paired by the SxxEyy tag parsed from their own filename; unpairable subs logged and preserved (never deleted).
-   - Split roots from `jellyfin_library` config (`movie_dir` / `tv_dir`, legacy fallback `media_folders[0]`).
-   - Updates SQLite `media_sources` for every organized movie/episode; removes the staging dir once emptied.
-   - Afterwards a non-blocking async poller (`_verify_in_jellyfin`, `asyncio.to_thread`) triggers `/Library/Refresh`, polls `GET /Items` until the title is visible, and updates `downloads_store[id]["jellyfin_visible"]` (+ `jellyfin_hint` on failure).
-
-### B. Recommender Engine (`services/recommender_service.py`)
-1. **Stage 1 (Hard Filtering):** Filter SQLite catalogue by genre, era (Modern 2015+, 2000s, Classic), runtime (<105m, 105-140m, >140m), media type (`movie` or `tv`).
-2. **Baseline Rating Rule & Guilty-Pleasure Suppression:**
-   - Default rating threshold: $\ge 6.0$.
-   - If query contains keywords (*"guilty pleasure"*, *"so bad it's good"*, *"cringe"*, *"b-movie"*, etc.), the threshold is suppressed to $0.0$.
-3. **Stage 2 (Taste Scoring):**
-   - Matches candidate genres and keywords against user taste profile ($\ge 7.0$ ratings).
-   - Bonus calculation: $\text{Final Score} = \text{Base Rating} + \text{Taste Bonus}$ (capped at $+2.0$).
-4. **Optional ONNX Adaptor:**
-   - Checks for `models/model.onnx`. If present, loads via `onnxruntime` for vector re-ranking. Falls back to SQL scoring if absent.
-
-**Large-catalogue candidate funnel (added later on 2026-10-02):**
-1. **Funnel 1 — hard narrowing (SQL):** media type, mood/genre chips (TV aliases expanded), era, runtime bounds, watch status, rating floor.
-2. **Funnel 2 — quality cut (SQL):** `DatabaseManager.get_top_candidates(...)` orders by the Bayesian formula `(votes/(votes+1000))*rating + (1000/(votes+1000))*6.5` computed **in SQL** using real `vote_count`, cut to `recommender.shortlist_size` (250). Items without vote counts yet score a flat 6.5 → graceful rating/year fallback until the backfill runs.
-3. **Funnel 3 — personal scoring (Python, unchanged logic):** taste bonus + free-text query matching over the ~250-item shortlist only (~50× less Python work than scoring the full catalogue; Pi-friendly).
-4. **Funnel 4 — diversity:** MMR pool capped at `recommender.final_pool` (50) → pagination serves from this pool.
-5. **`variety` (opt-in, default False; server passes True):** seeded shuffle rotating every 10 minutes — repeat requests surface different picks while pagination stays coherent within a bucket. Both engines accept the flag.
-6. **`utils/backfill_vote_counts.py`:** resumable threaded TMDB vote-count backfill (fills `vote_count`, refreshes `rating`; confirmed 404s marked -1 and skipped on re-runs). Run: `uv run python utils/backfill_vote_counts.py` (supports `DATABASE_PATH` override).
-
-### C. Standalone Training Module (`/training`)
-- Fully decoupled from app runtime.
-- `movie_triplets.json`: 15 curated triplets.
-- `train_mps.py`: Fine-tunes `BAAI/bge-small-en-v1.5` on Apple Silicon MPS, CUDA, or CPU with `MultipleNegativesRankingLoss`.
-- `export_onnx.py`: Exports to `model.onnx` optimized for ARM64 CPU.
-- Deploy: `cp training/model.onnx models/model.onnx`.
-
-### D. Jellyfin Service (`services/jellyfin_service.py`)
-- `JellyfinService(config)` (legacy alias `JellyfinRefresher` kept for compatibility):
-  - `ensure_libraries()`: idempotent, additive-only creation of dedicated typed "Movies" (`movies`) and "TV Shows" (`tvshows`) libraries from `jellyfin_library` config, with realtime monitoring. If a named library exists but lacks the path, it is added via `POST /Library/VirtualFolders/Paths?name=<name>` body `{"Path": dir}`; on version-specific endpoint mismatches it logs a clear warning and continues — never deletes anything. Returns `{created, updated, skipped}`.
-  - `refresh_and_verify(title, media_type, timeout_s=120)`: `POST /Library/Refresh`, then polls `GET /Items?searchTerm=<title>&Recursive=true&IncludeItemTypes=Movie,Series&Limit=1` every 5s → `{"visible": bool, "hint": str|None}` (hints: missing library paths, realtime monitor off, 4K/HEVC transcode note).
-  - `diagnostics()`: snapshot for `GET /api/jellyfin/status` (server online, libraries with types + locations, `.env` presence). Never raises.
-- `server.py` calls `ensure_libraries()` in a startup hook wrapped in try/except → the server boots fine when Jellyfin is offline.
-
-### F. TIGER Generative Retrieval Engine (`services/generative_retriever.py`)
-- **Parallel engine** implementing TIGER (arXiv:2305.05065): catalog text → bge embeddings → RQ-VAE semantic IDs `[c1,c2,c3]` (K=256, D=64; colliding tuples get a 4th leaf token) → causal Transformer sequence predictor → ONNX INT8 → prefix trie lookup (0% hallucinated items).
-- **Router** `route_recommend()` in the same module, wired into `POST /api/recommend`: `recommender.engine_mode` in `config.yaml` = `fallback` (default; generative when ready + history ≥ `generative.history_threshold`, else legacy) | `legacy_only` (kill-switch) | `generative_only` (legacy still catches failures). Every response carries `engine: "generative" | "legacy"`.
-- `GenerativeRetriever` loads artifacts lazily from `models/tiger/` (`predictor_int8.onnx`, `semantic_ids.json`, `prefix_trie.json`, `item_map.json`, `config.json`); missing artifacts → engine disabled, legacy serves. Also validates item-ID overlap with the active DB and warns on 0% overlap (artifacts must be built from the same catalogue as `DATABASE_PATH`).
-- Payload shape identical to legacy (`total_results/page/page_size/has_more/items`) plus `generative: {history_len, predicted_tuples}`; items additionally carry `semantic_id`, `generative_rank`.
-- Legacy `RecommenderService` is untouched — it is only ever called as-is via the router.
-- Offline tests: `uv run python tests/test_generative_retriever.py` (trie, beam decode, sequence conversion, router modes, artifact-missing readiness).
-- Training runbook: `training/README.md` Steps A–H; artifacts verified: INT8 0.69 MB (<15 MB gate), 0.15 ms CPU (<5 ms gate), trie covers 14,397 items.
-- **Context awareness + variety (added later on 2026-10-02):** `POST /api/recommend` now resolves mood genres server-side and passes them to both engines. The generative engine applies a strong genre boost (+1.5) with genre hard-filter fallback (needs ≥8 matches, else boost-only), TV genre aliases, free-text query boosts (+0.4/word, exposed as `query_boost`), era/duration filters, and genre-matched SQL backfill of the candidate pool (scored without the model boost) when a mood narrows the request. Beam widened (width 64, candidates-per-level 64, `top_k: 40`) so the predictor explores far more tuples. Both engines accept `variety` (same 10-minute seeded rotation as legacy).
-- **Cold-start gate:** `recommender.generative.history_threshold: 5` — the legacy funnel engine serves until 5+ rated items exist, then generative takes over automatically. UI badge on each result card shows the active engine ("🎲 Picks for You" = legacy, "🧠 Learning Your Taste" = generative).
-
-### E. Search Providers (`services/torrent_service.py`)
-- `TorrentSearcher.search()` provider chain: **Prowlarr → YTS → Apibay** (Prowlarr first only when configured; failures fall through silently with a warning).
-- `ProwlarrSearcher`: optional, enabled by `PROWLARR_URL` / `PROWLARR_API_KEY` in `.env`. Calls `GET /api/v1/search?query=…&type=search&categories={2000|5000}&limit=100`, maps results into the standard result dict (`name/quality/size_bytes/seeds/peers/magnet/media_type`) so the frontend is unchanged. Torrent-protocol only (NZBs dropped). Prowlarr's `magnetUrl` is its own proxied grab link (or a redirect to the site magnet) — kept as-is and converted into a real magnet on demand by `torrent_url_to_magnet()` (follows redirects to `magnet:`, otherwise parses the `.torrent` with the built-in bencode encoder/decoder — zero dependencies). Dedup by info-hash or title+size; seed counts are NOT filtered (indexers like NyaaSi report 0 for live torrents — the downloader aborts dead/fake torrents itself). Any failure (unreachable / 401 / HTTP error / malformed JSON) → warning + `[]` → automatic fallback. Unconfigured → byte-identical legacy behavior.
-- `utils/add_prowlarr_indexers.py`: idempotent safe-indexer installer (YTS, EZTV, ThePirateBay, NyaaSi, Knaben). Echoes the schema definition back on `POST /api/v1/indexer` (**requires `appProfileId` = 1 "Standard"** — a schema echo without it fails validation with 400), live-tests each with per-indexer queries (**NyaaSi is anime-only → use anime test queries**), auto-disables failures (never deletes).
-- Healthy set verified 2026-10-01: **YTS, ThePirateBay, NyaaSi, Knaben** (Knaben alone ≈ 70–95 results per query). **EZTV excluded:** its site is unreachable from this network at add-time (Prowlarr 400 "Unable to connect to indexer").
-- Future indexers (deliberately kept out): 1337x, TorrentGalaxy, TheRARBG require FlareSolverr (headless Chrome — large RAM cost on a Pi); SolidTorrents is absent from this Prowlarr version's schema.
-
----
-
-## 5. RUNNING THE APP
-
-```bash
-# Using uv:
-uv run python server.py
-
-# Using python:
-python3 server.py
-```
-App runs at `http://localhost:8000` (or `http://<lan-ip>:8000` on mobile).
-
----
-
-## 6. CHANGELOG & VERIFICATION CHECKLIST (2026-10-02)
-
-### Changelog (later update — same day)
-- **`/api/moods` 500 fixed:** the endpoint read a non-existent `vibe` key from `MOOD_MAPPINGS`. Endpoint is now defensive (`info.get("vibe", "")`) and `MOOD_MAPPINGS` gained vibe descriptions (additive metadata only — ranking behavior unchanged).
-- **Frontend render fix:** `app.js` treated the paginated recommend payload as an array (`movies.forEach` TypeError in the browser → "Failed to load recommendations" despite clean 200s server-side). Now renders `data.items` and passes `data.engine`.
-- **Full catalogue is the default:** `config.yaml database_path: catalogue_full.db` — the TIGER artifacts (14,397 semantic IDs) match it (coverage 100%). `DATABASE_PATH` env override still switches catalogues per launch. `server.py` prints `[DB] active catalogue: <path> (<source>)` at startup so DB/artifact mismatches are immediately visible.
-- **Vote-count quality funnel + variety + cold-start gate:** schema v2 (`media_items.vote_count`), `get_top_candidates` SQL funnel (shortlist 250), MMR final pool 50, opt-in `variety` (10-minute seeded rotation) wired through both engines, `history_threshold: 5` cold-start gate, engine badge in the UI, and `utils/backfill_vote_counts.py`. Details in Sections 3/B/F above.
-### Schema v3: Multi-profile co-view ratings (added later on 2026-10-03)
-The recommender's core problem was **signal, not architecture**: 2 ratings in `watch_history`. Two people share one catalogue, so `watch_history` needed to know *who* rated.
-- **`profiles`** table (`id`, `name` UNIQUE, `rating_count`, `mean_rating`) — seeds 2 renameable profiles (`Labiba` = id 1, `Gabriele` = id 2; databases created before v11 had `Me` / `Partner`, which the v11 migration renames when they still carry those names).
-- **`watch_history.profile_id`** — who rated. Existing rows migrate to profile 1 with ratings preserved.
-- **`watch_history.status`** — `'seen'` | `'not_seen'`. "Never saw it" is a real answer stored with **no rating attached** (never a 0 or a 1); it's what makes the Tier B recommendation computable ("he saw it, you haven't" vs "neither has").
-- Indexes: `idx_watch_history_profile_item` (unique, upsert target), `idx_watch_history_item` (co-view grouping).
-- **Migration note:** SQLite rejects `ALTER TABLE ... ADD COLUMN ... REFERENCES ... NOT NULL DEFAULT 1` ("Cannot add a REFERENCES column with non-NULL default value"), so `profile_id` is added bare then backfilled. Idempotent via `PRAGMA user_version = 3`.
-
-**Co-view tiers** (`get_rating_summary`): **A** both rated ≥7.0 · **B** one rated ≥7.0 and the other hasn't seen it · **C** exploration, or both saw it and disagreed (a disagreement is *not* Tier B).
-
-**Combined score:** Bayesian-shrunk weighted mean per rater — `adj = (n·mean + 10·6.5)/(n+10)`, weight `w = n/(n+10)`, combined = `Σ(w·adj)/Σw` over raters who saw it. A 4/10 from someone with 5 ratings can't outvote an 8/10 from someone with 200.
-
-**Rating queue** (`get_rating_queue`) priority: in-library but unrated by this profile → rated by the other profile → unseen high-rated. Leads with films already on disk, turning watch events into taste signal.
-
-**New DB methods:** `get_profiles`, `update_profile_name`, `rate_item`, `get_rating_summary`, `get_rating_queue`, `get_co_view_history`.
-**New API:** `GET /api/profiles`, `PUT /api/profiles/{id}`, `GET /api/ratings/queue`, `POST /api/ratings`, `GET /api/ratings/summary/{id}`, `GET /api/ratings/co-view`.
-**New frontend:** **💞 Rate Together** tab — one card at a time, profile switcher, 1–10 stars, **"👁️ We haven't seen it"**, skip, keyboard shortcuts (`1`–`0`, `N`, `S`), co-view summary of films both profiles liked.
-
-### Bugs fixed (2026-10-03)
-1. **Genre filter never reached SQL** (`database.py` `get_top_candidates`) — the filter ran as a Python loop *after* the query, so every mood request pulled the whole ~8,041-row catalogue (~2.1 MB with overviews) into Python to cut to 250. Now a SQL `LIKE` predicate. **91 ms → 17 ms**, results verified byte-identical across 6 genre combinations.
-   - *Subtle:* genres are stored comma+**space** separated (`"Crime, Mystery, Thriller"`). The padded-comma token test needs spaces stripped on **both** sides or `%,mystery,%` never matches `", mystery,"` — this silently dropped ~84% of matches on the first attempt.
-2. **`movies.csv` join missing in `bootstrap_sequences.movielens_sequences()`** — it read `row["title"]`, but `ratings.csv` has no title column (`userId,movieId,rating,timestamp`). The function could never run; it `KeyError`'d on row 1. Now joins `movies.csv` by `movieId` (auto-detected as a sibling file). Verified: **0 → 576 sequences**, 63,294/100,836 rows matched (62.6%).
-3. **`rate_item` read its own uncommitted write** — called `get_rating_summary()` (a second connection) inside the `with` block, so SQLite returned the pre-write state and the new verdict was silently missing. Moved the read after the commit.
-4. **Co-view tier misclassified disagreements** — one person liking a film the other had *seen and disliked* returned Tier B ("he'd recommend this to you"). Now Tier C.
-5. `MOVIE_LENS` data location: `https://files.grouplens.org/datasets/movielens/ml-latest-small.zip` (the bare `ratings.csv` URLs 404; files ship zipped). Measured: 1.95M usable co-rated pairs after matching to the catalogue.
-- **Note:** IMDb `title.ratings.tsv.gz` covers TV but is `tconst,averageRating,numVotes` — aggregate per-title means with **no userId**, so it cannot express agreement between people. There is no public per-user TV ratings dataset; any future co-view predictor is movies-only.
-- **PENDING VERIFICATION (not yet executed — session terminal wedged):** `python3 -m py_compile database.py server.py services/recommender_service.py services/generative_retriever.py utils/backfill_vote_counts.py`, `uv run python tests/test_generative_retriever.py`, server restart + live checks (`/api/moods` 200, `POST /api/recommend` → `engine` field + badge data), and the vote-count backfill run.
-
-### Changelog
-- **TIGER generative retrieval engine (parallel, feature-flagged):** new `services/generative_retriever.py` (`GenerativeRetriever` + `route_recommend` router) implementing TIGER semantic-ID generative retrieval beside the untouched legacy recommender; `POST /api/recommend` responses now carry `engine: "generative" | "legacy"`. Config: `recommender.engine_mode` (`fallback` default | `legacy_only` | `generative_only`) + `recommender.generative.*` knobs in `config.yaml`.
-- **TIGER training pipeline added to `/training`:** `prepare_semantic_data.py` (Stage A: catalog text corpus → bge-small embeddings, reuses `fine_tuned_embedder/` when present), `train_rqvae.py` (Stage B: RQ-VAE 3×256×64 semantic IDs + collision leaf tokens), `bootstrap_sequences.py` (Stage D: watch-history / MovieLens / synthetic genre co-watch sequences), `train_tiger_predictor.py` (Stage C: causal Transformer, 3×256 codebook embedding table, per-level CE loss), `export_tiger_onnx.py` (Stage F: ONNX export → dynamic INT8 → <15MB/<5ms gates → prefix trie → end-to-end smoke test). Full runbook in `training/README.md` Steps A–H.
-- **TIGER artifacts deployed & live-verified:** `models/tiger/` (INT8 0.69 MB, 0.15 ms CPU, trie covers 14,397 full-catalogue items); generative engine returns real scored items (`engine: "generative"`) when history ≥ threshold; short history / artifact-missing / DB-mismatch all route to legacy automatically. Load-time DB↔artifact coverage check logs a loud warning on 0% overlap.
-- **Additive DB method:** `DatabaseManager.get_watch_history_chronological()` (oldest-first history for sequence modeling; no existing queries changed).
-- **Dependencies:** `onnxruntime>=1.17.0,<1.24` added to `pyproject.toml` (capped: 1.24+ dropped Python 3.10 wheels). Training-only deps documented in `training/README.md` (torch, sentence-transformers, onnx, onnxruntime, onnxscript).
-- **Tests:** new offline suite `tests/test_generative_retriever.py` (trie build/lookup/collisions, beam decode, history→semantic sequence, insufficient-history signal, router modes, artifact-missing readiness).
-- **Jellyfin service modularized:** `jellyfin.py` removed → `services/jellyfin_service.py` (`JellyfinService`, legacy alias `JellyfinRefresher`).
-- **Split media roots:** `config.yaml` now has `media_folders: [~/Media/Movies, ~/Media/Shows]` + a `jellyfin_library` block (movie_dir / tv_dir / library names / realtime_monitor), with legacy fallback to `media_folders[0]`.
-- **Organizer rewritten:** pure module-level `organize_media_files()` handles movies + season packs + multi-episode files + subtitle pairing (`_parse_sxxeyy`, `_parse_subtitle_tags`), registers every episode in `media_sources`, logs 4K/HEVC transcode hints, and removes the staging dir once emptied (non-media leftovers preserved, never deleted).
-- **Async Jellyfin verification:** `_verify_in_jellyfin` poller (non-blocking, `asyncio.to_thread`) replaces the old sync `JellyfinRefresher` call inside the download loop; `downloads_store[id]["jellyfin_visible"]` (+ `jellyfin_hint`).
-- **Server:** fault-tolerant startup `ensure_libraries()` + `GET /api/jellyfin/status`.
-- **Docs:** stale `ws_manager.py` row removed (file does not exist); README Jellyfin setup rewritten.
-- **Prowlarr aggregated search (optional):** `ProwlarrSearcher` adapter + Prowlarr→YTS→Apibay fallback chain; `utils/add_prowlarr_indexers.py` installs the safe indexer set; healthy set = YTS, ThePirateBay, NyaaSi, Knaben (EZTV unreachable from this network — documented for later with the FlareSolverr-requiring indexers).
-- **Full catalogue support:** schema v1 migration (`tmdb_id UNIQUE` → `UNIQUE(media_type, tmdb_id)`, `PRAGMA user_version`-gated, idempotent, FK-preserving rebuild), `upsert_catalogue_items()` bulk insert, `utils/build_full_catalogue.py` (10k movies + 10k TV via TMDB discover, resumable, threaded runtime details pass, watch-history carry-over), `DATABASE_PATH` env override in `server.py` for one-line plug/unplug (`catalogue.db` = test catalogue, `catalogue_full.db` = full).
-
-### Verification checklist
-- [x] Schema v3 migration verified on **both** `catalogue.db` and `catalogue_full.db`: history rows preserved (2 → 2, ratings intact, landed on profile 1), `PRAGMA foreign_key_check` clean, idempotent on reopen
-- [x] `uv run python tests/test_ratings.py` — 45 checks pass (migration, not_seen semantics, tiers A/B/C, upsert, shrinkage, queue priority, co-view history, validation, SQL genre matching)
-- [x] Genre-in-SQL fix verified **byte-identical** to the old Python filter across 6 genre combinations incl. multi-word ("Science Fiction") and TV aliases ("Sci-Fi & Fantasy"); `Se7en` (top-scoring) now correctly included
-- [x] `bootstrap_sequences.movielens_sequences()` verified on the real dataset: 0 → **576 sequences**, 63,294/100,836 rows matched (62.6%)
-- [x] Live API check against the real 14,398-item catalogue: all 6 new endpoints correct (queue, rate 9.0 → tier B, not_seen → tier B, summary, co-view count 0, rename, HTTP 400 on unknown item + duplicate name)
-- [x] `POST /api/recommend` regression — still returns `engine: "legacy"`, 10 items
-- [x] Frontend wiring verified: all 7 `onclick` handlers defined, all 9 element IDs present in `index.html`, `node --check static/app.js` clean
-- [x] No regressions: `test_organizer.py`, `test_searcher.py`, `test_generative_retriever.py` all still pass
-- [x] `python3 -m py_compile database.py server.py training/bootstrap_sequences.py`
-- [x] `training/data/` added to `.gitignore` (4.1 MB download, not source)
-- [ ] **NOT YET BUILT — Phase 2:** profile-aware recommendation scoring (`profile=me|partner|together`), tier boosts (A:+1.5, B:+0.8), profile-aware `exclude_watched`, profile selector on Discover, co-view badges on cards
-- [ ] **NOT YET BUILT:** `MOOD_MAPPINGS` still maps Horror to `["Horror","Mystery"]` (Mystery is crime → Scary returns *Mystic River*, *High and Low*); silent `or candidates` filter fallback (`recommender_service.py:302-312`); variety shuffle runs *after* MMR so pool composition never varies (`:326`)
-- [ ] **NOT YET BUILT:** dead ONNX branch (`recommender_service.py:97-126,184-188` — reads a nonexistent `embedding` column, needs an unexported `models/model.onnx`, imports uninstalled `transformers`); `tier2_keywords` backfill (0% populated, no util exists)
-- [ ] **DEFERRED — Phase 5:** co-view predictor (1.95M MovieLens pairs available; ~1 new module + 1 training run). Movies only — no public per-user TV ratings data exists.
-- [x] `uv run python -m py_compile services/generative_retriever.py services/recommender_service.py server.py database.py training/prepare_semantic_data.py training/train_rqvae.py training/bootstrap_sequences.py training/train_tiger_predictor.py training/export_tiger_onnx.py tests/test_generative_retriever.py`
-- [x] `uv run python tests/test_generative_retriever.py` — all offline TIGER checks pass (trie, beam, sequences, router, missing artifacts)
-- [x] Full TIGER pipeline live-run on `catalogue_full.db` (scratch venv): Stage A (14,397 × 384 embeddings), Stage B (2,822 unique tuples, 1,254 collision groups leaf-disambiguated, codebook utilization ~0.5), Stage D (500 synthetic sequences), Stage C (loss 4.46→3.45), Stage F gates (0.69 MB / 0.15 ms) + trie smoke test
-- [x] Runtime live test: `engine: "legacy"` fallback with history < threshold; `engine: "generative"` with forced threshold returns real scored items; `generative_only` + TV media type OK; DB-mismatch case routes to legacy with loud warning
-- [x] `uv run python tests/test_organizer.py` — all offline checks pass
-- [x] `uv run python tests/test_searcher.py` — all offline checks pass
-- [x] `uv run python -m py_compile services/jellyfin_service.py services/torrent_service.py server.py tests/test_organizer.py`
-- [x] `uv run python tests/test_organizer.py` — all offline checks pass (parsers, movie+subs, season pack, multi-episode, no-video edge case)
-- [x] `uv run python tests/test_searcher.py` — all offline checks pass (Prowlarr mapping, NZB/no-magnet/dead filtering, dedup, categories, unconfigured path)
-- [x] Prowlarr live-verified: 4 safe indexers enabled and test-searched (Knaben 70–95 hits/query); adapter returns merged torrent-only results through `TorrentSearcher.search()`
-- [x] Schema migration v1 verified on `catalogue.db` (42 sources + 2 history rows preserved, 0 FK violations, idempotent reopen)
-- [x] `DATABASE_PATH` plug/unplug verified (`catalogue_full.db` ↔ `catalogue.db`)
-- [ ] `catalogue_full.db` runtime details pass finishing in background (`tail -f /tmp/fullcat2.log`; re-run `uv run python utils/build_full_catalogue.py --media-types tv` if interrupted — fully resumable). Final counts: 9,993 movies (≥200 votes), 4,404 TV (≥100 votes — TMDB's full qualifying set), 2 history rows carried over
-- [x] Server boots with `ensure_libraries()` on startup; `GET /api/jellyfin/status` returns diagnostics
-- [ ] Manual: one-time move of existing show folders to `~/Media/Shows` (command in README)
-- [ ] Manual: confirm new downloads appear on the TV client (4K/HEVC may need transcoding enabled)
-
----
-
-## 7. RECOMMENDER REVIEW (2026-10-08)
-
-**Full architecture + flow diagrams: `docs/RECOMMENDER_ARCHITECTURE.md`. Read that before touching the recommender.**
-
-Note: commits after 2026-10-03 (profile-aware scoring, query-intent filtering, origin-of-cinema filtering + `origin_country`/`original_language` columns (schema v4), concept/premise matching via `THEMES`, download resume/ETA) were never recorded in this handover. The architecture doc reflects the code as of commit `9beb8e3`.
-
-**Live state observed:** `catalogue_full.db` = 36,447 movies / 14,050 TV. `watch_history` = 71 `seen` + 220 `not_seen`, **all profile 1** (Partner has zero ratings). `tier2_keywords` 0 % populated. The router sends almost every mood/chip request to the **generative** engine (history threshold is counted over all rows, including `not_seen`).
-
-### Fixed 2026-10-08
-- **Series order (both engines):** schema v5 adds `media_items.collection_id / collection_name / collection_order / collection_checked`. `apply_series_order()` in `recommender_service.py` swaps a sequel for the earliest entry neither profile has *seen*, keeps one film per series, and adds `series_note` / `series_position` / `replaced_sequel_title` (UI badge 📚). Before TMDB data exists, it falls back to sequel titles (`DatabaseManager.parse_sequel_title`), guarded by shared genre and an earlier bare-title film. **To do once, from your own terminal:** `uv run python utils/backfill_collections.py` (resumable; `--limit N` for a partial run). TMDB is not reachable from Claude's sandbox.
-- **Generative history:** `GenerativeRetriever.get_history_item_ids(profile=…)` → `DatabaseManager.get_recent_liked_history()`: seen only, rating ≥ `generative.history_min_rating` (6.0, new config key) or unrated, newest 30, per profile (`me` / `partner` / both). Profile ids come from `get_profiles()` (lowest = me) instead of hard-coded 1/2.
-- **`exclude_watched` SQL** (`get_candidates`, `get_top_candidates`) now excludes only `status='seen'`. "We haven't seen it" answers no longer hide films.
-- Tests: new `tests/test_series.py` (18 checks). `test_ratings.py` passes except 3 groups that need uvicorn/libtorrent, which weren't installable in the review sandbox.
-
-**Open bugs (prioritised):**
-1. ~~No franchise/collection awareness~~ (fixed above, pending backfill run). Original note: No franchise/collection awareness → sequels recommended before earlier entries (both engines). Needs TMDB `belongs_to_collection` (id + order) stored on `media_items`, then a "replace with earliest unseen entry" pass.
-2. ~~TIGER history~~ (fixed above). Original note: TIGER history (`get_history_item_ids` → `get_watch_history_chronological(limit=100)` ASC) uses the **oldest** 100 rows, includes `not_seen`, ignores rating value, mixes profiles. Generative profile IDs are hard-coded 1/2.
-3. Generative engine ignores query exclusions, rating floor and diversity. Genre filter only applies with ≥20 matches. Scary→Mystery leaks comedies.
-4. Taste bonus saturates at the 2.0 cap and has no negative signal (ratings < 7 are ignored).
-5. `rank_candidates_profile_aware` overwrites `relevance_boost` (wiping the intent-genre bonus) when content words exist. The line is also duplicated.
-6. Concept SQL boost: unbounded +3.0 per generic term. The second "wider" query repeats the first. "smart" alone triggers concept mode.
-7. `parse_origin_intent` substring matching ("indiana jones"→Indian, "polished"→Polish). Duplicate dict keys `chinese`/`portuguese`. Kollywood/Tollywood swapped. Nigerian = Yoruba only.
-8. Negation window is 1 token ("not complicated" adds Horror/Thriller/Crime/War).
-9. `server.py` `exclude_ids` filters only the current page and forces `has_more=False`.
-10. Tier A/B boosts unreachable in Discover (all seen films are dropped before scoring). Partner mode also drops films only profile 1 has seen.
-11. Genre chips widen (union with mood + query genres) instead of narrowing.
-12. Era/runtime `or candidates` silent fallback. `medium` duration is unhandled in Python.
-13. Variety: generative always shuffles. Legacy shuffles after MMR (same 50, reordered).
-
-### TIGER retraining fixes (2026-10-08)
-- `training/bootstrap_sequences.py`: real history = seen + rated ≥ `--min-rating` (6) only, repeated `--history-weight` (20)×. New `--no-synthetic`. Default DB is now `catalogue_full.db` (the one the semantic IDs come from). Verified locally: 70 liked films + 601 MovieLens sequences.
-- `training/train_tiger_predictor.py`: `make_training_examples` slid only over the last `max_seq_len-1` items of each sequence. Now it covers the whole sequence: **4,721 → 30,359 training examples** on the same data.
-- `training/retrain_tiger.sh`: one command (Steps D→G, backs up `models/tiger` to `models/tiger.bak`). Needs torch, so run it on the Mac (Claude's sandbox has no torch and no PyPI). **Not yet run**, so the deployed model is still the old synthetic one.
-
-## 8. NEXT: Recommender v2 design
-`docs/RECOMMENDER_V2_DESIGN.md`: search-to-rate, vibe search (text → embedding over plot + TMDB keywords + reviews + LLM mood tags), vibe clusters, facet dials, a skippable questions pop-up, feedback logging, learning loops, a 6-phase build order and a user prep checklist (incl. a `training/vibe_eval.csv` golden set).
-- **Decisions 2026-10-08:** train on the Mac, serve on the Pi (INT8 ONNX encoder, precomputed vectors, no torch on the Pi). The questions pop-up appears automatically, asks up to ~6 questions, and only asks questions that would change the top 10 (§3 "meaningful" rules). Vibe search = embeddings + clusters. **LLM mood tags: yes**, Claude Haiku 5.5 via the Batch API, 200-film pilot first, then ask the user before the full run. Subtitles and the boyfriend's profile are out of scope for now.
-- **Question bank swapped in (2026-10-08):** `docs/VIBE_QUESTION_BANK.md` (33 indirect "guess the vibe" questions in 9 groups, adaptive picker, short set of 10) replaces the placeholder Q1–Q8 in V2 §3. Its §4 adds dials (tension, ending_valence, humour, strangeness, cringe; gore, fantasy, talkiness, spectacle), content flags, setting/palette tags and closed "feels like" (37) / "good for" (16) vocabularies. V2 §2.5 and §4 now reference them.
-- **Ratings rethink (planning, 2026-10-08, not built):** real data shows 74 seen films rated 5–9, 76 % on 7 or 8, no notes, so `≥ 7` / `≥ 6` thresholds treat ~89 % of films as liked and there are no negatives for §5. Proposed plan (Claude Doc "Better ratings: capturing what I actually thought", https://claude.ai/code/artifact/69f6b6d7-d713-45c3-9d9c-711ca3b12a13): five behaviour verdicts (Would rewatch / Loved / Liked / Meh / Not for me) + optional what-worked chips and vibe-check questions, and a per-profile `taste_score` (−1…+1) replacing raw rating cut-offs. Existing ratings kept, given inferred verdicts, plus a "Sort out my 7s" queue. Decided 2026-10-09: five verdicts; "Why?" folded except for Would rewatch / Not for me; tap-to-answer vibe-check questions (2–4 options each, 3 shown per film) inside it; TV gets the same card (per-season later); tie-breaker pairs dropped and replaced by a later, separate same-genre "This or that" round. Not built yet.
-- **Rule for API spend:** never spend Anthropic API money without giving the user the exact Mac command and expected cost first.
-
----
-
-## 9. UI REDESIGN — TICKET LOOK (2026-10-08)
-
-**Status:** the frontend was redesigned as a light UI. The user chose the **ticket** look on 2026-10-08, and the **clean** look, its token set, the header look switch and `setLook`/`syncLookSwitch` are deleted. `<html data-look="ticket">` stays, since the ticket rules are scoped to it. **Next step:** write `DESIGN.md` from the result. The dark-theme alternative on branch `ui-polish-dark` was not chosen and is unmerged.
-
-- **Look:** paper ground `#e8e6e1`, white ticket cards. Each pick's footer is a perforated, notched stub showing "No. 01" and printed on the tangerine stock (mint once it's playable). The Rate card's stub holds both people's verdicts. Ticket roll colours are roles: tangerine = act, butter = selected, rose = together, mint = ready, sky = learned taste. Display type is condensed Archivo.
-- **Font:** run `sh utils/fetch_fonts.sh` once. It saves `static/fonts/Archivo-Variable.ttf`, and commit that file. The sandbox couldn't download it. Until it's there, the ticket look falls back to wide system lettering (Avenir Next Condensed on Apple devices), and its condensed display type isn't finished.
-- **Name: Northern Lights** (chosen 2026-10-09; replaces the placeholder "Movie Night", and before it "CouchCinema"). The popcorn mark is gone. Northern Lights is treated as the cinema's name and the tickets as what it prints, so the ticket look stays. The aurora appears only as **holographic foil** (`.foil`, `--aurora-*` tokens in `styles.css`): on the wordmark, each pick's "No. 01" and the Rate stub's verdicts once both people have rated (small text uses deep inks without the glint). As a ticket scrolls through the screen its foil catches the light (CSS `animation-timeline: view()`, no JS; static where unsupported or with reduced motion). When picks appear, an aurora band passes over each ticket once (`.movie-card.issued::after`). Options the user didn't pick: aurora roll colours, an evening night-sky mode.
-- **Download progress** shows percent · time left · speed on the pick's stub and in the active-downloads list (time left is hidden while the speed is 0). On a phone the progress bar takes its own row under the stub so all three fit.
-- **Structure:**
-  - Tabs: Discover / Download / Rate / Later / History (Later is the Watch later list, see §12). A top bar on desktop, a fixed bottom bar at ≤640px. URL hash (`#rate`) restores the tab.
-  - Discover order: Movies|TV and whose-taste segmented controls → describe box → mood tiles (name + API `vibe`; emoji stripped from mood names) → "More filters" `<details>` with a live summary of active filters and "Reset all filters" → sticky CTA.
-  - Results: one header naming the engine ("Learning your taste" / "Picked by rating & genre") instead of a badge on every card. Skeletons while loading, an error state with retry, and a scroll to results.
-  - Reason badges say why each title is there.
-- **Bugs fixed on the way:**
-  - The "From" origin chips never loaded on first visit.
-  - Movies/TV toggle and "Reset" had no CSS.
-  - The progress-bar cancel button was unstyled.
-  - Posters used dead `via.placeholder.com` (now a typographic fallback).
-  - Titles were interpolated unescaped into `innerHTML` and inline `onclick` (now `escapeHtml` + `jsArg()`).
-  - A failed rating still advanced the Rate card, silently losing it (`postRating` now returns success).
-  - The feedback sheet's star selector also selected the Rate tab's stars.
-  - The rate keyboard shortcuts fired with a sheet open.
-  - `alert()` for voice is now a toast, and the mic is hidden when unsupported.
-  - The page now allows pinch-zoom.
-- **Accessibility:** real `<button>` mood tiles, `aria-pressed` on every toggle, tab roles, `:focus-visible` rings, labelled inputs, Esc / backdrop close on sheets, focus return, `prefers-reduced-motion`, 16px inputs on phones (no iOS zoom).
-- **Design records:** `PRODUCT.md` (product truth) and `.impeccable/surfaces/templates-index-html.md` (direction contract). `DESIGN.md` is deliberately not written until a look is chosen.
-- **Verified against a mock API only** (FastAPI deps couldn't install in the sandbox): both looks at 390px and 1280px, every tab, loading / downloading / error states, and `node --check static/app.js`. An independent design review passed 7 of 8 fixes; the open item is the font above. **Not yet checked against the real server.**
-
----
-
-## 10. RECOMMENDER V2 BUILD LOG (from 2026-10-08)
-
-The light redesign with the "ticket" look is the UI (the "clean" look was removed 2026-10-08). Build new UI in the ticket look.
-
-### 10.1 Mood tags (LLM) + TMDB vibe backfill
-- **Schema v6** (`_migrate_v6_vibe`): `media_items.tagline`, `tier2_checked` (0 / 1 / -1 = 404), `vibe_tags` (JSON), `vibe_tagged_at`, `facets` (JSON), `vibe_cluster_id`; new table `mood_tag_batches` (batch id, item ids, status, usage, real cost).
-- **`services/vibe_vocab.py`:** the single source for the 14 dials (with 0/5/10 rubric films and anchor sentences for the free fallback), 11 content flags, 37 "feels", 16 "good for", setting / season / time-of-day / palette / story-era lists. Everything vibe-related imports from here.
-- **`utils/backfill_tmdb_vibe.py`** (free, TMDB): one call per title, `/{movie|tv}/{id}?append_to_response=keywords,reviews`, fills `tier2_keywords`, `tier2_reviews_summary` (up to 3 cleaned snippets, rated + short first) and `tagline`. Resumable, most-voted first. `uv run python utils/backfill_tmdb_vibe.py [--limit N]`.
-- **`utils/mood_tag.py`** (costs money): Claude Haiku 5.5 via the Message Batches API, `thinking` disabled, effort low, JSON-schema structured output, cached system prompt (rubric). Commands: `pilot` (200 titles: ~35 % films you rated, 35 % popular across genres, 15 % series, rest long-tail), `run`, `collect` (resume after Ctrl-C), `status`, `show "<title>"`, `preview` (prints one request + estimate, no API call). Every submitting command prints an estimate and needs a typed `yes`. Real cost is computed from each result's `usage` and stored per batch; reports go to `reports/` (gitignored). Needs `uv run --extra llm ...` (new optional dependency `anthropic`).
-- **Prices used** (Batch API, Haiku 5.5, prompts < 100k tokens, checked 2026-10-08): input $0.05/MTok, cache write $0.0625, cache read $0.005, output $0.25.
-- **Estimate:** pilot ≈ $0.02–0.04. Whole catalogue (~50k titles) ≈ $4–5 if the cached rubric hits, ≈ $9 worst case. The pilot replaces this with a measured per-title cost.
-- **Status:** written and tested offline with a fake Batch client (`tests/test_mood_tag.py`, `tests/test_vibe_backfill.py`). **Not run yet** (the sandbox has no API key and can't reach TMDB). Order on the Mac: backfill (free) → pilot → user approves → `run`.
-
-### 10.2 Search to rate (Rate tab)
-- **UI:** a search box at the top of the Rate tab (`#rateSearchInput`, an ARIA combobox). 250 ms debounce, ↑/↓ + Enter, Esc closes. Results show poster, year, Film/TV and your own verdict ("You: 8/10", "Not seen"). Picking one puts it on the card in front of the queue (`openSearchedTitle`, `item.fromSearch`), progress reads "From your search", and the card says "You gave it 8/10. Change it?" when you already rated it. The last row, "Not here? Search TMDB for …", searches TMDB; picking a TMDB result adds it to the catalogue and opens it.
-- **API:** `GET /api/catalogue/search?q=&media_type=all|movie|tv&limit=10&profile_id=` (items carry `my_verdict` and `co_view`), `GET /api/catalogue/tmdb-search?q=` (needs `TMDB_API_KEY`; items carry `catalogue_id` if already present), `POST /api/catalogue/tmdb-import {media_type, tmdb_id}`.
-- **`services/catalogue_search.py`:** in-memory index of normalised titles (accents, case, punctuation, `&`→and, "spiderman" = "spider man"), title + original title. Rank: exact → starts-with → word-start → contains → all words, then vote count. Rebuilds itself when `COUNT(*)`/`MAX(id)` of `media_items` changes.
-- **Verified:** `tests/test_catalogue_search.py`, plus the real server on a copy of `catalogue.db` driven by Playwright in both looks (390 px and 1280 px): search → pick → rate 8 → search again shows "You: 8/10" → card offers to change it; no JS errors. TMDB import isn't exercised live (TMDB is blocked in the sandbox).
-
-### 10.3 Feedback logging (Phase 1)
-- **Schema v7** (`_migrate_v7_feedback`): `discover_sessions` (one row per Discover search: profile, media type, query text, request JSON, engine, weekday, hour, and room for pop-up answers / asked order / rules / belief), `discover_impressions` (session, item, rank, score parts JSON, outcome, rating; unique per session+item), `vibe_clusters` (filled in Phase 3).
-- **Outcomes**, weakest to strongest: shown < opened < dismissed < downloaded < played < rated. An outcome never downgrades. It is credited to the latest impression of that title within 7 days (`ATTRIBUTION_DAYS`).
-- **Where they come from:** `/api/recommend` creates a session (page 2+ reuses it via `session_id`) and logs every returned card with its rank and score parts. "opened" comes from opening the synopsis. "dismissed" comes from the new x button on Discover cards. "downloaded" comes from `/api/torrent/download`. "played" comes from `/api/watch/start`. "rated" comes from `/api/ratings` (seen + rating) and the finish-and-rate flow.
-- **API:** `POST /api/feedback {media_item_id, outcome, session_id?, rating?}`, `GET /api/feedback/stats`. Logging failures never break a recommendation (try/except).
-- **Known bug (pre-existing, not fixed):** `finish_active_watch` inserts `watch_history` without `profile_id`, so ratings from the "finished, rate it" flow land with a NULL profile.
-- **Verified:** `tests/test_feedback.py`, plus the live server with Playwright in both looks: dismiss fades the card and logs it, page 2 continues the ranks, watch/start marks "played".
-
-### 10.4 Vibe documents (Phase 2)
-- **`services/vibe_document.py`:** `build_document(item, notes)` makes one paragraph per title: title (year)[, series], tagline, overview (≤700 chars), genres, up to 20 TMDB keywords, then the mood part from `vibe_tags` (vibe sentence, feels, the dial labels that sit clearly at one end (≤0.25 or ≥0.75), good for, setting), then review snippets and the profiles' `watch_history.notes`. Clipped at 1,900 characters (bge-small reads ~512 tokens). Mood goes before reviews so clipping never drops it. `iter_documents(conn)` yields `(id, document)` for the whole catalogue; Phase 3 embeds these.
-- **CLI:** `uv run python -m services.vibe_document --stats` (coverage of overview / tagline / keywords / reviews / mood tags) and `uv run python -m services.vibe_document "Paddington 2"` (print one document).
-- Documents aren't stored; they're rebuilt when embedding, so re-running the backfill or the tagger just means re-embedding.
-- **Verified:** `tests/test_vibe_document.py`.
-
-### 10.5 Vibe engine (Phase 3)
-- **Build, on the Mac (free, local):** `uv run --with torch --with sentence-transformers --with onnx --with onnxscript python training/build_vibe_index.py`. Steps: vibe documents → bge-small-en-v1.5 vectors (`models/vibe/item_vectors.npy` float16 + `item_ids.json`); facets for the 14 dials into `media_items.facets` (LLM dial when tagged, else the anchor projection mapped to its catalogue percentile; `source` = llm / anchor / mixed); spherical k-means (k = √(n/4), 80–150) into `vibe_clusters` + `media_items.vibe_cluster_id`, named by the most typical keywords / feels / genres; ONNX query encoder (INT8 if it stays ≥ 0.97 cosine to the full model, else fp32) + `tokenizer/tokenizer.json`. `--skip-embed` reuses the vectors (facets + clusters only), `--skip-export` skips the encoder, `--k N` sets the cluster count.
-- **Rebuild** after the backfill or the full mood-tag run (both change the documents). `models/` is gitignored: copy `models/vibe/` to the Pi, and the catalogue too, because facets and clusters live in the DB.
-- **Serving (`services/vibe_index.py`, Pi):** loads the files lazily, needs only numpy + onnxruntime + `tokenizers` (new dependency). `encode_query` (bge query prefix, CLS pooling, 64 tokens), `top`, `similarities`, `facets_for` (same dial projection for any text, for the Phase 4 pop-up). "like <film>" (`like_phrases`, `resolve_like_titles`: exact or starts-with title match, ≥ 50 votes) pulls the query vector halfway to that film, and the named film is left out of the results. No files or a failed load → `is_ready()` False and everything behaves as before.
-- **Ranking:** when the index is ready and the request has text, `route_recommend` sends it to the legacy engine (`vibe_routed_to`). `RecommenderService.recommend` adds the 400 nearest titles (`VIBE_SHORTLIST`) to the SQL shortlist through the same hard filters (`get_top_candidates(only_ids=...)`), then adds `VIBE_WEIGHT` (3.0) × similarity rescaled over the pool (25th percentile → 0, best → 1). Items carry `vibe_similarity` / `vibe_boost`, and impressions log them plus `vibe_cluster_id`. A vibe-ranked list counts as targeted, so the variety shuffle is off. Response has `vibe: {used, like_titles}`. `GET /api/vibe/status`.
-- **Parser fixes:** origin phrases match whole words only (+ plural), so "indiana jones", "polished" and "animated" no longer trigger Indian / Polish / anime. Negation looks back up to 3 words and stops at but/and/or ("no really scary" excludes Horror; "not scary but funny" keeps Comedy). "not complicated" / "not simple" keep their exclusions instead of adding Horror/Thriller/Crime/War. Open bugs 7 and 8 above are fixed apart from the duplicate dict keys, Kollywood/Tollywood and Nigerian notes.
-- **Not done yet (later phases):** facet_fit (needs pop-up answers, Phase 4), cluster affinity and learned weights (Phase 5), MMR on vibe vectors.
-- **Verified:** `tests/test_vibe_index.py` (fake index, no model). The build script ran end to end in the sandbox on `catalogue.db` with a tiny random BERT standing in for bge-small (Hugging Face is blocked here), and the live server loaded the result, routed a typed request to the vibe ranking and logged the vibe parts. **Not yet run with the real model**: that's the Mac command above.
-
-### 10.6 Questions pop-up, "guess the vibe" (Phase 4)
-> **Since T4 (2026-10-12, branch `vibe/t4-mood-wireup`) the pop-up runs on the mood map (§10.10):** `/api/discover/start|answer|finish` use `MoodSession`, not `PopupSession`. The bullets below describe the old dial-based `PopupSession` (`services/vibe_popup.py`, still in the repo, now unused by those endpoints). Differences: A3 is always the first question when asking is on and the pool is not empty; `question_skipped` is only `no_results` (empty pool) or null (the frontend toast for `no_mood_data` can no longer fire); the D1 profile switch that rebuilt the pool is gone (the mood bank has no profile question); every response adds `moods` (top 3, `[{id, label, p}]`, p to 2 decimals); options have no example films yet.
-- **Bank as data:** `services/vibe_questions.py` encodes 31 of the 33 questions in docs/VIBE_QUESTION_BANK.md, each option's changes as an `fx` dict (dial targets, caps, tag/keyword/genre boosts and excludes, runtime/year/language/quality filters, profile). Not yet: C4 (country options from the pool) and H4 (recent-cluster fatigue), and C1's "usual place, new dish" / "tiny place" only partly work until cluster affinity exists (Phase 5). C1 "my usual" is always hidden because Discover's pool excludes seen films.
-- **Engine:** `services/vibe_popup.py`. `PopupSession` keeps the scored pool from `RecommenderService.recommend(..., return_pool=True)` and a belief (target + confidence per dial, filters, boosts). Score = pool score + 2.0 × Σ conf·(1 − |facet − target|) + tag/keyword boosts; hard filters drop films unless fewer than 30 would survive, then they become penalties. Facets come from `media_items.facets` (the Mac build) with the LLM tag dials as fallback; a film with no facet scores neutral on that dial.
-- **Picking questions:** eligible = not asked, no alt sibling asked, its "ask when" holds, not answered by the text (`implied_answers`: "friends" answers D1, a duration filter skips A4, etc.). Options with fewer than 10 fitting films are hidden (avoid options must remove ≥ 5 % of the top 50); a question needs 3 live options. Value = average over options of (1 − top-10 overlap), dropped below 0.3, × fun 1.2 for A3/D1/F1/F4/B1/E2, × 0.5 if the group was asked. Q1 must be about you; one avoid question by Q4; closers I1/I2 only after Q4. Stops at 6 answers, when the top 5 hasn't changed for two answers, or on a ≥ 1.5 score gap between #5 and #6.
-- **When it appears:** on every Discover search while the "Ask me a few questions first" switch in More filters is on (localStorage `askQuestions`); `discover_start` calls `next_question(force=True)`, so the first question is forced: if none passes `MIN_VALUE` it takes the best one with live options, and on step 1 falls back to any eligible question when no "about you" one has live options. Later questions keep the normal rules. (`should_auto_ask` is no longer used by the server.)
-- **API:** `POST /api/discover/start` (the recommend request + `ask`) → page 1 + `question`; `POST /api/discover/answer {session_id, question_id, option_id | "skip"}`; `POST /api/discover/finish {session_id}` ("Just show me"). D1 changing the profile rebuilds the pool. `/api/recommend` with a pop-up `session_id` pages through the answered pool. Sessions live in memory for 3 h; answers, asked order and belief are written to `discover_sessions`, and impressions (with `popup_boost`) are logged when the pop-up ends.
-- **UI:** `#vibeModal` bottom sheet (centred on desktop): "Question n of up to 6", the question, options with emoji + label + two example films from the pool, "Skip this one", "Just show me" (Esc and backdrop do the same). Results behind it re-render after every answer.
-- **Verified:** `tests/test_vibe_popup.py` (synthetic pool), the live server on a synthetic 250-film DB driven by Playwright at 390 px and 1280 px (six questions asked, results re-ranked, no JS errors). Not yet tried on the real catalogue with real facets: that needs the Mac build deployed.
-- **Why it may not open (2026-10-10, from "not popping up on my phone"):** with no mood dials (`media_items.facets`, from the Mac build) and no LLM mood tags on the serving catalogue, no question can change the top 10, so it never opens, on any device and silently. The phone reaches `mars` over Tailscale, whose catalogue only gets facets from a nightly bundle's `db_patch.jsonl` (§13). Now: `/api/discover/start` returns `question_skipped` (`no_results` / `no_mood_data` / `nothing_to_ask`, `vibe_popup.skip_reason`; `specific_request` was dropped when the first question became forced, PR #31), the UI shows a one-time toast for `no_mood_data`, and `GET /api/vibe/status` has `mood_data: {titles, with_facets, with_mood_tags}` to check a server. `/static/*` is served with `Cache-Control: no-cache` (ETag revalidation) so phones don't keep an old `app.js`.
-- **Next: mood map (planned 2026-10-12, not built).** Labiba wants the questions on every search, about mood (never "pick a film"), soft scores ("no comedy" deprioritises, never removes), adaptive follow-ups, no learning across nights (occasions later), A3 kept, era/length questions dropped. Plan for cheaper models: `/mnt/project-files/vibe-questions/plan.md` (T0 always ask, T1 moods, T2 belief + entropy picker, T3 ranking, T4 UI, T5 download error diagnostics).
-- **Learning (Phase 5):** `p(option)` is uniform and `usefulness(q)` is 1.0; both are meant to come from the logged sessions later.
-
-### 10.7 Verdict ratings (built 2026-10-09; plan: Claude Doc "Better ratings: capturing what I actually thought")
-- **Why:** the 1-10 stars bunched on 7 and 8 (76 % of 74 films, none below 5, no notes), so `>= 7` treated ~89 % of films as liked and there were no negatives for §5.
-- **Schema v8** (`_migrate_v8_verdicts`): `rating_details` (per profile + title: `verdict`, `did_not_finish`, `worked` / `didnt` chip lists, `vibe_check` answers, `taste_score` -1..+1, `inferred`) and `rating_history` (the previous state each time a rating changes). The migration gives every existing rating an **inferred** verdict read against that person's own spread (top ~15 % loved, down to the bottom quarter liked, rest meh; never rewatch / not for me). `watch_history.user_rating` is left untouched.
-- **`services/verdicts.py`** (pure functions): five verdicts (`rewatch` +1.0, `loved` +0.6, `liked` +0.2, `meh` -0.3, `not_for_me` -1.0), `taste_score` (didn't finish caps at -0.5), `legacy_rating` (10 / 9 / 7 / 5 / 3, so old `>= 7` / `>= 6` readers stay right), 10 chips, 10 vibe-check questions (`VIBE_QUESTIONS`), `infer_verdict`, `pick_vibe_questions` (3 up front: "How did it leave you?" then the dials furthest from the middle for that film; "felt like" / "best for" options come from the film's own `vibe_tags`).
-- **`DatabaseManager`:** `rate_item(..., verdict, did_not_finish, worked, didnt, vibe_check)` (a bare `user_rating` still works and removes any verdict; chips not sent are kept; notes are no longer wiped by a re-rate), `get_rating_details`, `get_vibe_check_questions`, `get_inferred_rating_queue`. `get_profile_taste_profile`, `get_user_taste_profile` and `get_recent_liked_history` (TIGER) use `taste_score > 0` when a verdict exists (weight 0.5 + 0.5 x score), else the old rating rules. Co-view tiers still read `user_rating >= 7`, which the legacy mapping keeps consistent.
-- **API:** `POST /api/ratings` takes `verdict`, `did_not_finish`, `worked`, `didnt`, `vibe_check`; new `GET /api/ratings/vocab`, `GET /api/ratings/details/{id}?profile_id=`, `GET /api/ratings/inferred-queue`. Rating summaries carry each person's `verdict` / `inferred`.
-- **Rate tab:** five verdict buttons (keys 1-5) replace the stars; "Didn't finish" checkbox (D); folded "Why?" (W) with what worked / didn't chips, vibe-check questions (3 shown, rest under "More questions") and a one-line note. Every verdict saves at once but **the card stays open** with a "Next" button (Enter / right arrow); "Why?" opens by itself only for Would rewatch / Not for me, otherwise it is folded one tap away. Re-tapping a verdict changes it; chips, answers, note and "Didn't finish" autosave ~700 ms after a change once a verdict is saved, and Next flushes them. A "Move on right after I pick a verdict" checkbox (browser localStorage `rateQuick`) restores the old straight-on behaviour. A re-rate that only touches extras adds no `rating_history` row. "Sort out my 7s" = queue of inferred ratings (7s, then 8s, then the rest). TV shows use the same card.
-- **Multi-pick vibe questions:** "How did it leave you?" and "Different from what you expected?" (id still `darker`) each have 10 options, up to 3 picks (`max`), and an `exclusive` option ("Nothing much" / "About as expected") that stands alone. Answers are lists; `clean_vibe_check` turns old single-string answers into one-item lists. Other multi questions (felt like, best for) keep 2 picks. The question dicts from `pick_vibe_questions` carry `max` and `exclusive`; the JS reads them in `vibeQuestionMeta`.
-- **Tests:** `tests/test_verdicts.py` (maths, inference on the real spread, migration, history, readers, question picker, queue). Driven live with Playwright at 390 and 1280 px on a copy of the catalogue.
-- **Not built yet:** the same-genre "This or that" round (needs a `rating_pairs` table); weight fitting (§5); the Discover feedback sheet still uses stars. (Chips / vibe-check answers in ranking: built in §10.8.)
-
-### 10.8 Taste model: facet_fit and cluster_affinity (built 2026-10-09; **off by default**)
-- **`services/taste_model.py`** (pure, `tests/test_taste_model.py`): from one profile's rated films it learns, per mood dial, a preferred level (taste-weighted mean over liked films, pushed away from the disliked films' level) and a tolerance (spread). Inputs per film: `taste_score`, `inferred`, dials (`facets`, else tag dials), `vibe_cluster_id`, `worked` / `didnt` chips, `vibe_check`.
-  - **Vibe-check corrections:** `ANSWER_EFFECTS` moves the film's tagged dial by 0.2 (Darker/Lighter, Dragged/Rushed pace, Could half-watch/Lost me attention, tension, funny, weirdness; "How did it leave you" nudges weight). "As expected" / "Just right" confirm. The corrected values feed the learned levels. "Too much" / "Dragged" / "Lost me" / "Too weird" on a film I **liked** records a tolerance limit (a max, or a min for pace); films beyond it get a penalty. Ending answers say how well it landed, not which way, so they are not used. Multi-pick answers (`felt`, `bestfor`) may be a list or a single string. Answers to `felt` replace the film's own feels tags when learning feels affinity.
-  - **Chips:** pace -> pace, humour -> humour, ending -> ending_valence, story -> attention + strangeness, visuals -> spectacle + palette tags, vibe -> feels tags. acting / music / characters / feeling map to nothing. A feature under "worked" on films scored >= 0.5 gets up to +50 % weight; one under "didn't" on films scored <= -0.3 gets an "avoid" penalty near the blamed level.
-  - **cluster_affinity:** weighted mean taste_score per `vibe_cluster_id` x n / (n + 5).
-  - **Inferred verdicts** count at 0.5 everywhere (levels, evidence, cluster counts).
-  - **Gates:** nothing happens below `min_verdicts` (10, confirmed + inferred) per profile; a dial needs `min_dial_evidence` (4) weighted films; the whole facet_fit is damped by n_eff / (n_eff + 10), so a thin history changes little. A dial's weight is also scaled by its **selectivity** (how far my liked level sits from the acclaimed pool's mean, in std, or how tight it is), so dials where everything I like looks like everything on offer count for little.
-- **`services/taste_runtime.py`:** loads `rating_details` + `media_items`, caches models until a rating changes, `apply(ranked, profile)` adds `weights.facet_fit * facet_fit + weights.cluster_affinity * cluster_affinity` to `recommendation_score` and re-sorts. Profile seats follow the genre taste bonus (`PROFILE_MIX`); a profile with no history adds nothing and the weights are not renormalised.
-- **Wiring:** `RecommenderService.recommend` (after the vibe boost, before the pop-up hook; so the pop-up pool includes it) and `GenerativeRetriever.recommend` (before the genre filter). `server.py` builds one `TasteRuntime` from `recommender.taste_model` in `config.yaml` and passes it to both. Items carry `facet_fit`, `cluster_affinity`, `taste_reasons`; `log_impressions` writes `facet_fit` / `cluster_affinity` into `score_json` (for the weekly weight fitting, §5). Series swaps carry them too.
-- **Reason badges** (`.badge-taste` in the ticket cards): up to two, from the largest real contributors, e.g. "matches how you like pacing", "from your <cluster label> cluster". Cringe and gore never get a badge.
-- **Config:** `recommender.taste_model` in `config.yaml`: `enabled: false`, `weights`, `min_verdicts`, `inferred_weight`, `min_dial_evidence`, `overall_k`, `cluster_k` (other keys: `DEFAULTS` in `taste_model.py`). Restart after editing.
-- **Offline check:** `uv run python utils/eval_taste_model.py --db <copy of catalogue> --vibe-dir models/vibe` (leave-one-out over rated films vs the current ordering, plus top-10 off/on for six typical requests). Report: `/mnt/project-files/taste-model/eval-report.md`. **Result on the real catalogue (79 verdicts, only 4 confirmed, no chips or vibe-check answers yet): small gain in rank correlation (+0.20 -> +0.27, bootstrap 90 % interval about 0 to +0.18), no gain in where liked films land among 300 comparable unrated films, liked-vs-meh AUC ~0.5 both ways. Not shown to beat the current ordering, so it ships off.** Turn on with `enabled: true` after more confirmed verdicts (the "Sort out my 7s" queue, chips and vibe-check answers) and re-run the check.
-- **Tests:** `tests/test_taste_model.py` (pure) and `tests/test_taste_runtime.py` (temp DB). `tests/test_ratings.py` needs `libtorrent`, which this sandbox lacks.
-
-### 10.8 "This or that" pair round (built 2026-10-09)
-- **Why:** a verdict says which genre you like, not which flavour of it. Two seen films from one genre, "Which is more your thing?", teach the flavour (docs/RECOMMENDER_V2_DESIGN.md §5, "this one over that one").
-- **Schema v9** (`_migrate_v9_pairs`): `rating_pairs` (profile_id, winner_id, loser_id, `same`, shared_genre, `dial_diffs` JSON, created_at; unique per person per unordered pair) and two new `rating_details` columns, `pair_score` (Bradley-Terry strength) and `pair_nudge`. **`rating_details.taste_score` is still the pure verdict score**; nothing that already reads it changed.
-- **`services/pairs.py`** (pure functions): `pick_pairs` (both films seen, share a genre, `taste_score` within 0.3, never an answered pair, same `vibe_cluster_id` first, then fewest comparisons, each film once per round of 10); `pair_scores` (Bradley-Terry fitted with a zero-mean prior, so one comparison barely moves a film; "about the same" is left out, it counts for neither); `nudge_for` (0.15 x tanh(strength)); `apply_nudge(verdict_score, nudge)` (cap +/-0.15 and strictly between the neighbouring verdict scores, so "Liked it" stays between Meh and Loved; the extremes stay within -1..+1); `dial_differences` (the top 3 mood dials by |winner - loser| from `media_items.facets`).
-- **Final score:** `DatabaseManager.get_final_taste_scores(profile_id)` and `get_rating_details()["final_taste_score"]` return verdict score + nudge, computed on read from the two stored columns, so changing a verdict re-bounds the nudge. **Ranking does not use the final score or `dial_diffs` yet**; the "Taste model in ranking" and "vibe checks in ranking" work can read them.
-- **API:** `GET /api/ratings/pairs?profile_id=&media_type=&limit=10` returns `{pairs: [{a, b, shared_genre, same_cluster}], answered}`; `POST /api/ratings/pairs {profile_id, a_id, b_id, choice: a|b|same}` stores the answer, refits that person's scores, and returns the shared genre and dial diffs (a repeat answer is ignored). Skip is client-side only and stores nothing.
-- **Rate tab:** a "This or that" button beside "Sort out my 7s" (exclusive with it, never mixed into the normal cards). Two cards side by side, stacked on phones, "About the same" and Skip, keys 1 / 2 / 3 / S, progress "This or that . 3 of 10", "Round done / Another round" and a "No good pairs left" empty state. Code: `togglePairMode`, `loadPairRound`, `renderPairs`, `answerPair` in `static/app.js`; `.pair-*` in `static/styles.css`.
-- **Verified:** `tests/test_pairs.py` (picker rules, no repeats, score maths, nudge cap and verdict boundaries, "about the same", database round trip); all other test files still pass (`test_verdicts` now accepts schema >= 8); the real server on a scratch copy of the catalogue driven in Chromium at 390 and 1280 px (keys 1/2/3/S, clicks, round end, no layout overflow; only pre-existing 404s for the font and favicon, and blocked poster fetches).
-- **Not built:** TV pairs use the same code but were only tried on movies; a pair round is per person (no "together" round).
-
-### 10.9 Per-season TV verdicts (built 2026-10-09)
-- **Why:** a show loved for two seasons and dropped in season 4 is not one opinion. Seasons are optional and quick; the show-level verdict stays the main signal.
-- **Schema v10** (`_migrate_v10_season_ratings`, v9 is the pairs table): `media_items.season_count` + `season_count_checked` (0 not looked up / 1 done / -1 TMDB 404); table `season_ratings` (profile_id, media_item_id, season_number, verdict, did_not_finish, taste_score, updated_at, UNIQUE on the first three; verdict is NULL when only "Didn't finish"); `rating_details.inferred_source` ('rating' = guessed from an old 1-10, 'seasons' = derived) and `dropped_at_season`. The migration checks which columns/tables exist, so it is safe whichever order branches merge.
-- **Season counts:** `uv run python utils/backfill_season_counts.py [--limit N] [--offline]` (resumable, same style as `backfill_collections.py`). Pass 1 offline: highest `media_sources.season_number`. Pass 2 TMDB `GET /tv/{id}` `number_of_seasons` (needs TMDB, run on the Mac; DATABASE_PATH picks the catalogue). `get_season_count` uses TMDB's number, else the files'.
-- **Maths (`services/verdicts.py`):** same five verdicts + "Didn't finish" (scores reused via `taste_score`; DNF alone = -0.5). `derive_show_score` = weighted mean, season n weighs `1 + 0.25(n-1)` capped at 2, nearest verdict, `dropped_at_season` = first DNF season. A season DNF is not carried up as a show-level DNF.
-- **Rules (`DatabaseManager.rate_season` / `_sync_show_from_seasons`):** a confirmed show verdict is never overwritten (only `dropped_at_season` updates). With no confirmed verdict the show gets the derived one: `rating_details` inferred=1, `inferred_source='seasons'`, legacy `watch_history.user_rating` written so old readers work. It replaces an old-rating guess (old state goes to `rating_history`). Clearing every season removes a season-derived verdict. A later show verdict replaces a derived one. Season-derived shows stay out of "Sort out my 7s". `get_dropped_shows(profile_id)` lists "dropped at season N" for later ranking; nothing reads it yet, and ranking is otherwise unchanged (the existing readers already use `taste_score`).
-- **API:** `POST /api/ratings/season {media_item_id, profile_id, season_number, verdict?, did_not_finish?}` (empty clears; 400 for films, unknown verdicts, season < 1) returns seasons + details + summary. `GET /api/ratings/details/{id}` now carries `seasons {count, ratings, dropped_at_season}`; `/api/ratings/vocab` carries `season_extra`; rating summaries carry `inferred_source` / `dropped_at_season`. `POST /api/ratings` is unchanged.
-- **Rate tab:** TV cards get a folded "Seasons" row under "Didn't finish" (hidden when the show has fewer than 2 seasons or the count is unknown). One radiogroup per season with Again / Loved / Liked / Meh / Nope / Stop (full labels in aria-label); each tap saves; tap again clears. It opens by itself on "Didn't finish" or a show-level Meh / Not for me. Keys inside it: arrows move, 1-6 pick for the focused season (the show-level 1-5 still work outside it). Season-only rating counts as rating the show (card offers Next). The stub shows "(from seasons)" for a derived verdict and is refreshed after every save.
-- **Verified:** `tests/test_tv_verdicts.py` (maths, migration, counts, write/read, derived score, show verdict wins, one-season shows, API); all other test files pass. Rate tab driven in Chromium at 390 and 1280 px on a scratch copy of the catalogue (no horizontal overflow, labels not clipped, DNF opens the row, keyboard, one-season show has no row). TMDB pass not run here (blocked in the sandbox).
-
-### 10.10 Mood map (vibe-questions plan T1-T4, 2026-10-12; **wired in by T4**)
-- **What:** `services/vibe_moods.py` holds the 30 "night moods" from `/mnt/project-files/vibe-questions/plan.md` as data. Each mood: `id`, `label`, `dials` {dial: target 0-1}, `dial_weight` {dial: how much it matters}, `genres` {TMDB genre: weight}, `keywords` (TMDB keyword terms, whole-word match), `feels` (from `vibe_vocab.FEELS`). `GROUPS` maps the 6 overlapping groups (light, heart, thrill, dark, mind, drift) to `{mood: membership}`; a split mood's memberships add to 1 (`memberships(id)`).
-- **fit(features, mood) → 0..1:** takes `vibe_popup.features()` output. Weighted mix of four parts (`PART_WEIGHTS`: dials 0.45, genres 0.30, keywords 0.15, feels 0.10); a part the film has no data for is dropped and the rest renormalised. Dials: weighted mean of `1 − |facet − target|`, a missing facet counts 0.5. Genres: 0.6 × mean of the mood's weight over the film's genres + 0.4 × max (TV combos like "Sci-Fi & Fantasy" are split). Keywords and feels: `1 − 0.5^hits`. So a rom-com (Romance, Comedy, humour 0.5) fits `romance_warm` 0.66 and `laugh_out_loud` 0.61, and films with no facets still separate on genres and keywords. `parts()` returns the pieces for debugging.
-- **validate():** raises with every unknown dial or feel, out-of-range weight, mood missing genres/keywords/feels (every mood has all three, so a missing part can't favour one mood), membership sum ≠ 1, or unknown mood in a group.
-- **Not yet:** nothing imports it. T2 (mood belief + question picker) and T3 (ranking by mood mix) will. "Older films" for `nostalgic` and palette tags for `slow_dreamy` aren't in the recipe. Weights are first guesses; Labiba reviews the mood list and labels before this merges.
-- **Verified:** `tests/test_vibe_moods.py`; `make check` passes.
-- **T2: mood questions and session (branch `vibe/t2-mood-session`, built on T1; not wired into `server.py`).**
-  - `services/mood_questions.py`: the new bank as data (`BANK`, `BY_ID`, `likelihood(option, mood)`, `validate()`). Each question has `id`, `text`, `tier` (0 opener A3 with the old wording/emoji, 1 group questions G1-G4, 2 inside a group L1/L2 light, H0 heart, T1 thrill, D1 dark, M1 mind, R1 drift, 3 tie-breaker H1) and, for tier 2, `group`. Each option has `id`, `emoji`, `label` and either `groups` {group: weight} or `moods` {mood: weight}; anything unmentioned counts 0.3, or the option's own `default` (H1 and "Grown-up" use 1.0 so they only push the named moods down). Names are exactly those in `vibe_moods` (groups are lower case: `light`, `heart` ...).
-  - `services/mood_popup.py`: `MoodSession(session_id, request, pool, cluster_labels=None, vibe_index=None, prior=None)` with PopupSession's public interface (`next_question`, `public_question`, `answer`, `should_stop`, `ranked`, `scored`, `set_pool`, `log_fields`, `done`, `current`, `id`, `request`, `asked`, `answered_count`) plus `belief` ({mood: p}), `top_moods(n)`, `group_mass(group)`. `prior` (even by default) is the hook for occasions. Update: `P(mood) *= 0.05 + likelihood`, renormalised, so no mood reaches 0; `skip` changes nothing but counts as an answer. A3 is always first, then the eligible question with the largest expected entropy drop (tier 1 after the opener, tier 2 only while its group holds >= 0.15, tier 3 only when the top two moods are within 0.1; never repeats; ties go to bank order). Stops at top >= 0.55, top two >= 0.80 or 6 answers, never before 2; `done` ("Just show me") also stops it. `public_question()` has the same shape as before with `examples: []`. `ranked()`/`scored()` rank by mood mix (T3, below).
-  - Note: all eligible tiers compete on entropy drop (the plan's "group questions come first" is not forced); on a few sample paths it asks G1 then a tier 2 question or two, which looks right, but tune by playing it. With the 0.3 default a group fades slowly: Light only drops below 0.15 after about three or four answers against it.
-  - **Verified:** `tests/test_mood_popup.py`; `make check`.
-- **T3: ranking by mood mix (branch `vibe/t3-mood-ranking`, built on T2; not wired into `server.py`).**
-  - `MoodSession.scored()`: score = pool score (`_popup_base`, i.e. `recommendation_score`) + `mood_weight` × Σ over moods of P(mood) × `vibe_moods.fit(features(film), mood)`. The fit vector per film is computed once (cached on the item as `_popup_moodfit`, stripped from output like other `_popup*` keys), so re-scoring after an answer only redoes the dot product with the new belief. Same `(score, item)` shape as `PopupSession.scored()`; ties keep pool order (stable sort); no films are removed.
-  - `ranked()`: same item shape as `PopupSession.ranked()` (`recommendation_score` rounded to 2, `popup_boost` = score − pool score, which now equals the mood points) plus `mood_fit` (the weighted sum, i.e. the points added, 3 decimals) and `top_moods` (ids of the 3 moods with the highest P(mood) × fit for that film, ties in mood-list order). Other fields, including taste-model ones, pass through untouched.
-  - **`mood_weight`:** `recommender.mood_weight` in `config.yaml` and `deploy/config.server.yaml` (3.0). `mood_popup.load_mood_weight()` reads `CONFIG_PATH` (or `config.yaml`) itself, falling back to 3.0 on a missing file, key, or a non-number/negative value. `MoodSession(..., mood_weight=None)` uses that; pass a number (tests do) to skip the config. When T4 wires this into `server.py` it can pass `recommender_cfg.get("mood_weight")`.
-  - **Verified:** `tests/test_mood_popup.py` (Thrill answers lift thrillers; a not-Light answer lowers rom-coms but not to last; with no facets genres still reorder; `mood_fit`/`top_moods` present; fits cached; deterministic); `make check`.
-
-- **T4: wire-up and UI (branch `vibe/t4-mood-wireup`).**
-  - `server.py`: `/api/discover/start` builds a `MoodSession(..., mood_weight=recommender_cfg.get("mood_weight"))` (None falls back to `load_mood_weight()`); with `ask` and a non-empty pool it calls `next_question()` (A3 first), otherwise no question. `question_skipped` = `no_results` when the pool is empty, else null. `/answer` and `/finish` are unchanged apart from dropping the D1 pool-rebuild branch. `_popup_response` adds `moods` (`_mood_list`: top 3 as `{id, label, p}`), still logs `answers_json` / `asked_order` / `belief_json` (now the 30-mood belief, logging only, no learning) and impressions when done. `/api/recommend` with a session id still pages through `popup.ranked()`.
-  - `static/app.js`: `showRecommendationPage` stores `data.moods` in `state.vibeMoods`; `renderRecommendations` adds `tonightLineHtml()` to the results header, "Tonight: <mood 1> · <mood 2>" (`.mood-tonight` in `styles.css`), shown only while `state.recSessionId` and moods exist (reset at the start of each search). Updates after every answer and on "Just show me". Options with empty `examples` already render without the examples row.
-  - **Verified:** `tests/test_discover_api.py` (TestClient on a synthetic 250-film DB: A3 + moods, answers to done, logging, finish, paging, empty pool); live server + Playwright at 390 px and 1280 px (six questions: how did today end, what kind of funny, how much brain, how heavy, grown-up or anyone, credits roll; Tonight line updates after each answer; no console errors); `make check`.
-
-## 11. DOWNLOAD TAB ONLY + "BEST MATCH" SORT (2026-10-09)
-
-- **Downloads only start from the Download tab.** The Discover card button (now "Choose a copy", `startDownload` in `static/app.js`) no longer searches or downloads. It switches to the Download tab, sets Movies/TV, fills the title and runs the search. `state.directLinked = {movieId, title, mediaType, query}` holds the catalogue link. While it is set, the results show a "Pick a copy for <title>" note, and the Download buttons send `movie_id` = the catalogue id and `movie_title` = the catalogue title (the id is baked into each button, so Retry and "Download again" keep it). `/api/torrent/download` is unchanged, so `_log_outcome(movie_id, "downloaded")` and filing under the right title work as before. The link is dropped when the query or Movies/TV changes. Progress for these downloads shows in the Download tab's "Downloading now" box, not on the Discover card.
-- **Best match sort (new default).** `services/torrent_ranking.py`: `score = quality points x seeder health x size fit x scope match`. Health = `sqrt(seeders / (base + per_gb x size_GB))`, capped at 1. Size fit x0.75 when per-film or per-episode size is outside the normal band for its quality. TV: season packs are detected from the name (S02, "Season 2", "Complete", S01-S03 counts seasons); packs are divided by episode count (default 10 per season) for the size check, but health uses the full pack size. A pack scores x0.5 when the query is an episode (SxxEyy), and an episode scores x0.5 when the query is a season. `TorrentSearcher.search(..., sort='best'|'smallest'|'quality')`; the old `sort_by_size` still works when `sort` is omitted. Every result now carries `score`, `seed_health`, `is_pack`, `episodes`, `per_episode_bytes`. The client re-sorts by `score` for Best match (`sortDirectResults`).
-- **All tuning numbers are in `config.yaml` under `torrent_ranking:`** (quality points, seeder base and per-GB, size bands, penalties, scope multiplier, episodes per season). Anything left out falls back to `DEFAULTS` in `torrent_ranking.py`. Restart the server after editing.
-- **UI:** Download tab sort is Best match / Smallest file / Best quality. Result cards are tickets with a Quality / Size / Seeders strip (seeders coloured healthy / okay / thin), "Best match" and "Season pack" tags, "≈ x GB per episode" on packs, and the Download button on the torn stub.
-- **Verified:** `tests/test_ranking.py` (19 checks, offline), `tests/test_searcher.py` still passes, `node --check static/app.js`, and the flow driven in a browser at 390px and 1100px against a mock API using the real ranking code (tab switch, linked `movie_id` 42 sent on download, `movie_id` 0 after searching something else, all three sorts, TV pack and episode cards). **Not yet checked against the real server or live indexers.** The scoring numbers were checked on made-up sample lists only; tune them from real results.
-- Sample ranking and rationale: `/mnt/project-files/download-sort/scoring-proposal.md`.
-  
-
-## 12. WATCH LATER (done, PR "Watch later list" ready to merge)
-
-Plan: one shared list for Labiba (profile 1) and Gabriele (profile 2); "who added it" is `profile_id`. Built in 7 tasks on one branch / one PR. Task 7 (using the list in ranking) is optional and skipped for now.
-
-### Task 1: database (schema v11) - done
-- **Profile names:** the seeded profiles are now `Labiba` (id 1) and `Gabriele` (id 2). Fresh DBs get them from `_migrate_v3_profiles`. `_migrate_v11_watch_later` also renames existing rows, once, when the DB moves to v11: id 1 only if still named `Me`, id 2 only if still named `Partner`, skipped when the target name already exists (`profiles.name` is UNIQUE). Custom names are never touched. The UI keeps the internal keys `me` / `partner` / `together`; `isDefaultProfileName()` in `static/app.js` treats `Me` / `Partner` as "no name set".
-- **Schema:** table `watch_later` (see §3), created by `_migrate_v11_watch_later` (user_version gate, `CREATE TABLE IF NOT EXISTS`, additive).
-- **Methods (`DatabaseManager`):**
-  - `add_to_watch_later(media_item_id, profile_id)` returns the grouped entry; adding twice is a no-op; re-adding a done row reopens it and resets `added_at`; `ValueError` for unknown ids.
-  - `remove_from_watch_later(media_item_id, profile_id)` deletes that person's row only; returns bool.
-  - `get_watch_later(include_done=False, media_type=None, added_by=None)` returns one entry per title, newest add first: `media_item_id, title, release_year, media_type, poster_url, genres, runtime, rating, overview, file_path, added_by [{profile_id, name, added_at}], both, first_added_at, done_at, done_reason`. A title is done when all its rows are done.
-  - `get_watch_later_ids(ids)` returns `{media_item_id: [profile_id]}` for open rows in one query (for `on_list`).
-  - `mark_watch_later_done(media_item_id, reason)` and `undo_watch_later_done(media_item_id)` return rows changed.
-- **Test:** `uv run python tests/test_watch_later.py` (migration, names, list behaviour). `tests/test_ratings.py`, `test_pairs.py` and `test_tv_verdicts.py` were adjusted for the new default name and for `user_version >= 10`.
-- **Catalogue check:** a copy of `catalogue.db` (was v4) migrates to v11 with `media_items`, `watch_history` and `rating_details` row counts unchanged; profiles become Labiba / Gabriele.
-
-### Task 2: API - done
-- **Endpoints (`server.py`):** `GET /api/watch-later?include_done=&media_type=&added_by=` -> `{items, count}`; `POST /api/watch-later {media_item_id, profile_id}` -> grouped entry (400 on unknown ids); `DELETE /api/watch-later/{media_item_id}?profile_id=` -> `{removed}`; `POST /api/watch-later/{media_item_id}/undo` -> `{reopened}`.
-- **`on_list`:** `[profile_id, ...]` (empty when not on the list) added by `_with_on_list(items)` (one `get_watch_later_ids` query) to `/api/recommend`, the pop-up responses (`_popup_response`, so `/api/discover/start|answer|finish`), `/api/ratings/queue`, `/api/ratings/inferred-queue` and `/api/catalogue/search`. No other field changed.
-- **Auto-done:** `DatabaseManager.rate_item` marks the title done (`'rated'`) after commit when status is `seen`; `not_seen` does not. `rate_season` does the same when it saved a season verdict (clearing one does not). `POST /api/watch/finish` marks `'watched'`. All wrapped in try/except and print a `[WatchLater]` line on failure.
-- **Test:** `uv run python tests/test_watch_later.py` now also covers the hooks and the API round trip (skipped if `server` cannot import).
-
-### Task 3: header switch + Discover button - done
-- **Icon:** `i-bookmark` in the sprite (outline). The filled look is CSS (`.btn-later[aria-pressed="true"] .icon { fill: currentColor }`).
-- **"I'm …" switch:** `#whoSwitch` in `.header-tools` (a `.segmented.small` with two `aria-pressed` buttons, "I'm Labiba" | "I'm Gabriele"; names only at <=480px). Filled by `renderWhoSwitch()` from the `/api/profiles` fetch already made in `loadPartnerName()` (stored in `state.profiles`, first two by id). `state.activeProfileId` comes from `readActiveProfileId()` (localStorage `activeProfileId`, try/catch, default 1); `setActiveProfile(id)` saves it. It only decides who is credited for adds; the Rate and Discover pickers are untouched.
-- **Helpers (`static/app.js`, section "Watch later"):** `state.watchLater` (Map media_item_id -> [profile_ids]); `noteOnList(items)`; `watchLaterButtonHtml(item)` (a `<button class="btn-later" data-later-id data-later-title>`, also records the item's `on_list`); `paintWatchLaterButton(btn)` (aria-pressed, aria-label "Watch later: T" / "On your list: T", tooltip, "<Name> wants this" dot when only the other person has it, "Both" label when both); `refreshWatchLaterButtons(id?)`; `toggleWatchLater(id, title, btn)` (optimistic POST/DELETE for the active person, rollback + toast on failure); `profileName(id)`. After inserting card HTML, call `.querySelectorAll('.btn-later').forEach(paintWatchLaterButton)` (buildMovieCard does). Tasks 4-5 reuse these.
-- **Discover:** button sits in `.movie-footer` between the watch slot and the Jellyfin link; icon-only <=480px, icon + "Later" above. CSS `.btn-later`, `.later-dot`, `.who-switch` in `static/styles.css`; selected = butter (`--select-bg`).
-- **How to check:** run the server on a COPY of the catalogue (`DATABASE_PATH=/tmp/copy.db uv run uvicorn server:app`), Discover -> Find -> tap the bookmark, switch person, reload.
-
-### Task 4: Rate card + Rate search - done
-- **Rate card:** the bookmark (`watchLaterButtonHtml(item)`) sits in `.rate-actions` between "Haven't seen it" and "Skip". `renderRateCard` paints it after `innerHTML` (`card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton)`). Shortcut **L** clicks it (only when a card with the button is shown and no sheet/text field has focus); the Rate hint lists it.
-- **Not seen offer:** after a saved "Haven't seen it" on a title not on the active person's list, the toast says "Add … to Watch later?" with an action button. `showToast(message, {label, run})` is the new optional action argument (`.toast-action`, stays up 6 s). Quick mode and the other verdicts do not offer it.
-- **Rate search rows:** catalogue rows (`kind: 'item'`) get the icon-only button at the row end via `watchLaterButtonHtml(d, { inRow: true })` (`stopPropagation`, so the click does not open the title). TMDB and "Search TMDB" rows get nothing. Keyboard: Tab from the search box reaches these buttons; the list is still driven by arrows.
-- **State seeding:** `noteOnList()` runs on the rating queue, the inferred (sort) queue and the catalogue search response, so buttons paint their server state on first render.
-- **Helper added:** `onMyWatchLater(id)` (is the active person on the list).
-- **Verified:** Playwright on a copy of `catalogue.db` (v4 -> v11 on start) at 1280 and 390 px: Discover add shows on the Rate search row and Rate card; Rate card removal and add show on Discover without reload; row button does not open the title; L, W, N still work; not-seen offer adds the title; no horizontal scroll. Screenshot checked at 390 px. Console only shows the missing `static/fonts/Archivo-Variable.woff2` (known, see §9). All `tests/*.py` pass.
-
-### Task 5: the Later tab - done
-- **Tab:** "Later" (bookmark icon) between Rate and History; `#laterView`, `'later'` in `TABS` / `TAB_IDS` / `VIEW_IDS`, hash `#later` restores it. `switchTab('later')` calls `loadLater()` every time. Five tabs fit the 390 px bottom bar (labels one line, no clipping).
-- **Controls:** All | Movies | TV (`setLaterType`) and "Added by: Anyone | <Name 1> | <Name 2> | Both of you" (`setLaterBy`, built by `renderLaterBy()` from `state.profiles`). A person uses the API `added_by`; "Both of you" filters `entry.both` client-side.
-- **Cards:** `buildLaterCard(entry, rank, animate)` reuses the Discover `.movie-card` ticket markup. Line "Added by Labiba · 3 days ago" (`relativeAgo`, SQLite UTC) or the rose pill "You both want this". Footer: Play now (file_path) or Choose a copy (`watchButtonHtml` -> `startDownload`), the bookmark (`watchLaterButtonHtml`, painted after insert), and "Watched it".
-- **Watched it:** `POST /api/watch-later/{id}/done` (new endpoint in `server.py`, calls `mark_watch_later_done(id, 'watched')`, returns `{done: n}`; needed because there was no way to mark done without rating), then `switchTab('rate')` and `openSearchedTitle(item)` (item looked up with `/api/catalogue/search`). It waits for the Rate queue's first load so the title is not wiped. A toast offers Undo.
-- **Watched from your list:** folded `<details id="laterDone">`, last 10 done titles (from `include_done=true`), Undo button -> `POST /undo`.
-- **Count:** `refreshLaterCount()` sets "Later 7" in the tab (`#laterCount`, aria-label "Later, 7 saved"). Called at start, after every toggle (`toggleWatchLater`), after every saved rating (`postRating`), on Later tab load, done and undo. Toggling on the Later tab reloads the list quietly (no entrance animation) so a card nobody has anymore disappears.
-- **States:** empty ("Nothing saved yet" / "Tap the bookmark on any pick to save it for later."), "Nothing matches" when filters hide everything, loading, error with Try again.
-- **Verified:** Playwright on a copy of `catalogue.db` at 1280 and 390 px: add on Discover as Labiba -> Later shows "Added by Labiba"; Gabriele presses the bookmark there -> "You both want this"; Both / Labiba / TV filters; reload on `#later`; Watched it -> Rate card on that title; rating it seen -> count clears and it sits in "Watched from your list"; Undo brings it back; both unpress -> empty state; blocked request -> error state. No horizontal scroll at 390 px; tabs fit. No console errors except the known missing font and the request I blocked on purpose.
-
-### Task 6: polish and check - done
-- Merged `origin/main` (PR #10, only a handover edit; main is still schema v10, so the migration stays v11). `CACHE_NAME` in `static/sw.js` is now `movie-companion-v2`.
-- **"Watched it" uses the active person:** `watchedFromLater` sets `state.rateProfileId = state.activeProfileId` before opening the Rate tab (and reloads the Rate queue if it was loaded for the other profile), so the rating is under the "I'm ..." person.
-
-### Verified
-- All `tests/*.py` and `node --check static/app.js`.
-- Playwright on a copy of `catalogue.db` at 1280 and 390 px: switch person (survives reload), add from Discover, Rate card and Rate search row, both people on one title ("You both want this"), All/Movies/TV and Added by filters, Watched it (Rate opens under the active person), rated seen -> "Watched from your list" -> Undo, remove, reload on `#later`. No horizontal scroll. Console clean apart from the known missing `Archivo-Variable.woff2` and blocked external poster requests in the sandbox.
-
-### Not built
-- Task 7 (recommender signal / "On your list" badge on Discover, 'saved' feedback outcome).
-- TMDB-only search rows, History rows, "This or that" cards and Download results have no Watch later button (by design).
-
----
-
-## 13. DEPLOYMENT: MAC TRAINS, OPTIPLEX SERVES (planned 2026-10-09, M1 and M2 merged, M3 in review)
-
-Full plan with tasks for Sonnet/Haiku: `docs/DEPLOYMENT_PLAN.md`; Labiba's step-by-step with milestone prompts: `docs/BUILD_GUIDE.md`. Work is grouped into milestones M1–M4; one Sonnet session builds a milestone (Haiku subagents for small tasks), one PR per phase, ticking checkboxes there. Labiba's manual work is kept to an OS install plus one-command scripts (`deploy/bootstrap.sh`, `deploy/move-media.sh`); folders are created automatically.
-
-- Server is **`mars`**, a Dell OptiPlex 3060 (i5-9500T, 16GB, one 238GB SSD with ~166GB free), not a Pi. Already has Ubuntu 24.04, Docker, Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183, SSH as `gabstevens`). It also runs Home Assistant and Matter containers that our stack must never touch (plan §4a). Ubuntu Server + Docker Compose: app (with torrent downloads), Jellyfin (Quick Sync), Prowlarr. Reached over the boyfriend's Tailscale.
-- Mac runs launchd jobs: backup pull, catalogue refresh + enrichment, training, eval gate, publish model bundle.
-- CI on GitHub; deploys only via the manual Deploy workflow on a self-hosted runner on the server (outbound, no Tailscale ACL changes), with health check and automatic rollback.
-- Key rule: the server alone assigns `media_items.id` and never deletes items; the Mac sends patches keyed by `(media_type, tmdb_id)` and trains on a fresh export so model ids match (plan §3).
-- Media on internal drive now, external HDD later (`MEDIA_ROOT`). Backups cover user data only.
-- Progress (M1, 2026-10-09): Phase 0 done (results in plan). Phase 1 done: P1.1 `make check` (ruff + each `tests/test_*.py` run as a script, since the tests are script-style), P1.2 `CONFIG_PATH` env and `MODELS_DIR` env (`services/paths.py`; `TIGER_MODEL_DIR` still wins for tiger), `deploy/config.server.yaml`, P1.3 `GET /healthz` (503 if DB fails; `GIT_SHA` env, `<MODELS_DIR>/manifest.json` bundle id, `PRAGMA user_version`), P1.4 verified `uv sync --no-dev` imports `server` with no torch/transformers/anthropic. Phase 2 done: `Dockerfile` (python:3.12-slim, 574MB, non-root, HEALTHCHECK on /healthz, `GIT_SHA` build arg), `.dockerignore`, `deploy/compose.yaml` (project `couchcinema`, app + Jellyfin 10.11.11 + Prowlarr 2.6.5.5623, memory limits, own network), `deploy/.env.example`, disk guard `services/disk_guard.py` (`torrent.max_media_gb`, `torrent.min_free_gb`). Verified locally: app container healthy, creates /media subfolders; Jellyfin/Prowlarr not run in the build sandbox (no /dev/dri, lscr.io blocked) but tags exist. Phase 3 done (P3.3 branch protection is Labiba's): `.github/workflows/ci.yml` (job `check` = `make check`; job `image` builds linux/amd64, pushes `ghcr.io/rupaai/smart-recommender-player:sha-<sha>` and `:main` only on push to main), `.github/dependabot.yml` (weekly, one grouped PR per ecosystem: uv, docker `/` and `/deploy`, github-actions). M2 note: rootless Docker means set `APP_USER=0:0` and check Jellyfin GPU access.
-- Progress (M2, 2026-10-09), Phase 4 done (P4.2 is Labiba's, see `deploy/RUNBOOK.md`): `deploy/bootstrap.sh` (idempotent; `--set KEY=value`, `--skip-runner`, `--install-prereqs`), `deploy/import-data.sh` (`db`, `models`, `media`), `deploy/RUNBOOK.md`. Server model: a `deploy` user with **rootless Docker** (not in `docker`/`sudo`; the script refuses if it is), so containers run as container-root = deploy (`APP_USER=0:0`, `SVC_PUID/SVC_PGID=0`, `RENDER_GID=0` in `.env`; Jellyfin gets the GPU via a udev ACL on `/dev/dri/renderD128`). Ubuntu 24.04 gets an AppArmor profile for `rootlesskit`. The runner is a system service under `deploy`, label `mars`, `DOCKER_HOST` set in its `.env`. The app is **not** started by bootstrap (private image, nothing built yet); the first Deploy starts it. Prowlarr's API key is seeded into its `config.xml`. Scripts are copied to the server with `scp -r deploy` (no GitHub login on the server). Tests: `make check` now also runs `shellcheck` and `tests/deploy/*.sh`, which run the scripts against stubbed system commands (`tests/deploy/harness.sh`); they prove step order, arguments and idempotency, **not** real Ubuntu/rootless behaviour, which is first exercised on `mars`.
-- Progress (M2), Phase 5 done: `deploy/deploy.sh <tag>` (runs as `deploy` on `mars`; refuses without `DOCKER_HOST` of the rootless daemon or without a database; copies compose/config/bin into `/srv/couchcinema`, snapshots the DB via sqlite backup API keeping 7, pulls, `up -d`, polls `/healthz` for the right `git_sha` up to 90s, rolls back to the previous tag and previous compose/config on failure; keeps the newest 3 app images), `deploy/bin/notify.sh` (ntfy), `.github/workflows/deploy.yml` (manual; `verify` on ubuntu-latest = ref resolves, CI run green for that SHA, image `sha-<sha>` exists; `deploy` on `[self-hosted, mars]`, environment `production`, concurrency `deploy`, job-scoped GHCR login, ntfy result), runbook sections for deploying, rolling back, restoring a DB snapshot and reading logs. `config.server.yaml` is overwritten from the repo on each deploy.
-- Progress (M2), Phase 8 done (P8.2 optional housekeeping not built): `deploy/bin/healthcheck.sh` (cron */5 as `deploy`; app/Jellyfin/Prowlarr; alert after 2 consecutive failures, "back" message, no repeats; healthchecks.io heartbeat only while the app is up; skips while `state/deploy.lock` is held; state in `/srv/couchcinema/state/health.state`), `deploy/bin/diskcheck.sh` (daily 06:17; media at 85% of `max_media_gb` or `/` at 85%), `/etc/cron.d/couchcinema` installed by bootstrap, which also sends a test ntfy message. New `.env` keys: `NTFY_SERVER`, `HEALTHCHECKS_URL`. Alerts runbook is step 8 in `deploy/RUNBOOK.md`. **M2 is code-complete; nothing has been run on `mars`.** Next: M3 (Phase 6 admin API + bundles, Phase 7 Mac nightly job).
-- Fix after first contact with `mars` (2026-10-09): `mars` runs Ubuntu's `docker.io` 29.1.3 (no Docker apt repo, no rootless tools), so `bootstrap.sh` downloads `docker-rootless-extras-<installed version>.tgz` from download.docker.com into `~deploy/bin` (`ensure_rootless_extras`) and puts that dir on the deploy user's PATH; the AppArmor profile then targets that `rootlesskit`. Reach `mars` by LAN IP 192.168.1.183 when the `mars` name isn't set up on the Mac; the setup files can live anywhere (Labiba uses `/home/gabstevens/projects/couchcinema-deploy`), the stack stays in `/srv/couchcinema`.
-- Second fix: Docker's `dockerd-rootless-setuptool.sh` looks for `docker` and `dockerd` next to itself, so `ensure_rootless_extras` symlinks `~deploy/bin/docker` and `~deploy/bin/dockerd` to the system ones (links only; the engine is not copied).
-- Progress (M3), Phase 6 done: server `/admin` API (`services/admin_api.py`; Bearer `ADMIN_TOKEN`, 404 when unset): `GET /export` (SQLite online backup, header `X-Media-Items-Max-Id`), `POST /catalogue-patch` (JSONL keyed by `(media_type, tmdb_id)`, allow-listed `media_items` columns plus a `vibe_clusters` replace block, one transaction, idempotent; `services/catalogue_patch.py`), `GET /model-status`, `POST /model-bundle` (raw `.tar.gz` body; `services/model_bundle.py`: checksums, gate, every model item id must exist in `media_items`, smoke test, DB patch, atomic `models/current` swap, reload with automatic restore, keep 3), `POST /model-rollback`. `GenerativeRetriever.reload()` / `VibeIndex.reload()` added. Mac client `ops/mac/cc.py` (stdlib only; `~/.couchcinema/env` holds `CC_SERVER` and `ADMIN_TOKEN`). Tests: `tests/test_catalogue_patch.py`, `tests/test_admin_api.py`, `tests/test_mac_client.py` (real local server round trip). Bundle smoke test with real ONNX models is only exercised for the failure case in CI; the first real publish is on `mars`.
-- Progress (M3), Phase 7 done: `ops/mac/nightly.sh` (backup, Sunday catalogue refresh on a copy of the server DB with a quality floor, fresh snapshot, `training/retrain_tiger.sh` with `SKIP_DEPLOY=1`, `training/build_vibe_index.py --out ~/.couchcinema/work/vibe`, evaluation + gate, publish bundle, ntfy on failure, healthchecks ping), `ops/mac/pipeline.py`, `ops/mac/install.sh`, `ops/mac/com.couchcinema.nightly.plist` (03:30), `ops/mac/README.md`. Settings in `config.yaml` `nightly:` (mood tagging ships OFF: it spends API credit). Mac secrets in `~/.couchcinema/env`. Gate metrics: `tiger_hit_rate`, `taste_spearman`, `taste_auc` (relative drop over 1% holds the model back). Known gap: titles added by the catalogue refresh have no TIGER semantic code until the prepare/RQ-VAE steps are re-run by hand. Labiba's deploy-and-install steps are in `docs/BUILD_GUIDE.md` Step 3. `make check` also runs `tests/mac/*.sh`.
+# Project handover
+
+Read this first in a fresh session instead of reading the whole repo. It says what the project is, where things live, what state each part is in, and what is still open. History (build logs, per-task changelogs, verification notes, old branch lists) is in `docs/HANDOVER_ARCHIVE.md`; look there only when you need the detail of how something was built.
+
+**Keeping it current:** when you finish a feature, change its one line here (state, where it lives, what is still open) and update "Branches and open work". Do not add PR logs, dated changelogs or test-run notes; those belong in the PR. Section numbers are referenced from other docs (§10.6, §10.7, §10.8, §12, §13, §14), so keep them stable.
+
+## Branches and open work
+- `main`: after the Northern Lights merge PR (branch `claude/project-thread-5up7jo`, main merged into the NL branch, no conflicts beyond comments and this file) lands, `main` has everything: the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20** (main's mood work added no migrations). Jellyfin stays the media engine behind the new player (§14).
+- `northern-lights-player-app`: the long-lived Northern Lights branch, M0-M10c merged. Once the merge PR is in `main` it is finished; new work branches off `main` again and the branch can be deleted.
+- Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
+- Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
+
+## 1. What this is
+**Northern Lights** (earlier names: CouchCinema, Smart Movie Streamer, Movie Night): a self-hosted movie and TV app for Labiba (profile 1) and Gabriele, her boyfriend (profile 2). It finds and downloads titles, plays them through Jellyfin, keeps everything they have watched and rated, and learns their tastes to recommend what to watch, alone or together.
+- **Server:** `mars`, a Dell OptiPlex 3060 (i5-9500T, 16 GB, 238 GB SSD), Ubuntu 24.04, rootless Docker, reached over Tailscale (`mars.tailc3278f.ts.net`, LAN 192.168.1.183). It also runs Home Assistant and Matter containers that our stack must never touch.
+- **Mac:** trains models and runs the nightly pipeline (§13). The server runs no torch; it serves ONNX models and precomputed vectors.
+- **Clients:** phone and laptop browsers, an Android TV app (`tv-app/`), Chromecast.
+
+## 2. Where things live
+- `server.py`: FastAPI app, every route. `database.py`: `DatabaseManager`, SQLite schema and migrations (`_migrate_vN_*`, gated by `PRAGMA user_version`).
+- `services/`: recommender (`recommender_service.py`, `generative_retriever.py` TIGER, `taste_model.py` + `taste_runtime.py`, `verdicts.py`, `pairs.py`), vibe search and questions (`vibe_vocab.py`, `vibe_document.py`, `vibe_index.py`, `vibe_questions.py`, `vibe_popup.py`, `vibe_moods.py`, `mood_questions.py`, `mood_popup.py`), downloads (`torrent_service.py`, `torrent_ranking.py`, `disk_guard.py`), Jellyfin (`jellyfin_service.py`, `jellyfin_playback.py`, `device_profiles.py`), deployment (`admin_api.py`, `catalogue_patch.py`, `model_bundle.py`, `paths.py`), Northern Lights (`nl_*.py`, §14).
+- `templates/index.html` + `static/app.js`, `styles.css`: the original app (tabs Discover / Download / Rate / Later / History). `templates/nl/`, `static/nl/`: Northern Lights web pages; `templates/nl/tv/`, `static/nl/tv/`: TV pages.
+- `tv-app/`: Android TV app (Kotlin WebView + Media3). `training/`: offline training (TIGER, vibe index). `utils/`: backfills and maintenance scripts. `deploy/`: server scripts, compose, runbook. `ops/mac/`: Mac nightly job and admin client. `tests/`: script-style tests (+ `tests/js/` node checks, `tests/deploy/`, `tests/mac/`).
+- Design docs: `docs/RECOMMENDER_ARCHITECTURE.md` (read before touching the recommender), `docs/RECOMMENDER_V2_DESIGN.md`, `docs/VIBE_QUESTION_BANK.md`, `docs/DEPLOYMENT_PLAN.md`, `docs/BUILD_GUIDE.md`, `docs/northern-lights/` (roadmap and one file per milestone), `PRODUCT.md`. Project plans also live in the project's shared files (`/mnt/project-files/`).
+
+## 3. Data model (SQLite)
+- Catalogue: `catalogue_full.db` by default (`database_path` in `config.yaml`; `DATABASE_PATH` env overrides; `catalogue.db` is a small test catalogue). The server alone assigns `media_items.id` and never deletes items.
+- Core tables: `media_items` (TMDB metadata, `UNIQUE(media_type, tmdb_id)`, `vote_count`, collection fields, vibe fields `tagline`, `vibe_tags`, `facets`, `vibe_cluster_id`, `season_count`), `media_sources` (files; a show has one row per episode; `jellyfin_id` cache), `profiles` (1 Labiba, 2 Gabriele), `watch_history` (per profile; `status` seen / not_seen, "not seen" carries no rating).
+- Ratings: `rating_details` (verdict, chips, vibe-check answers, `taste_score` -1..+1, `inferred`), `rating_history`, `rating_pairs`, `season_ratings`. Feedback: `discover_sessions`, `discover_impressions`, `vibe_clusters`, `mood_tag_batches`. Lists: `watch_later`.
+- Northern Lights (v12-v20): `nl_show_prefs`, `nl_person_prefs`, `nl_interest`, `nl_show_viewer_prefs`, `nl_hidden_titles`, `nl_seen_together`, `nl_pacts`, `nl_vetoes`, `nl_chooser`.
+- Migrations are additive and idempotent. Tests that pin a schema number use "this version or newer".
+
+## 4. Core subsystems
+- **A. Search and download** (`torrent_service.py`): providers Prowlarr (optional, `PROWLARR_URL`/`PROWLARR_API_KEY`) then YTS then Apibay. Downloads run as asyncio tasks tracked in the in-memory `downloads_store`; finished files are organised into Jellyfin's layout (`Movie (Year)/…`, `Show (Year)/Season XX/Show - SxxEyy`) and registered in `media_sources`. Healthy Prowlarr indexers: YTS, ThePirateBay, NyaaSi, Knaben (EZTV unreachable; 1337x and friends need FlareSolverr, left out). Disk guard: `torrent.max_media_gb`, `torrent.min_free_gb`.
+- **B. Recommender** (`recommender_service.py`): SQL hard filters, a Bayesian quality cut to 250, personal taste scoring, vibe-search boost, MMR to 50. `route_recommend()` chooses legacy or TIGER (`recommender.engine_mode`: fallback / legacy_only / generative_only; generative after 5 rated items). Profile modes me / partner / together; co-view tiers A/B/C.
+- **C. Training** (`training/`): TIGER pipeline (`training/README.md` steps A-H, `retrain_tiger.sh`) and the vibe index (`build_vibe_index.py`). Needs torch: Mac only.
+- **D. Jellyfin** (`jellyfin_service.py`): creates and repairs the Movies and Shows libraries, refreshes and checks visibility, diagnostics. The server boots fine when Jellyfin is down.
+- **E. TIGER** (`generative_retriever.py`): semantic-ID generative retrieval, artifacts in `models/tiger/` (must be built from the same catalogue). The deployed model is still the old synthetic one until the Mac retrain runs.
+
+## 5. Running and testing
+- Run: `uv run python server.py` (or `uv run uvicorn server:app --host 0.0.0.0 --port 8000`), at `http://localhost:8000`. Northern Lights is under `/nl/` and `/nl/tv/`. Try changes on a COPY of the catalogue (`DATABASE_PATH=/tmp/copy.db`).
+- `.env`: `TMDB_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, optional Prowlarr, `ADMIN_TOKEN`, `NL_CAST_SECRET`. `CONFIG_PATH` and `MODELS_DIR` env pick the config and models.
+- **`make check`** before every PR: ruff, shellcheck, every `tests/test_*.py` run as its own script (with a temp config), and the deploy/Mac shell tests. CI runs the same.
+- Optional extras: `uv run --extra llm …` for `utils/mood_tag.py`.
+
+## 6. Rules and conventions
+- **Never spend Anthropic API money** without first giving Labiba the exact Mac command and the expected cost. Mood tagging ships off.
+- Claude's sandbox cannot reach TMDB, Hugging Face, Google Maven or the user's Jellyfin, so anything needing them is a command for Labiba to run on the Mac.
+- On the server, edit `deploy/config.server.yaml` in the repo, not on `mars`: every deploy copies it over `/srv/couchcinema/config.server.yaml`.
+- The browser, TV app and Chromecast never see the Jellyfin API key, Jellyfin user ids, magnet links or file paths. All Jellyfin calls go through the server; `/nl/jf/` is a strict allowlist proxy (videos, subtitles, trickplay, artwork). Do not widen it without a test.
+- UI: the original app uses the light "ticket" look (paper ground, white ticket cards, roll colours as roles, condensed Archivo, aurora only as holographic foil). Northern Lights pages share that look; TV pages are dark. Every new feature must work on phone (390 px), laptop and TV (D-pad focus, `NLFocus`), with no horizontal scroll.
+- Missing data degrades, never 500s: no Jellyfin, no TMDB, no model, no people configured each have a fallback.
+- Write plain, short user-facing text.
+
+## 7. Recommender: known open problems
+- Generative engine ignores query exclusions, rating floor and diversity; the genre filter needs 20+ matches.
+- Taste bonus saturates at +2.0 and has no negative signal; `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
+- Concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; genre chips widen instead of narrow; era/runtime filters silently fall back; the variety shuffle runs after MMR.
+- Origin parser leftovers: duplicate `chinese`/`portuguese` keys, Kollywood/Tollywood swapped, Nigerian = Yoruba only.
+- `finish_active_watch` in the old app writes `watch_history` without `profile_id` (Northern Lights finishes go to the right profiles).
+- Dead ONNX branch in `recommender_service.py` (reads a nonexistent `embedding` column).
+
+## 8. Recommender v2: decisions that still bind
+Train on the Mac, serve on `mars`. Vibe search = embeddings + clusters. LLM mood tags with Claude Haiku via the Batch API, 200-title pilot first, then ask before the full run. Questions are about mood, never "pick a film"; soft scores (deprioritise, never remove).
+
+## 9. UI and name
+The app is **Northern Lights**. The original app's look is the ticket look (§6). `DESIGN.md` is still to be written from it. The variable font `static/fonts/Archivo-Variable.ttf` is committed; the CSS also asks for a `.woff2` that does not exist (a harmless 404).
+
+## 10. Recommender v2 features (state)
+- **10.1 Mood tags + TMDB vibe backfill:** `utils/backfill_tmdb_vibe.py` (free) and `utils/mood_tag.py` (costs money) are built and tested offline. **Not run yet** on the real catalogue.
+- **10.2 Search to rate:** done (`services/catalogue_search.py`, Rate tab search, TMDB import).
+- **10.3 Feedback logging:** done (`discover_sessions`, `discover_impressions`, outcomes shown < opened < dismissed < downloaded < played < rated).
+- **10.4 Vibe documents:** done (`services/vibe_document.py`).
+- **10.5 Vibe engine:** done (`training/build_vibe_index.py` on the Mac, `services/vibe_index.py` serves). Real-model build depends on the Mac run; rebuild after backfills.
+- **10.6 Questions pop-up:** done. It runs on the mood map (`MoodSession`, §10.10) and opens on every search while "Ask me a few questions first" is on; the old dial-based `PopupSession` is still in the repo. If it never opens, the serving catalogue has no facets or mood tags (`GET /api/vibe/status` shows `mood_data`).
+- **10.7 Verdict ratings:** done. Five verdicts (rewatch, loved, liked, meh, not for me), chips, vibe-check questions, inferred verdicts for old 1-10 ratings, "Sort out my 7s".
+- **10.8 Taste model** (`facet_fit`, `cluster_affinity`): built, **off by default** (`recommender.taste_model.enabled`). The offline check did not beat the current ordering; turn on after more confirmed verdicts and re-run `utils/eval_taste_model.py`.
+- **10.8b "This or that" pairs:** done (`services/pairs.py`, Bradley-Terry nudge). Ranking does not read the pair nudge yet.
+- **10.9 Per-season TV verdicts:** done. `utils/backfill_season_counts.py` TMDB pass still to run on the Mac.
+- **10.10 Mood map:** 30 night moods in 6 groups (`vibe_moods.py`), entropy question picker (`mood_questions.py`, `mood_popup.py`), ranking by mood mix (`recommender.mood_weight`, 3.0), "Tonight: …" line in results. Weights are first guesses; tune by playing it. No learning across nights yet.
+- **Not built:** Phase 5 learning (weight fitting, `p(option)`, `usefulness(q)`), co-view predictor (movies only), Watch later as a ranking signal.
+
+## 11. Download tab and "Best match" sort
+Done. Downloads start only from the Download tab ("Choose a copy" on Discover jumps there with the catalogue link). `services/torrent_ranking.py` scores quality × seeder health × size fit × scope match; tuning numbers in `config.yaml` `torrent_ranking:`. Numbers were tuned on sample lists only; tune from real results.
+
+## 12. Watch later
+Done (schema v11). One shared list, one row per person per title (`watch_later`), "I'm …" switch in the header, bookmark on Discover / Rate / search, the Later tab, auto-done on rating or finishing. Northern Lights M6 adds "Just me" rows and yes / maybe / pass answers (§14).
+
+## 13. Deployment
+Live on `mars`. Docker Compose stack in `/srv/couchcinema` (app + Jellyfin + Prowlarr) under a `deploy` user with rootless Docker. CI (`.github/workflows/ci.yml`) runs `make check` and pushes `ghcr.io/rupaai/smart-recommender-player:sha-<sha>` (also for `northern-lights-player-app`). Deploy is the manual **Deploy** workflow on the self-hosted runner, with health check and automatic rollback; once the merge PR is in, deploying `main` puts Northern Lights on `mars`. Alerts via ntfy and healthchecks.io. Admin API under `/admin` (Bearer `ADMIN_TOKEN`) for exports, catalogue patches and model bundles. Mac nightly job (`ops/mac/nightly.sh`, launchd 03:30): backup, catalogue refresh, TIGER retrain, vibe index build, eval gate, publish bundle. Full steps: `deploy/RUNBOOK.md`, `ops/mac/README.md`, `docs/BUILD_GUIDE.md`, `docs/DEPLOYMENT_PLAN.md`.
+- Known gap: titles added by the catalogue refresh get no TIGER semantic code until the prepare / RQ-VAE steps are re-run by hand.
+
+## 14. Northern Lights player and TV app
+Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H, D) are in `docs/northern-lights/`. Pages: web `/nl/…`, TV `/nl/tv/…`, player `/nl/play/{id}` (`?source=` for an episode, `?tv=1` for the remote).
+- **M0-M1 Player** (merged): `jellyfin_playback.py`, `device_profiles.py` (browser profile from probed codecs), `static/nl/player-core.js` (the only file touching hls.js, the `<video>` or the native bridge), `player.js`. Audio and subtitle menus, resume, skip-length chip, progress reports.
+- **M2 Browse** (merged): `nl_browse.py`, home with Continue Watching, Movies, Shows, title and show pages, search, next-episode card and per-show autoplay. Titles whose files are gone are hidden.
+- **M3 TV** (merged): TV pages with `static/nl/tv/focus.js`; Android app in `tv-app/` (WebView in front of a headless Media3 player, bridge `window.NorthernLightsNative`, now **v4**); APK built by `.github/workflows/tv-app.yml`, debug-signed with the committed keystore.
+- **M5 Subtitles** (merged): search and download through Jellyfin's OpenSubtitles plugin, appearance (size, background, position), delay (web only).
+- **M4 Who's watching** (merged): people in `northern_lights.people` config, cookie `nl_viewer` (a person or "Both of us"), per-person Jellyfin user, progress written for each viewer, per-person prefs (`/api/nl/prefs`), finishes rated to the right profiles.
+- **M6 Picks for two** (merged, `nl_picks.py`): watchlist with shared and "Just me" titles, yes / maybe / pass, a "For both of us" row from the existing recommender, runtime chips.
+- **M7a Player polish** (merged, `nl_player_extras.py`): trickplay thumbnails, chapters, skip intro / credits, phone gestures, speed.
+- **M7b Browse polish** (merged, `nl_polish_b.py`): Recently added / watched, Unwatched only, hide from home, cast and crew, trailer, tech details, More like this.
+- **M8 Casting**: M8a (merged, `nl_cast.py`): Chromecast sender, receiver page, cast profile, signed stream tokens, hand-back to the phone. M8b (merged, `nl_type.py`): type TV searches on the phone via a code and QR.
+- **M9a Together** (merged, `nl_together.py`): seen-together marks, watch-together pact, mark unwatched for one person.
+- **M9b Choosing** (merged, `nl_choose.py`): Choose for us, weekday and time-of-day defaults, Not tonight / Never vetoes, rotating chooser.
+- **M9c Reactions and spoilers** (merged, `nl_reactions.py`): "How was it?" after a film or a show's last episode (writes verdicts), spoiler-hidden episode lists.
+- **M10a Downloads** (merged, `nl_downloads.py`): download states, plain-words errors, Retry.
+- **M10b Status and admin** (merged, `nl_health.py`): header status (Jellyfin, disk, queue), web-only `/nl/admin`.
+- **M10c Settings and picture** (merged, `nl_settings.py`, `nl_picture.py`): per-person skip length, autoplay, quality cap, picture size; conversion notes; audio-description labels.
+- Nothing in M0-M10 has been checked against a real Jellyfin with two users, a real TV running the current APK, or a real Chromecast; each milestone was checked in headless Chromium with a fake Jellyfin.
+
+## 15. Waiting on Labiba (by hand)
+- **Mac commands:** `uv run python utils/backfill_collections.py`, `utils/backfill_tmdb_vibe.py`, `utils/backfill_season_counts.py`, then `training/build_vibe_index.py` (or install the nightly job, which retrains and rebuilds). Mood-tag pilot only after the cost is confirmed.
+- **Jellyfin:** install the OpenSubtitles plugin and sign in (M5); create Gabriele's Jellyfin user and put both people in `deploy/config.server.yaml` (M4); enable trickplay and run Generate Trickplay Images, install Intro Skipper and run segment detection (M7a).
+- **Casting (optional):** HTTPS for the phone (`tailscale serve`), `northern_lights.cast_base_url` = mars's LAN address, `NL_CAST_SECRET`; optional custom receiver app id (`deploy/RUNBOOK.md` step 6c).
+- **Optional config:** admin tool links (`northern_lights.tools`), `northern_lights.timezone`.
+- **GitHub:** delete `ui-polish-dark`; branch protection on `main`.
+- **Media:** one-time move of old show folders to `~/Media/Shows`; confirm new downloads show on the TV.
+
+## 16. Check first after the next deploy
+1. With two people configured, play something as "Both of us" for a minute, then check both Jellyfin users show it in Continue Watching (if not, look at `JellyfinPlayback.report_progress`).
+2. Install the latest TV APK and check: picture behind the transparent page, Back, subtitles, speed, skip-intro focus with the remote.
+3. Play an mp4 and an mkv, switch audio, a text and a picture subtitle, leave and resume, phone layout.
+4. `GET /api/nl/picks` reports `engine: recommender` (else the image lacks the model and the row falls back).

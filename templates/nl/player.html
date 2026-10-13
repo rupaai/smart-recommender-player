@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Northern Lights player</title>
+  <link rel="stylesheet" href="/static/nl/player.css">
+  <link rel="stylesheet" href="/static/nl/subtitles.css">
+</head>
+<body data-item-id="{{ item_id }}">
+  <div id="nl-player" class="nl-player controls-visible">
+    <video id="nl-video" playsinline></video>
+    <div id="nl-buffering" class="nl-buffering" hidden aria-label="Loading"><span></span></div>
+    <div id="nl-toast" class="nl-toast" role="status" aria-live="polite"></div>
+
+    <div id="nl-controls" class="nl-controls">
+      <div class="nl-top">
+        <button id="nl-back" class="nl-btn" type="button" aria-label="Back to the list">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+        </button>
+        <div class="nl-titles">
+          <div id="nl-title" class="nl-title"></div>
+          <div id="nl-episode" class="nl-episode" hidden></div>
+        </div>
+      </div>
+
+      <button id="nl-center" class="nl-center" type="button" aria-label="Play">
+        <svg id="nl-center-icon" viewBox="0 0 24 24" aria-hidden="true"></svg>
+      </button>
+
+      <div class="nl-bottom">
+        <div class="nl-seek-row">
+          <span id="nl-elapsed" class="nl-time">0:00</span>
+          <div id="nl-seek-wrap" class="nl-seek-wrap">
+            <div id="nl-thumb" class="nl-thumb" hidden aria-hidden="true">
+              <div id="nl-thumb-img" class="nl-thumb-img"></div>
+              <div id="nl-thumb-chapter" class="nl-thumb-chapter" hidden></div>
+              <div id="nl-thumb-time" class="nl-thumb-time"></div>
+            </div>
+            <input id="nl-seek" class="nl-range nl-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="Seek">
+            <div id="nl-ticks" class="nl-ticks" aria-hidden="true"></div>
+          </div>
+          <span class="nl-time nl-time-end"><span id="nl-remaining">-0:00</span><span class="nl-total"> / <span id="nl-total">0:00</span></span></span>
+        </div>
+        <div class="nl-button-row">
+          <div class="nl-group">
+            <button id="nl-skip-back" class="nl-btn nl-skip" type="button" aria-label="Skip back 10 seconds"></button>
+            <button id="nl-play" class="nl-btn" type="button" aria-label="Play"><svg id="nl-play-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+            <button id="nl-skip-fwd" class="nl-btn nl-skip" type="button" aria-label="Skip ahead 10 seconds"></button>
+            <button id="nl-skip-chip" class="nl-chip" type="button" aria-haspopup="menu" title="Skip length (tap to change, hold for a list)">10 s</button>
+          </div>
+          <div class="nl-group nl-group-end">
+            <button id="nl-mute" class="nl-btn" type="button" aria-label="Mute"><svg id="nl-mute-icon" viewBox="0 0 24 24" aria-hidden="true"></svg></button>
+            <input id="nl-volume" class="nl-range nl-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+            <button id="nl-chapters" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu" hidden>Chapters</button>
+            <button id="nl-speed" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu" aria-label="Playback speed">1&times;</button>
+            <button id="nl-picture" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu" aria-label="Picture size and quality">Picture</button>
+            <button id="nl-cast" class="nl-btn" type="button" hidden aria-label="Cast to a TV" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"/><path d="M3 12a8 8 0 0 1 8 8M3 16a4 4 0 0 1 4 4"/><circle class="fill" cx="3.5" cy="19.5" r="1.2"/></svg></button>
+            <button id="nl-audio" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu">Audio</button>
+            <button id="nl-subs" class="nl-btn nl-text-btn" type="button" aria-haspopup="menu">Subtitles</button>
+            <button id="nl-fs" class="nl-btn" type="button" aria-label="Fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div id="nl-menu" class="nl-menu" role="menu" hidden></div>
+    </div>
+
+    <div id="nl-cast-panel" class="nl-cast-panel" hidden>
+      <div class="nl-cast-card">
+        <p id="nl-cast-device" class="nl-cast-device"></p>
+        <p class="nl-hint">Your phone is the remote: play, skip, seek, tracks and volume work here.</p>
+        <button id="nl-cast-next" class="nl-secondary" type="button" hidden>Next episode</button>
+        <button id="nl-cast-stop" class="nl-secondary" type="button">Stop casting</button>
+      </div>
+    </div>
+
+    <div id="nl-seg" class="nl-seg" role="group" aria-label="Skip" hidden>
+      <button id="nl-seg-go" class="nl-primary" type="button">Skip intro</button>
+      <button id="nl-seg-always" class="nl-secondary" type="button" aria-pressed="false" hidden>Always skip intro: off</button>
+    </div>
+
+    <div id="nl-next" class="nl-next" role="group" aria-label="Next episode" hidden>
+      <div class="nl-next-label">Next episode</div>
+      <div id="nl-next-title" class="nl-next-title"></div>
+      <div id="nl-next-count" class="nl-next-count" role="timer" aria-live="off"></div>
+      <div class="nl-next-actions">
+        <button id="nl-next-play" class="nl-primary" type="button">Play now</button>
+        <button id="nl-next-cancel" class="nl-secondary" type="button">Cancel</button>
+      </div>
+    </div>
+
+    <div id="nl-resume" class="nl-screen" hidden>
+      <div class="nl-card">
+        <p class="nl-card-title" id="nl-resume-name"></p>
+        <button id="nl-resume-yes" class="nl-primary" type="button"></button>
+        <button id="nl-resume-no" class="nl-secondary" type="button">Start over</button>
+      </div>
+    </div>
+
+    <div id="nl-react" class="nl-screen" role="dialog" aria-labelledby="nl-react-text" hidden>
+      <div class="nl-card">
+        <p class="nl-card-title" id="nl-react-text"></p>
+        <div id="nl-react-options" class="nl-react-options"></div>
+        <button id="nl-react-skip" class="nl-secondary" type="button">Not now</button>
+      </div>
+    </div>
+
+    <div id="nl-error" class="nl-screen" role="alert" hidden>
+      <div class="nl-card">
+        <p id="nl-error-text" class="nl-card-title"></p>
+        <button id="nl-retry" class="nl-primary" type="button">Try again</button>
+        <a id="nl-error-back" class="nl-secondary" href="/nl/">Back to the list</a>
+      </div>
+    </div>
+
+    <div id="nl-subfind" class="nls-host" hidden></div>
+
+    <div id="nl-help" class="nl-screen nl-help" hidden>
+      <div class="nl-card">
+        <p class="nl-card-title">Keyboard</p>
+        <dl>
+          <dt>Space, K</dt><dd>Play / pause</dd>
+          <dt>&larr; &rarr;, J L</dt><dd>Skip back / ahead</dd>
+          <dt>[ &nbsp; ]</dt><dd>Shorter / longer skip</dd>
+          <dt>&uarr; &darr;</dt><dd>Volume</dd>
+          <dt>M</dt><dd>Mute</dd>
+          <dt>F</dt><dd>Fullscreen</dd>
+          <dt>C</dt><dd>Next subtitles</dd>
+          <dt>&lt; &nbsp; &gt;</dt><dd>Slower / faster</dd>
+          <dt>N</dt><dd>Next episode (when offered)</dd>
+          <dt>?</dt><dd>This help</dd>
+        </dl>
+        <p class="nl-hint">Press any key to close</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- hls.js 1.5.20 is vendored; only player-core.js may touch it. -->
+  <script src="/static/nl/vendor/hls.min.js"></script>
+  <script src="/static/nl/player-core.js"></script>
+  <script src="/static/nl/cast.js"></script>
+  <script src="/static/nl/prefs.js"></script>
+  <script src="/static/nl/player-extras.js"></script>
+  <script src="/static/nl/subtitles.js"></script>
+  <script src="/static/nl/player.js"></script>
+</body>
+</html>

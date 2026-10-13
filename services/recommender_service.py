@@ -1141,8 +1141,12 @@ class RecommenderService:
         profile: str = "together",
         pool_hook: Optional[Any] = None,
         return_pool: bool = False,
+        only_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination.
+
+        only_ids limits the first candidate query to these catalogue ids (the Northern Lights
+        "For both of us" row ranks only titles that are in the library).
 
         pool_hook(ranked) -> ranked re-scores the scored pool before series
         order and diversity (the questions pop-up applies its answers here).
@@ -1228,6 +1232,7 @@ class RecommenderService:
             duration=duration_preference if media_type == "movie" else None,
             concept_terms=concept_terms,
             limit=self.shortlist_size,
+            only_ids=only_ids,
         )
 
         # A concept request must not be decided by the quality cut alone. SQL

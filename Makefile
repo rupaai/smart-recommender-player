@@ -6,7 +6,7 @@ lint:
 	uv run ruff check .
 
 # The suite is script-style (each file runs itself and exits non-zero on failure;
-# see the "uv run python tests/..." lines in PROJECT_HANDOVER.md), so run each file.
+# see PROJECT_HANDOVER.md section 5), so run each file.
 # Importing server.py creates the media folders named in the config, and config.yaml
 # points at /Users/..., so tests get a copy of it with those paths moved under a temp dir.
 test:

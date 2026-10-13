@@ -40,3 +40,11 @@ backups/
 
 # Mood-tag / vibe reports (utils/mood_tag.py)
 reports/
+
+# Android TV app (tv-app/) build outputs
+tv-app/.gradle/
+tv-app/build/
+tv-app/app/build/
+tv-app/local.properties
+tv-app/.idea/
+*.apk

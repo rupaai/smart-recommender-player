@@ -3,7 +3,8 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    # The Northern Lights branch also gets images so Deploy can put it on mars for testing.
+    branches: [main, northern-lights-player-app]
 
 permissions:
   contents: read
@@ -39,7 +40,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=public.ecr.aws/vend/moby/buildkit:buildx-stable-1
-      # Only main publishes; pull requests just prove the image builds.
+      # Pushes publish; pull requests just prove the image builds.
       - name: Log in to GHCR
         if: github.event_name == 'push'
         uses: docker/login-action@v4
@@ -57,6 +58,6 @@ jobs:
             BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
           tags: |
             ${{ env.IMAGE }}:sha-${{ github.sha }}
-            ${{ env.IMAGE }}:main
+            ${{ github.ref == 'refs/heads/main' && format('{0}:main', env.IMAGE) || '' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

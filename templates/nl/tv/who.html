@@ -1,0 +1,14 @@
+{% extends "nl/tv/base.html" %}
+{% block main %}
+  <section class="tv-section tv-who" aria-labelledby="tv-who-h">
+    <h2 id="tv-who-h">Who&rsquo;s watching?</h2>
+    <ul class="tv-row tv-who-row" data-nl-row="who">
+      {% for c in choices %}
+      <li class="tv-item tv-who-item"><a class="tv-card tv-who-card" data-nl-focus href="{{ choose_base }}{{ c.key }}?next={{ next|urlencode }}">
+        <div class="tv-art tv-who-art" aria-hidden="true">{% if c.key == 'both' %}&amp;{% else %}{{ c.label[:1]|upper }}{% endif %}</div>
+        <div class="tv-name">{{ c.label }}</div>
+      </a></li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

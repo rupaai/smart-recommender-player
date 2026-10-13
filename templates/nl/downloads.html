@@ -1,0 +1,11 @@
+{% extends "nl/base.html" %}
+{% block title %}Downloads - Northern Lights{% endblock %}
+{% block main %}
+  <div class="nl-page-head">
+    <h1>Downloads</h1>
+    <p class="nl-sub">What is being fetched for the library, and what is ready to watch.</p>
+  </div>
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <div id="nl-downloads" class="nl-downloads"></div>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/downloads.js"></script><script src="/static/nl/downloads-web.js"></script>{% endblock %}

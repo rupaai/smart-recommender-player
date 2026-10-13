@@ -54,7 +54,7 @@ jobs:
           SHA: ${{ steps.resolve.outputs.sha }}
         run: |
           docker manifest inspect "ghcr.io/${REPO}:sha-${SHA}" > /dev/null || {
-            echo "::error::No image ghcr.io/${REPO}:sha-${SHA}. Only commits that reached main get an image."
+            echo "::error::No image ghcr.io/${REPO}:sha-${SHA}. Only commits pushed to main or northern-lights-player-app get an image."
             exit 1
           }
 

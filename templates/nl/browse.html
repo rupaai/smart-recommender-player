@@ -1,0 +1,12 @@
+{% extends "nl/base.html" %}
+{% block title %}{{ heading }} - Northern Lights{% endblock %}
+{% block main %}
+  <div class="nl-page-head">
+    <h1>{{ heading }}</h1>
+    <p id="nl-count" class="nl-sub"></p>
+  </div>
+  <div id="nl-filters" class="nl-filters"></div>
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <ul id="nl-grid" class="nl-grid" data-kind="{{ kind }}"></ul>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/browse.js"></script>{% endblock %}

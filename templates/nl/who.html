@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e8e6e1">
+  <title>Who's watching - Northern Lights</title>
+  <link rel="stylesheet" href="/static/nl/nl.css">
+</head>
+<body class="nl-page-who">
+  <main class="nl-who">
+    <p class="nl-who-brand">Northern Lights</p>
+    <h1>Who&rsquo;s watching?</h1>
+    <ul class="nl-who-list">
+      {% for c in choices %}
+      <li><a class="nl-who-card{% if c.key == 'both' %} is-both{% endif %}" href="{{ choose_base }}{{ c.key }}?next={{ next|urlencode }}">
+        <span class="nl-who-badge" aria-hidden="true">{% if c.key == 'both' %}&amp;{% else %}{{ c.label[:1]|upper }}{% endif %}</span>
+        <span class="nl-who-name">{{ c.label }}</span>
+      </a></li>
+      {% endfor %}
+    </ul>
+    <p class="nl-who-note">No password. Each of you keeps your own place in a film and your own subtitle settings. &ldquo;Both of us&rdquo; updates both.</p>
+    <span class="nl-foil" aria-hidden="true"></span>
+  </main>
+</body>
+</html>
