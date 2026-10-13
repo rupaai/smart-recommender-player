@@ -103,6 +103,8 @@
     li.appendChild(a);
     // M6: "+" for the watchlist, beside the link (a button inside a link is not valid markup).
     if (window.NLWatch && item.id) { li.appendChild(window.NLWatch.iconButton(item.id, item.title)); }
+    // M7b: home rows mark their cards hideable; "Hide from home" sits under the "+".
+    if (window.NLPolish && item.hideable && item.id) { li.appendChild(window.NLPolish.hideButton(item, li)); }
     return li;
   }
 

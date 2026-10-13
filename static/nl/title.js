@@ -88,6 +88,15 @@
       // M6: the watchlist, and each person's yes / maybe / pass.
       actions.appendChild(window.NLWatch.fullControl(t.id, t.title));
     }
+    if (window.NLPolish) {
+      // M7b: keep this title off this viewer's home rows (or bring it back).
+      actions.appendChild(window.NLPolish.hideToggle(t, {
+        onChange: function (hidden) {
+          subNote.textContent = hidden === null ? "Could not change that. Try again."
+            : hidden ? "Hidden from your home page. It is still in Movies, Shows and search." : "Back on your home page.";
+        }
+      }));
+    }
     info.appendChild(actions);
     if (window.NLWatch) { info.appendChild(window.NLWatch.interestControl(t.id)); }
     info.appendChild(subNote);
@@ -103,6 +112,12 @@
     root.appendChild(hero);
     root.hidden = false;
     NL.setStatus("");
+    // M7b: Trailer, Cast & crew, Tech details and More like this arrive after the page (each can be absent).
+    if (window.NLPolish) {
+      var extras = NL.el("div", "nl-extras");
+      root.appendChild(extras);
+      window.NLPolish.titleExtras(t, extras, actions, {});
+    }
   }
 
   NL.fetchJSON("/api/nl/title/" + encodeURIComponent(id)).then(render).catch(function (err) {

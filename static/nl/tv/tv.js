@@ -90,18 +90,70 @@
 
   /* ------------------------------------------------------------------ home */
 
+  function libraryUrl(type, unwatched) {
+    return "/api/nl/library?type=" + type + (unwatched ? "&unwatched=1" : "");
+  }
+
+  function emptyRow(sectionId, listId) {
+    document.getElementById(listId).textContent = "";
+    document.getElementById(sectionId).hidden = true;
+  }
+
   function initHome() {
+    var unwatchedOn = false;
     var home = NL.fetchJSON("/api/nl/home");
+    // M7b: "Unwatched only" for the Movies and Shows rows, remembered between visits.
+    var toggle = window.NLPolish ? window.NLPolish.unwatchedSwitch({ key: "nl.tv.unwatched", tv: true, onChange: refill }) : null;
+    unwatchedOn = !!(toggle && toggle.nlOn);
     // The home call only carries the newest few; the library calls give the whole shelf.
-    var movies = NL.fetchJSON("/api/nl/library?type=movie").catch(function () { return null; });
-    var shows = NL.fetchJSON("/api/nl/library?type=tv").catch(function () { return null; });
+    var movies = NL.fetchJSON(libraryUrl("movie", unwatchedOn)).catch(function () { return null; });
+    var shows = NL.fetchJSON(libraryUrl("tv", unwatchedOn)).catch(function () { return null; });
+
+    function fillLibrary(m, s, unwatched, fallback) {
+      var note = document.getElementById("tv-filters-note");
+      var applied = !!((m && m.unwatched_applied) || (s && s.unwatched_applied));
+      var any = false;
+      emptyRow("tv-movies", "tv-movies-list");
+      emptyRow("tv-shows", "tv-shows-list");
+      var movieRow = fillRow("tv-movies", "tv-movies-list", (m && m.items) || (fallback ? fallback.movies : []), posterCard);
+      var showRow = fillRow("tv-shows", "tv-shows-list", (s && s.items) || (fallback ? fallback.shows : []), posterCard);
+      any = movieRow || showRow || any;
+      if (!unwatched) { note.textContent = ""; }
+      else if (!m && !s) { note.textContent = "Could not load the list."; }
+      else if (!applied) { note.textContent = "Jellyfin isn’t answering, so I can’t tell what you’ve watched. Showing everything."; }
+      else if (!movieRow && !showRow) { note.textContent = "You’ve watched everything on the shelf."; }
+      else if (!movieRow) { note.textContent = "You’ve watched every movie on the shelf."; }
+      else if (!showRow) { note.textContent = "You’ve watched every show on the shelf."; }
+      else { note.textContent = ""; }
+      return any;
+    }
+
+    var latest = null;
+    function refill(on) {
+      unwatchedOn = on;
+      Promise.all([
+        NL.fetchJSON(libraryUrl("movie", on)).catch(function () { return null; }),
+        NL.fetchJSON(libraryUrl("tv", on)).catch(function () { return null; })
+      ]).then(function (r) {
+        fillLibrary(r[0], r[1], on, on ? null : latest);
+        // The filter pill may have been the only thing still on screen; keep the focus on it.
+        if (toggle) { window.NLFocus.focus(toggle); }
+      });
+    }
+
     Promise.all([home, movies, shows]).then(function (r) {
       var data = r[0];
+      latest = data;
       var any = false;
       any = fillRow("tv-continue", "tv-continue-list", data.continue_watching, wideCard) || any;
       initPicks();
-      any = fillRow("tv-movies", "tv-movies-list", (r[1] && r[1].items) || data.movies, posterCard) || any;
-      any = fillRow("tv-shows", "tv-shows-list", (r[2] && r[2].items) || data.shows, posterCard) || any;
+      any = fillRow("tv-recent-added", "tv-recent-added-list", data.recently_added, posterCard) || any;
+      any = fillRow("tv-recent-watched", "tv-recent-watched-list", data.recently_watched, posterCard) || any;
+      if (toggle) {
+        document.getElementById("tv-filters-box").appendChild(toggle);
+        document.getElementById("tv-filters").hidden = false;
+      }
+      any = fillLibrary(r[1], r[2], unwatchedOn, data) || any;
       setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
       window.NLFocus.start();
     }).catch(function () {
@@ -222,8 +274,22 @@
       actions.appendChild(find);
     }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(t.id, t.title, "tv-btn")); }
+    if (window.NLPolish) {
+      // M7b: keep this title off this viewer's home (or bring it back). A button in the existing actions row.
+      actions.appendChild(window.NLPolish.hideToggle(t, {
+        tv: true,
+        onChange: function (hidden) {
+          subNote.textContent = hidden === null ? "Could not change that. Try again."
+            : hidden ? "Hidden from your home page. It is still in search." : "Back on your home page.";
+          subNote.hidden = false;
+        }
+      }));
+    }
     h.info.appendChild(actions);
     h.info.appendChild(subNote);
+    var trailerNote = el("p", "tv-trailer-note");
+    trailerNote.hidden = true;
+    h.info.appendChild(trailerNote);
     addInterest(h.info, t.id);
     if (t.media_type !== "tv" && t.progress && !t.played) {
       var p = el("div", "tv-detail-progress");
@@ -237,6 +303,12 @@
     root.hidden = false;
     setStatus("");
     window.NLFocus.start();
+    if (window.NLPolish) {
+      // M7b: Cast & crew, Tech details (collapsed; OK opens them), the Trailer line and More like this.
+      var extras = el("div", "tv-extras");
+      root.appendChild(extras);
+      window.NLPolish.titleExtras(t, extras, null, { tv: true, trailerNote: trailerNote, buildCard: posterCard });
+    }
   }
 
   function initTitle() {

@@ -144,6 +144,7 @@ class DatabaseManager:
             self._migrate_v13_nl_people(cursor)
             self._migrate_v14_nl_picks(cursor)
             self._migrate_v15_nl_polish_a(cursor)
+            self._migrate_v16_nl_polish_b(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -808,6 +809,29 @@ class DatabaseManager:
             cursor.execute("PRAGMA user_version = 15;")
             print("[Database] Migration v15 applied: nl_show_viewer_prefs added.")
 
+    def _migrate_v16_nl_polish_b(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M7b (browse polish).
+
+          nl_hidden_titles   "Hide from home", per viewer key (a person's id, "both" or "default"):
+                             a row means that viewer does not want this title on the home rows.
+
+        Idempotent (user_version gate + IF NOT EXISTS), additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_hidden_titles (
+                viewer_key     TEXT NOT NULL,
+                media_item_id  INTEGER NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,
+                hidden_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (viewer_key, media_item_id)
+            );
+            """
+        )
+        if version < 16:
+            cursor.execute("PRAGMA user_version = 16;")
+            print("[Database] Migration v16 applied: nl_hidden_titles added.")
+
     def register_source_file(
         self,
         file_path: str,
@@ -1407,6 +1431,44 @@ class DatabaseManager:
                 (media_item_id, viewer_key, 1 if skip_intro else 0),
             )
         return bool(skip_intro)
+
+    # ------------------------------------------------------------------ Northern Lights browse polish (M7b)
+
+    def get_hidden_ids(self, viewer_key: str) -> set:
+        """Media item ids this viewer hid from the home rows."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT media_item_id FROM nl_hidden_titles WHERE viewer_key = ?;", (viewer_key,)).fetchall()
+        return {int(r["media_item_id"]) for r in rows}
+
+    def set_hidden(self, viewer_key: str, media_item_id: int, hidden: bool) -> bool:
+        """Hides or shows one title on this viewer's home. Raises ValueError for an unknown title."""
+        with self.get_connection() as conn:
+            if not conn.execute("SELECT 1 FROM media_items WHERE id = ?;", (media_item_id,)).fetchone():
+                raise ValueError("unknown title")
+            if hidden:
+                conn.execute(
+                    "INSERT OR IGNORE INTO nl_hidden_titles (viewer_key, media_item_id) VALUES (?, ?);",
+                    (viewer_key, media_item_id),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM nl_hidden_titles WHERE viewer_key = ? AND media_item_id = ?;", (viewer_key, media_item_id)
+                )
+        return bool(hidden)
+
+    def get_library_profiles(self, media_type: str) -> List[Dict[str, Any]]:
+        """id, tmdb_id, genres and rating of every title of this type that has a source file
+        (what "More like this" matches against)."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.id, mi.tmdb_id, mi.genres, mi.rating, mi.release_year AS year
+                FROM media_items mi
+                WHERE mi.media_type = ? AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id);
+                """,
+                (media_type,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------ Northern Lights people (M4)
 

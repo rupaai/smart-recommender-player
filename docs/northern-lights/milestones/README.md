@@ -11,7 +11,7 @@ One file per milestone. Each one has the goal, the features (IDs from `../ROADMA
 | [M04-whos-watching.md](M04-whos-watching.md) | M4 Who's watching | built (needs the second Jellyfin user and the `northern_lights.people` config; progress for "Both" not yet checked on a real Jellyfin) |
 | [M05-subtitles.md](M05-subtitles.md) | M5 Subtitles that fix themselves (switch-over point) | built (needs the OpenSubtitles plugin in Jellyfin; TV Kotlin not compiled yet) |
 | [M06-picks-for-two.md](M06-picks-for-two.md) | M6 Picks for two | built (nothing to configure; check `engine` in `GET /api/nl/picks` on the server: `recommender`, or `fallback` if the ML packages are missing) |
-| [M07-polish.md](M07-polish.md) | M7 Polish | in progress: **M7a player polish built** (thumbnails, chapters, skip intro, gestures, speed; needs Trickplay and the Intro Skipper plugin switched on in Jellyfin, and the new TV APK for speed on the TV; TV Kotlin not compiled yet); M7b browse polish not built |
+| [M07-polish.md](M07-polish.md) | M7 Polish | built in two commits: **M7a player polish** (thumbnails, chapters, skip intro, gestures, speed; needs Trickplay and the Intro Skipper plugin switched on in Jellyfin, and the new TV APK for speed on the TV; TV Kotlin not compiled yet) and **M7b browse polish** (Recently added / watched, Unwatched only, Hide from home, Cast & crew, Trailer, Tech details, More like this; nothing to switch on, uses `TMDB_API_KEY` when set; no Trailer on the TV) |
 | [M08-casting.md](M08-casting.md) | M8 Casting | planned |
 | [M09-couple-extras.md](M09-couple-extras.md) | M9 Couple extras | planned |
 | [M10-health-settings.md](M10-health-settings.md) | M10 Health and settings | planned |
