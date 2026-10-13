@@ -106,6 +106,15 @@ button { font: inherit; color: inherit; }
 .tv-search-row input:focus { border-color: var(--text); transform: scale(1.02); transform-origin: left center;
   box-shadow: 0 0 0 0.3rem var(--action), 0 0 3rem 0.6rem rgba(255, 106, 43, 0.55); }
 .tv-hint { margin: 1rem var(--side) 0; color: var(--text-2); }
+.tv-phone { display: flex; align-items: center; gap: 2.5rem; margin: 1.75rem var(--side) 0; padding: 1.5rem 2rem; max-width: 56rem;
+  border-radius: 1.5rem; background: var(--surface); border: 0.15rem solid var(--line); }
+.tv-phone[hidden] { display: none; }
+.tv-phone-qr { flex: none; width: 13rem; height: 13rem; border-radius: 0.75rem; overflow: hidden; background: #fff; }
+.tv-phone-qr svg { display: block; width: 100%; height: 100%; }
+.tv-phone-title { margin: 0; font-size: 1.5rem; color: var(--text-2); font-weight: 700; }
+.tv-phone-code { margin: 0.4rem 0 0; font-size: 4.25rem; font-weight: 800; letter-spacing: 0.12em; line-height: 1; font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.tv-phone-how { margin: 0.9rem 0 0; font-size: 1.25rem; color: var(--text-2); line-height: 1.35; }
 
 /* ---- who's watching, me (M4) */
 .tv-who-row { gap: 3rem; justify-content: center; padding-top: 5rem; }

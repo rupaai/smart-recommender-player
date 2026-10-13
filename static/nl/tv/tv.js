@@ -527,6 +527,24 @@
 
     input.addEventListener("nl-input-done", run);
     document.getElementById("tv-search-form").addEventListener("submit", function (e) { e.preventDefault(); run(); });
+
+    // M8b: the phone as keyboard. What it types lands in the box and searches after a short pause; its Search button
+    // searches at once. The box keeps its place on the remote's focus ring; only its text changes.
+    var phoneTimer = null;
+    if (window.NLPhoneKeyboard) {
+      window.NLPhoneKeyboard.start({
+        panel: document.getElementById("tv-phone"),
+        qr: document.getElementById("tv-phone-qr"),
+        code: document.getElementById("tv-phone-code"),
+        how: document.getElementById("tv-phone-how"),
+        onText: function (text) {
+          input.value = text;
+          window.clearTimeout(phoneTimer);
+          phoneTimer = window.setTimeout(run, 450);
+        },
+        onSubmit: function () { window.clearTimeout(phoneTimer); run(); }
+      });
+    }
     window.NLFocus.start();
   }
 

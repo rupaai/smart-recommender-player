@@ -9,7 +9,19 @@
                placeholder="Press OK to type" enterkeyhint="search" inputmode="search">
       </div>
     </form>
-    <p class="tv-hint" id="tv-search-hint">Press OK on the box to open the keyboard.</p>
+    <p class="tv-hint" id="tv-search-hint">Press OK on the box to open the keyboard, or type on your phone.</p>
+    <aside id="tv-phone" class="tv-phone" aria-label="Type on your phone" hidden>
+      <div id="tv-phone-qr" class="tv-phone-qr" role="img" aria-label="QR code that opens the phone keyboard"></div>
+      <div class="tv-phone-text">
+        <p class="tv-phone-title">Type on your phone</p>
+        <p id="tv-phone-code" class="tv-phone-code"></p>
+        <p id="tv-phone-how" class="tv-phone-how"></p>
+      </div>
+    </aside>
     <div id="tv-results"></div>
   </section>
+{% endblock %}
+{% block scripts %}
+  <script src="/static/nl/qr.js"></script>
+  <script src="/static/nl/tv/phone-keyboard.js"></script>
 {% endblock %}
