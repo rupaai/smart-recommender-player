@@ -209,3 +209,6 @@ button { font: inherit; color: inherit; }
 .tv-veto { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem 2rem; }
 .tv-veto .nl-veto-title { font-size: 2rem; font-weight: 700; min-width: 24rem; }
 .tv-vetoes > h2 { display: block; }
+
+/* M9c: spoiler hiding (W11) */
+.tv-card.is-spoiler .tv-art img { filter: blur(1.1rem); transform: scale(1.15); }

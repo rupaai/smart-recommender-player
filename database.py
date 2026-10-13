@@ -147,6 +147,7 @@ class DatabaseManager:
             self._migrate_v16_nl_polish_b(cursor)
             self._migrate_v17_nl_together(cursor)
             self._migrate_v18_nl_choosing(cursor)
+            self._migrate_v19_nl_spoilers(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -902,6 +903,22 @@ class DatabaseManager:
         if version < 18:
             cursor.execute("PRAGMA user_version = 18;")
             print("[Database] Migration v18 applied: nl_vetoes, nl_chooser added.")
+
+    def _migrate_v19_nl_spoilers(self, cursor: sqlite3.Cursor) -> None:
+        """Northern Lights M9c (spoiler hiding).
+
+          nl_person_prefs.hide_spoilers   1 = blur the thumbnails and hide the synopses of episodes this
+                                          viewer has not watched; NULL / 0 = show everything (the default).
+
+        Reactions (W10) add no storage: they are ordinary verdicts in rating_details. Additive only.
+        """
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {r[1] for r in cursor.execute("PRAGMA table_info(nl_person_prefs);").fetchall()}
+        if "hide_spoilers" not in cols:
+            cursor.execute("ALTER TABLE nl_person_prefs ADD COLUMN hide_spoilers INTEGER;")
+        if version < 19:
+            cursor.execute("PRAGMA user_version = 19;")
+            print("[Database] Migration v19 applied: nl_person_prefs.hide_spoilers added.")
 
     def register_source_file(
         self,
@@ -1695,18 +1712,19 @@ class DatabaseManager:
             "subtitles_on": None if row["subtitles_on"] is None else bool(row["subtitles_on"]),
             "sub_style": style,
             "search_lang": row["search_lang"],
+            "hide_spoilers": None if row["hide_spoilers"] is None else bool(row["hide_spoilers"]),
         }
 
     def set_person_prefs(self, person_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
         """Updates the given (already validated) pref fields and leaves the others alone."""
-        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang")
+        allowed = ("audio_lang", "subtitle_lang", "subtitles_on", "sub_style", "search_lang", "hide_spoilers")
         values: Dict[str, Any] = {}
         for key in allowed:
             if key in fields:
                 v = fields[key]
                 if key == "sub_style":
                     v = json.dumps(v, separators=(",", ":")) if v else None
-                elif key == "subtitles_on":
+                elif key in ("subtitles_on", "hide_spoilers"):
                     v = None if v is None else (1 if v else 0)
                 values[key] = v
         with self.get_connection() as conn:

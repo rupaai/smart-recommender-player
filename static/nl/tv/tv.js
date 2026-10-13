@@ -333,15 +333,32 @@
   var unwatchMode = null;        // M9a: {person, label} while "Mark unwatched" waits for an episode
   var unwatchHint = null;
 
+  // M9c (W11): with spoiler hiding on, an unstarted episode has a blurred picture until OK is pressed on it once.
+  function spoilerHidden(e) {
+    return !!show.hide_spoilers && !e.played && !e.progress && !e.revealed;
+  }
+
   function episodeCard(e) {
     var li = el("li", "tv-item tv-item-wide");
-    var a = el("a", "tv-card" + (e.played ? " is-played" : ""));
+    var hidden = spoilerHidden(e);
+    var a = el("a", "tv-card" + (e.played ? " is-played" : "") + (hidden ? " is-spoiler" : ""));
     a.href = tvHref(e.href);
     a.setAttribute("data-nl-focus", "");
     a.addEventListener("click", function (ev) {
-      if (!unwatchMode) { return; }
-      ev.preventDefault();
-      markUnwatched(e);
+      if (unwatchMode) {
+        ev.preventDefault();
+        markUnwatched(e);
+        return;
+      }
+      if (hidden) {
+        ev.preventDefault();
+        e.revealed = true;
+        var col = episodesBox._nlCol;
+        var at = Array.prototype.indexOf.call(episodesBox.children, li);
+        showSeason(curSeason);
+        var again = episodesBox.querySelectorAll("[data-nl-focus]")[at >= 0 ? at : Math.min(col, episodesBox.children.length - 1)];
+        if (again) { window.NLFocus.focus(again); }
+      }
     });
     var art = el("div", "tv-art tv-still");
     NL.fillImage(art, [e.image], e.code || ("E" + (e.episode || "")));
@@ -358,9 +375,10 @@
     var meta = [];
     if (e.runtime_minutes) { meta.push(NL.fmtRuntime(e.runtime_minutes)); }
     if (e.progress && !e.played) { meta.push(e.progress + "% watched"); }
+    if (hidden) { meta.push("Details hidden, OK to show"); }
     a.appendChild(el("div", "tv-meta", meta.join(" · ")));
     a.setAttribute("aria-label", (e.code ? e.code + ", " : "") + e.name + (e.played ? ", watched" : "") +
-      (e.progress && !e.played ? ", " + e.progress + " percent watched" : ""));
+      (e.progress && !e.played ? ", " + e.progress + " percent watched" : "") + (hidden ? ", details hidden, press OK to show" : ""));
     li.appendChild(a);
     return li;
   }
@@ -675,6 +693,7 @@
     var sub = document.getElementById("tv-pref-sub");
     var on = document.getElementById("tv-pref-on");
     var status = document.getElementById("tv-pref-status");
+    var spoilers = document.getElementById("tv-pref-spoilers");
     setStatus("");
     var vetoes = document.getElementById("tv-vetoes");
     if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, true); }   // M9b: bring back what was vetoed
@@ -686,6 +705,10 @@
       on.appendChild(document.createTextNode("Subtitles on by default "));
       on.appendChild(el("span", "tv-switch-state", prefs.subtitles_on ? "On" : "Off"));
       on.setAttribute("aria-checked", String(!!prefs.subtitles_on));
+      spoilers.textContent = "";
+      spoilers.appendChild(document.createTextNode("Hide spoilers in episode lists "));
+      spoilers.appendChild(el("span", "tv-switch-state", prefs.hide_spoilers ? "On" : "Off"));
+      spoilers.setAttribute("aria-checked", String(!!prefs.hide_spoilers));
     }
     function save(patch) {
       Object.assign(prefs, patch);
@@ -701,6 +724,7 @@
     audio.addEventListener("click", function () { if (prefs) { save({ audio_lang: nextLang(prefs.audio_lang) || null }); } });
     sub.addEventListener("click", function () { if (prefs) { save({ subtitle_lang: nextLang(prefs.subtitle_lang) || null }); } });
     on.addEventListener("click", function () { if (prefs) { save({ subtitles_on: !prefs.subtitles_on }); } });
+    spoilers.addEventListener("click", function () { if (prefs) { save({ hide_spoilers: !prefs.hide_spoilers }); } });
   }
 
   /* ----------------------------------------- picks for two (M6): home row */

@@ -5,6 +5,7 @@
     <div class="tv-me-list" data-nl-row="me-audio"><button id="tv-pref-audio" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
     <div class="tv-me-list" data-nl-row="me-sub"><button id="tv-pref-sub" class="tv-btn tv-me-btn" type="button" data-nl-focus></button></div>
     <div class="tv-me-list" data-nl-row="me-on"><button id="tv-pref-on" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="false" data-nl-focus></button></div>
+    <div class="tv-me-list" data-nl-row="me-spoilers"><button id="tv-pref-spoilers" class="tv-btn tv-me-btn tv-switch" type="button" role="switch" aria-checked="false" data-nl-focus></button></div>
     {% if people_configured %}
     <div class="tv-me-list" data-nl-row="me-switch"><a class="tv-btn tv-me-btn" data-nl-focus href="/nl/tv/who?next=%2Fnl%2Ftv%2F">{% if viewer.both %}Change who&rsquo;s watching{% else %}Not {{ viewer.label }}? Switch who&rsquo;s watching{% endif %}</a></div>
     {% endif %}

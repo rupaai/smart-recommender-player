@@ -334,3 +334,7 @@ button.nl-btn-quiet:hover { background: rgba(29, 27, 41, 0.06); }
   .nl-pick-card { grid-template-columns: 1fr; }
   .nl-pick-poster { max-width: 160px; }
 }
+
+/* M9c: spoiler hiding (W11) and the "how was it" question's buttons */
+.nl-episode.is-spoiler .nl-still img { filter: blur(14px); transform: scale(1.15); }
+.nl-spoiler-note { font-style: italic; }

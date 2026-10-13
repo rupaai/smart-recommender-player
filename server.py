@@ -57,6 +57,7 @@ from services.jellyfin_playback import (
 from services.jellyfin_service import JellyfinService
 from services.nl_browse import NLBrowse
 from services.nl_picks import NLPicks, PicksError, parse_max_runtime
+from services import nl_reactions
 from services import nl_together
 from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
@@ -1229,6 +1230,58 @@ async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any
     return {"success": True}
 
 
+class NLReactBody(BaseModel):
+    reaction: str
+
+
+def _react_profiles(viewer: Viewer) -> List[int]:
+    return nl_reactions.profiles_to_rate(viewer.profile_ids, viewer.implicit)
+
+
+@app.get("/api/nl/react/{item_id}")
+async def nl_react_get(item_id: int, request: Request) -> Dict[str, Any]:
+    """W10: should the player ask "How was it?" now. `ask` is false for an unknown title, a viewer with no
+    profile, or when everyone at the screen already gave this title a verdict of their own."""
+    viewer = _nl_viewer_or_default(request)
+
+    def work() -> Dict[str, Any]:
+        item = db.get_item_by_id(item_id)
+        profiles = _react_profiles(viewer)
+        asked = bool(item and profiles) and not all(
+            nl_reactions.has_own_verdict(db.get_rating_details(item_id, pid)) for pid in profiles
+        )
+        return {
+            "ask": asked,
+            "text": nl_reactions.question(item["title"], viewer.is_both) if item else "",
+            "options": [{"id": r["id"], "label": r["label"]} for r in nl_reactions.REACTIONS],
+        }
+
+    return await asyncio.to_thread(work)
+
+
+@app.post("/api/nl/react/{item_id}")
+async def nl_react_post(item_id: int, body: NLReactBody, request: Request) -> Dict[str, Any]:
+    """W10: records the answer as a verdict for the profile(s) at the screen ("Both of us" rates for both)."""
+    viewer = _nl_viewer_or_default(request)
+    verdict = nl_reactions.verdict_for(body.reaction)
+    if verdict is None:
+        raise HTTPException(status_code=400, detail="Unknown reaction.")
+    profiles = _react_profiles(viewer)
+    if not profiles:
+        raise HTTPException(status_code=400, detail="No profile to rate for.")
+
+    def work() -> bool:
+        if not db.get_item_by_id(item_id):
+            return False
+        for pid in profiles:
+            db.rate_item(item_id, profile_id=pid, status="seen", verdict=verdict)
+        return True
+
+    if not await asyncio.to_thread(work):
+        raise HTTPException(status_code=404, detail="That title isn't in the library.")
+    return {"success": True, "verdict": verdict, "profiles": len(profiles)}
+
+
 async def _nl_set_played(jellyfin_id: str, played: bool, request: Request) -> Dict[str, Any]:
     if not valid_jellyfin_id(jellyfin_id):
         raise HTTPException(status_code=400, detail="Bad item id.")
@@ -1355,6 +1408,7 @@ def _add_together_to_show(data: Dict[str, Any], item_id: int, viewer: Viewer) ->
     data["together_count"] = len(seen)
     data["pact"] = {"available": possible, "together": bool(possible and db.get_pact(item_id))}
     data["unwatch_people"] = _unwatch_choices(viewer)
+    data["hide_spoilers"] = bool(_nl_prefs_row(viewer).get("hide_spoilers"))   # M9c
 
 
 def _unwatch_choices(viewer: Viewer) -> List[Dict[str, str]]:

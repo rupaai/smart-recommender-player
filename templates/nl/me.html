@@ -16,6 +16,12 @@
       <p id="nl-pref-status" class="nl-note" role="status"></p>
     </form>
   </section>
+  <section class="nl-me" aria-labelledby="nl-me-spoilers">
+    <h2 id="nl-me-spoilers">Spoilers</h2>
+    <p class="nl-sub">Blur the picture and hide the synopsis of episodes you haven&rsquo;t watched. Tap an episode once to reveal it.</p>
+    <label class="nl-switch"><button id="nl-pref-spoilers" class="nl-switch-btn" type="button" role="switch" aria-checked="false"><span class="nl-switch-knob"></span></button>
+      <span class="nl-switch-label">Hide spoilers in episode lists</span></label>
+  </section>
   <section id="nl-vetoes" class="nl-me nl-vetoes" aria-live="polite" hidden></section>
 {% endblock %}
 {% block scripts %}<script src="/static/nl/prefs.js"></script><script src="/static/nl/choose.js"></script><script src="/static/nl/me.js"></script>{% endblock %}
