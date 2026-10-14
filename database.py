@@ -19,8 +19,9 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 class DatabaseManager:
     """Manages SQLite connection, normalized schemas, and queries for the catalogue."""
 
-    def __init__(self, db_path: str = "catalogue.db"):
+    def __init__(self, db_path: str = "catalogue.db", initial_profiles: Optional[List[Dict[str, Any]]] = None):
         self.db_path = db_path
+        self.initial_profiles = list(initial_profiles) if initial_profiles is not None else None
         self.init_db()
 
     @contextmanager
@@ -257,10 +258,17 @@ class DatabaseManager:
             );
             """
         )
-        # Two seeded profiles (Labiba and Gabriele) so the rating UI is usable
-        # immediately; both are renameable via update_profile(). profile 1 owns the pre-v3 rows.
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Labiba');")
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (2, 'Gabriele');")
+        # Configured profile IDs/names seed new databases. Standalone installs
+        # get neutral labels; household-specific names belong in household.yaml.
+        if self.initial_profiles is not None:
+            for profile in self.initial_profiles:
+                cursor.execute(
+                    "INSERT OR IGNORE INTO profiles (id, name) VALUES (?, ?);",
+                    (int(profile["id"]), str(profile["name"]).strip()[:80]),
+                )
+        else:
+            cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Profile 1');")
+            cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (2, 'Profile 2');")
 
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(watch_history);").fetchall()}
         if "profile_id" not in columns:
@@ -657,19 +665,12 @@ class DatabaseManager:
             print("[Database] Migration v10 applied: season_ratings, media_items.season_count added.")
 
     def _migrate_v11_watch_later(self, cursor: sqlite3.Cursor) -> None:
-        """Shared "Watch later" list, plus real names for the two seeded profiles.
+        """Shared "Watch later" list.
 
           watch_later   one row per person per title: who added it (profile_id),
                         when, and, once the title is watched or rated as seen,
                         done_at / done_reason ('rated' | 'watched'). Done rows are
                         kept so the list can offer "watched from your list" + undo.
-
-        Also renames the old seeded profiles: id 1 'Me' -> 'Labiba' and id 2
-        'Partner' -> 'Gabriele'. Only rows still carrying the old default name
-        are touched (a custom name is left alone), and a rename is skipped when
-        the target name is already taken (profiles.name is UNIQUE). Runs once,
-        when the DB moves to v11; fresh DBs are already seeded with the new
-        names by v3.
 
         Idempotent (user_version gate + IF NOT EXISTS), additive only.
         """
@@ -691,14 +692,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_watch_later_done_added ON watch_later(done_at, added_at);"
         )
         if version < 11:
-            for pid, old, new in ((1, "Me", "Labiba"), (2, "Partner", "Gabriele")):
-                taken = cursor.execute("SELECT 1 FROM profiles WHERE name = ?;", (new,)).fetchone()
-                if not taken:
-                    cursor.execute(
-                        "UPDATE profiles SET name = ? WHERE id = ? AND name = ?;", (new, pid, old)
-                    )
             cursor.execute("PRAGMA user_version = 11;")
-            print("[Database] Migration v11 applied: watch_later added, seeded profiles renamed.")
+            print("[Database] Migration v11 applied: watch_later added.")
 
     def _migrate_v12_nl_browse(self, cursor: sqlite3.Cursor) -> None:
         """Northern Lights M2 (browse).
@@ -1074,6 +1069,24 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
+
+    def sync_configured_profiles(self, profiles: List[Dict[str, Any]]) -> None:
+        """Create or rename profiles by stable ID; never delete stored profiles."""
+        with self.get_connection() as conn:
+            for profile in profiles:
+                profile_id = int(profile["id"])
+                name = str(profile["name"]).strip()[:80]
+                if not name:
+                    raise ValueError(f"Profile {profile_id} has an empty name")
+                existing = conn.execute("SELECT id, name FROM profiles WHERE id = ?", (profile_id,)).fetchone()
+                name_owner = conn.execute("SELECT id FROM profiles WHERE name = ?", (name,)).fetchone()
+                if name_owner and int(name_owner["id"]) != profile_id:
+                    raise ValueError(f"Profile name {name!r} is already assigned to another profile")
+                if existing:
+                    if existing["name"] != name:
+                        conn.execute("UPDATE profiles SET name = ? WHERE id = ?", (name, profile_id))
+                else:
+                    conn.execute("INSERT INTO profiles (id, name) VALUES (?, ?)", (profile_id, name))
 
     def update_item_metadata(
         self,

@@ -1,0 +1,13 @@
+# Copy to machine.yaml and set paths for the computer running the app.
+machine:
+  media_folders:
+    - /path/to/media/Movies
+    - /path/to/media/Shows
+  jellyfin_library:
+    movie_dir: /path/to/media/Movies
+    tv_dir: /path/to/media/Shows
+    movies_library_name: Movies
+    tv_library_name: TV Shows
+    realtime_monitor: true
+  torrent:
+    download_dir: /path/to/app/downloads

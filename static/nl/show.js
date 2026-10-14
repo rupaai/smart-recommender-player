@@ -65,7 +65,7 @@
     return li;
   }
 
-  // U6: "Mark unwatched for me" (one button per person on "Both of us"), beside the episode link.
+  // U6: "Mark unwatched for me" (one button per group member), beside the episode link.
   function unwatchButtons(li, e) {
     window.NLCouple.unwatchLabels(show.unwatch_people).forEach(function (entry) {
       var b = NL.el("button", "nl-unwatch", entry.label);

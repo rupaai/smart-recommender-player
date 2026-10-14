@@ -105,35 +105,10 @@ JELLYFIN_API_KEY=your_jellyfin_api_key
 JELLYFIN_USER_ID=your_jellyfin_user_id
 ```
 
-#### 2. `config.yaml`
-Specify your local media folders where movies should be saved and organized:
+#### 2. `config.yaml` and `machine.yaml`
+Keep general application settings in `config.yaml`. Local filesystem paths belong in the separate `machine.yaml` file; copy `machine.example.yaml` and adjust its paths for your computer. The server's container paths remain in `deploy/config.server.yaml`.
 
-```yaml
-media_folders:                      # scanner scans both roots
-  - /Users/labibarupty/Media/Movies
-  - /Users/labibarupty/Media/Shows
-
-# Dedicated Jellyfin libraries (auto-created at server startup)
-jellyfin_library:
-  movie_dir: /Users/labibarupty/Media/Movies
-  tv_dir: /Users/labibarupty/Media/Shows
-  movies_library_name: Movies
-  tv_library_name: TV Shows
-  realtime_monitor: true
-
-region: GB
-database_path: catalogue.db
-
-recommender:
-  default_top_n: 5
-  exclude_watched: true
-  enable_tier2_profiling: true
-
-torrent:
-  min_port: 6881
-  max_port: 6891
-  download_dir: ./downloads      # Staging folder for in-progress pieces
-```
+The household's profile names, IDs, Jellyfin mappings, and shared-group label are in `household.yaml` (example: `household.example.yaml`).
 
 > **Optional — Prowlarr aggregated search:** set `PROWLARR_URL` and `PROWLARR_API_KEY` in `.env` to search all your Prowlarr indexers (YTS, ThePirateBay, NyaaSi, Knaben…) with automatic fallback to YTS/Apibay when Prowlarr is offline or misconfigured. Run `uv run python utils/add_prowlarr_indexers.py` once to install the safe indexer set (no Cloudflare bypass, no accounts; each indexer is live-tested and failures are disabled, never deleted). Results are torrent-only, de-duplicated by info-hash, and merged into one clean sorted list.
 
@@ -302,13 +277,13 @@ cp model.onnx ../models/model.onnx
 3. **That's it — libraries are auto-created.** On server startup the app idempotently ensures two dedicated typed libraries exist ("Movies" at `jellyfin_library.movie_dir`, "TV Shows" at `jellyfin_library.tv_dir`) with realtime monitoring enabled. Setup is strictly additive: nothing is ever deleted or renamed. If Jellyfin is offline, startup simply skips it and the server boots normally.
 4. Check `GET /api/jellyfin/status` anytime for diagnostics: server online state, every library with its type + folder locations, and `.env` config presence.
 5. When downloads complete, files are formatted into Jellyfin's standard structure — Movies: `Movies/Movie Title (Year)/Movie Title (Year).ext` with `Movie Title (Year).en.srt` subtitles beside it; TV Shows: `Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` (season packs: **every** episode organized; multi-episode files become `SXXEYY-EZZ`). The app then refreshes the library and **polls until the title is actually visible** (`✅ '<title>' is now visible in Jellyfin`), logging a diagnostic hint if it isn't.
-6. **Who's watching (Northern Lights):** optionally create a second Jellyfin user and list both under `northern_lights.people` in `config.yaml` (see the commented block in it and `deploy/RUNBOOK.md` step 6b). The player then opens on "Who's watching? Labiba · <partner> · Both of us" (the choice is a plain cookie, no passwords): each person has their own Continue Watching and Resume, their own audio/subtitle language and subtitle look (`/nl/me`), and "Both of us" reports progress to both users and resumes from the further place. Without the config nothing changes.
-7. **Picks for two (Northern Lights):** the home page has a "For both of us" row ("Picks for you" with one person) built by the existing recommender in co-view mode from what is in the library, with a one-line reason under each pick and the chips "Under 90 min" / "Under 2 h". Press the round **+** on any card, search result or details page to put a title on the shared **Watchlist** (`/nl/watchlist`, `/nl/tv/watchlist`); "Just me" keeps it private to one person. Each person answers Yes / Maybe / Pass per title; titles you both said yes to come first and lift similar picks. If the recommender's ML packages are not installed the row still works from ratings and your answers. Nothing to configure.
+6. **Who's watching (Northern Lights):** household profiles live in the separate root `household.yaml`; `household.example.yaml` shows how to add or remove profiles and set the shared-group label and membership. Each profile maps a stable rating-profile ID and screen key to a Jellyfin user. See `deploy/RUNBOOK.md` step 6b for Jellyfin setup. Shared recommendations still use the existing couple-oriented ranking logic; a larger family taste model remains future work.
+7. **Shared picks (Northern Lights):** the home page has a group picks row ("Picks for you" with one person) built by the existing recommender in co-view mode from what is in the library, with a one-line reason under each pick and the chips "Under 90 min" / "Under 2 h". Its label comes from `household.yaml`. Press the round **+** on any card, search result or details page to put a title on the shared **Watchlist** (`/nl/watchlist`, `/nl/tv/watchlist`); "Just me" keeps it private to one person. Each person answers Yes / Maybe / Pass per title; shared yes answers come first and lift similar picks. If the recommender's ML packages are not installed the row still works from ratings and the answers. Nothing to configure.
 8. **Subtitles tip:** install the OpenSubtitles plugin (Dashboard → Plugins) and sign in to an opensubtitles.com account, so Jellyfin can auto-download missing `.srt` files **and so the Northern Lights player's "Find subtitles" works** (Subtitles menu in the player, or the button on a movie's page, web and TV: search by language, exact matches first, download, and the new track is selected; plus subtitle size/background/position, and on the web a +/- 0.25 s delay); local subtitles named `Title (Year).en.forced.srt` / `Title (Year).en.sdh.srt` are honored automatically.
 9. **One-time manual migration** (existing show folders downloaded to the old single root):
 
    ```bash
-   mkdir -p ~/Media/Shows && mv "/Users/labibarupty/Movies/<Show Name>"* /Users/labibarupty/Media/Shows/
+   mkdir -p ~/Media/Shows && mv "$HOME/Movies/<Show Name>"* "$HOME/Media/Shows/"
    ```
 
    Movies already placed under `~/Media/Movies` need no action.

@@ -61,7 +61,7 @@
   }
 
   /* One entry per person the viewer can reset. A single viewer sees "Mark unwatched for me";
-   * "Both of us" sees one per person, by name. No people configured: one, for the only viewer. */
+   * The shared group sees one per person, by name. No people configured: one, for the only viewer. */
   function unwatchLabels(people) {
     people = people || [];
     if (people.length <= 1) { return [{ person: people[0] ? people[0].id : null, label: "Mark unwatched for me" }]; }

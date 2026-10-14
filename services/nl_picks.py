@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from services.nl_people import Person, Viewer
+from services.nl_people import DEFAULT_GROUP_LABEL, Person, Viewer
 
 STATES = ("yes", "maybe", "pass")
 RUNTIME_CHIPS = (
@@ -119,6 +119,7 @@ class Ctx:
     mine: List[int]                          # profile ids at the screen
     pair: List[int]                          # profile ids the row is for (the first two people)
     names: Dict[int, str] = field(default_factory=dict)
+    group_label: str = DEFAULT_GROUP_LABEL
 
     @property
     def solo(self) -> bool:
@@ -131,7 +132,9 @@ class Ctx:
 
     @property
     def title(self) -> str:
-        return "Picks for you" if self.solo else "For both of us"
+        if self.solo:
+            return "Picks for you"
+        return "For both of us" if self.group_label == DEFAULT_GROUP_LABEL else self.group_label
 
     def name_of(self, profile_id: int) -> str:
         return self.names.get(profile_id, "They")
@@ -150,7 +153,8 @@ def build_ctx(configured_people: Sequence[Person], viewer: Viewer) -> Ctx:
     by_id = {p["id"]: p for p in persons}
     mine = [by_id[p.id]["profile_id"] for p in viewer.people if p.id in by_id]
     pair = [p["profile_id"] for p in persons[:2]]
-    return Ctx(viewer=viewer, persons=persons, mine=mine or pair[:1], pair=pair, names={p["profile_id"]: p["name"] for p in persons})
+    return Ctx(viewer=viewer, persons=persons, mine=mine or pair[:1], pair=pair,
+               names={p["profile_id"]: p["name"] for p in persons})
 
 
 def personal_visible(ctx: Ctx) -> List[int]:
@@ -344,7 +348,9 @@ class NLPicks:
     # ------------------------------------------------------------ context
 
     def ctx(self, viewer: Viewer) -> Ctx:
-        return build_ctx(self.people.people, viewer)
+        ctx = build_ctx(self.people.people, viewer)
+        ctx.group_label = self.people.group_label
+        return ctx
 
     @staticmethod
     def _chips() -> List[Dict[str, Any]]:

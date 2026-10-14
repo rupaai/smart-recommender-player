@@ -15,6 +15,7 @@ services:
     env_file: .env
     environment:
       CONFIG_PATH: /config/config.server.yaml
+      HOUSEHOLD_CONFIG_PATH: /config/household.yaml
       MODELS_DIR: /models/current
       DATABASE_PATH: /data/catalogue_full.db
       JELLYFIN_URL: http://jellyfin:8096
@@ -23,6 +24,7 @@ services:
       - ./data:/data
       - ./models:/models
       - ./config.server.yaml:/config/config.server.yaml:ro
+      - ./household.yaml:/config/household.yaml:ro
       - ${MEDIA_ROOT}:/media   # same path in every container: the app tells Jellyfin about files by path
     ports:
       - "8000:8000"

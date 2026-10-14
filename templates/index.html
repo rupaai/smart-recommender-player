@@ -10,7 +10,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
-<body>
+<body data-group-label="{{ group_label }}">
   <!-- One icon set for all interface chrome (tabs, buttons, toggles).
        Emoji stay only where they are content (mood names come from the API). -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -105,7 +105,7 @@
           <div class="segmented" role="group" aria-label="Whose taste">
             <button class="segment active" data-rec-profile="together" aria-pressed="true"
                     onclick="setRecProfile('together')"
-                    title="Blend both your tastes — weighted toward what the other liked">Us two</button>
+                    title="Blend both your tastes — weighted toward what the other liked">{{ group_label }}</button>
             <button class="segment" data-rec-profile="me" aria-pressed="false"
                     onclick="setRecProfile('me')"
                     title="Mostly your taste, with a little of theirs">Just me</button>

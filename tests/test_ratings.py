@@ -262,7 +262,8 @@ def test_validation(db):
     check("rating clamped to 10", s["verdicts"][0]["user_rating"] == 10.0)
 
     check("rename works", db.update_profile_name(2, "Partner Two"))
-    check("duplicate name rejected", not db.update_profile_name(2, "Labiba"))
+    first_profile_name = next(p["name"] for p in db.get_profiles() if p["id"] == 1)
+    check("duplicate name rejected", not db.update_profile_name(2, first_profile_name))
     check("empty name rejected", not db.update_profile_name(2, "   "))
     check("unknown id rejected", not db.update_profile_name(42, "Nobody"))
 
@@ -652,7 +653,7 @@ def test_download_survives_refresh(build):
 
     src = inspect.getsource(server_mod.download_torrent)
     check("download is dispatched with asyncio.create_task",
-          "asyncio.create_task" in src)
+          "create_task" in src and 'dependencies["asyncio"]' in src)
     check("no binding to an HTTP client session/websocket",
           not any(k in src for k in ("WebSocket", "request.state", "BackgroundTask")))
     check("progress state lives in a module-level dict",

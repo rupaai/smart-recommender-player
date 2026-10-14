@@ -75,7 +75,7 @@
   function add(id, scope, title) {
     return request("POST", "/api/nl/watchlist", { media_item_id: id, scope: scope || "shared" }).then(function (r) {
       apply(r);
-      say(scope === "me" ? "Added for just you" + (title ? ": " + title : "") : (state && state.solo ? "Added to your watchlist" : "Added to the watchlist for both of us") + (title ? ": " + title : ""));
+      say(scope === "me" ? "Added for just you" + (title ? ": " + title : "") : (state && state.solo ? "Added to your watchlist" : "Added to the " + document.body.dataset.groupLabel + " watchlist") + (title ? ": " + title : ""));
       return r;
     }).catch(function (err) { say("Couldn’t add that. " + (err && err.message ? err.message : "")); throw err; });
   }
@@ -119,7 +119,7 @@
       var m = el("div", "nl-watch-menu");
       m.setAttribute("role", "group");
       m.setAttribute("aria-label", "Add " + title + " to the watchlist");
-      var both = el("button", null, "For both of us");
+      var both = el("button", null, document.body.dataset.groupLabel);
       both.type = "button";
       var me = el("button", null, "Just me");
       me.type = "button";

@@ -1,4 +1,4 @@
-/* Northern Lights home row "For both of us" / "Picks for you" (M6).
+/* Northern Lights home row for the configured shared group / "Picks for you" (M6).
  * The server asks the recommender in co-view mode for whoever is watching and answers with library titles,
  * each with one line saying why. A slow or failing recommender only delays or hides this row; the rest of
  * the home page does not wait for it. */
@@ -26,7 +26,7 @@
   }
 
   function render(data) {
-    heading.textContent = data.title || "For both of us";
+    heading.textContent = data.title || document.body.dataset.groupLabel;
     note.textContent = data.note || "";
     list.textContent = "";
     var items = data.items || [];

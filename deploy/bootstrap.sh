@@ -117,6 +117,7 @@ preflight() {
   info "Checking this machine"
   [ "$(id -u)" -eq 0 ] || die "run this with sudo"
   [ -f "$SRC_DIR/compose.yaml" ] || die "compose.yaml not found next to bootstrap.sh; run it from a full clone of the repo"
+  [ -f "$SRC_DIR/../household.yaml" ] || die "household.yaml is missing from the repository root"
 
   local missing_cmds=() cmd
   for cmd in docker tailscale curl python3 tar runuser loginctl systemctl getent; do
@@ -303,14 +304,15 @@ ensure_dirs() {
 }
 
 sync_repo_files() {
-  info "Copying compose.yaml, config.server.yaml and helper scripts into $CC_ROOT"
+  info "Copying compose.yaml, config.server.yaml, household.yaml and helper scripts into $CC_ROOT"
   cp "$SRC_DIR/compose.yaml" "$CC_ROOT/compose.yaml"
   cp "$SRC_DIR/config.server.yaml" "$CC_ROOT/config.server.yaml"
+  cp "$SRC_DIR/../household.yaml" "$CC_ROOT/household.yaml"
   if [ -d "$SRC_DIR/bin" ]; then
     cp "$SRC_DIR"/bin/*.sh "$CC_ROOT/bin/"
     chmod 755 "$CC_ROOT"/bin/*.sh
   fi
-  chown "$DEPLOY_USER:$DEPLOY_USER" "$CC_ROOT/compose.yaml" "$CC_ROOT/config.server.yaml" "$CC_ROOT"/bin/*.sh 2>/dev/null || true
+  chown "$DEPLOY_USER:$DEPLOY_USER" "$CC_ROOT/compose.yaml" "$CC_ROOT/config.server.yaml" "$CC_ROOT/household.yaml" "$CC_ROOT"/bin/*.sh 2>/dev/null || true
 }
 
 collect_settings() {

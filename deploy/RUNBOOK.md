@@ -105,9 +105,9 @@ Skip this and the player works as before with the single user from step 6. To gi
    curl -s -H 'Authorization: MediaBrowser Token="PASTE_KEY_HERE"' http://localhost:8096/Users \
      | python3 -c 'import json,sys; [print(u["Name"], u["Id"]) for u in json.load(sys.stdin)]'
    ```
-3. In the repo, edit `deploy/config.server.yaml` (it has the block commented out): uncomment `northern_lights:` and fill in the two ids and the names you want on the screen (the partner's name is whatever you type; nothing is hard-coded). `profile_id` 1 and 2 are the two profiles of the Rate tab. A user *name* works in place of the id. Commit and deploy as usual: every deploy copies that file over `/srv/couchcinema/config.server.yaml`, so editing the copy on `mars` would be undone by the next deploy. (Jellyfin user ids are not secrets.)
-4. After the deploy, open `http://mars:8000/nl/`: you get "Who's watching?". Check once: play something as "Both of us" for a minute, then look in Jellyfin (Dashboard → Users → each user → Continue Watching, or each user's own web page) that **both** users show it.
-To go back to one viewer, comment the block out again.
+3. In the repository root, edit `household.yaml`: each entry under `household.profiles` creates or updates one rating profile and maps it to a Jellyfin user. Keep profile IDs stable so existing ratings stay attached to the same person. Set the shared display label and profile IDs under `household.group`. `household.example.yaml` is a sample with three profiles. Deploy copies this file to `/srv/couchcinema/household.yaml`; local app runs read it beside `config.yaml` (or use `HOUSEHOLD_CONFIG_PATH`).
+4. After the deploy, open `http://mars:8000/nl/`: you get "Who's watching?". Check once: play something as the configured shared group for a minute, then look in Jellyfin (Dashboard → Users → each user → Continue Watching, or each user's own web page) that the selected users show it.
+To use one viewer, leave one entry in `household.profiles` and remove the group membership; stored profiles and their ratings are retained.
 
 ### 6c. Casting to a Chromecast **[Labiba]** (optional, Northern Lights M8)
 Skip this and the player has no Cast button. Casting works from **Chrome on Android or a computer**; iPhones and Safari cannot cast from a web page. The phone becomes the remote (play, pause, skip, seek, audio and subtitles, next episode, stop), and when you stop, the player offers "Continue here from 42:10".

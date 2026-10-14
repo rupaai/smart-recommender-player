@@ -7,8 +7,8 @@ the Jellyfin user that keeps their progress, and the recommender profile their r
 
     northern_lights:
       people:
-        - {id: labiba,  name: Labiba,  jellyfin_user_id: <id or user name>, profile_id: 1}
-        - {id: partner, name: <their name>, jellyfin_user_id: <id or user name>, profile_id: 2}
+        - {id: person1, name: <name>, jellyfin_user_id: <id or user name>, profile_id: 1}
+        - {id: person2, name: <name>, jellyfin_user_id: <id or user name>, profile_id: 2}
 
 No passwords: the `nl_viewer` cookie is a plain choice (a person's id, or "both"). A cookie value
 that is not a configured person is treated as "not chosen". With no people configured the app
@@ -31,7 +31,7 @@ COOKIE_NAME = "nl_viewer"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 BOTH = "both"
 DEFAULT_KEY = "default"            # the implicit viewer when no people are configured
-BOTH_LABEL = "Both of us"
+DEFAULT_GROUP_LABEL = "Both of us"
 POSITION_GAP_SECONDS = 120.0       # positions closer than this are "the same place"
 
 _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,23}$")
@@ -124,8 +124,14 @@ def parse_people(raw: Any) -> List[Person]:
 class People:
     """The configured people and the viewer cookie."""
 
-    def __init__(self, people: Optional[Sequence[Person]] = None):
+    def __init__(
+        self, people: Optional[Sequence[Person]] = None, group_label: str = DEFAULT_GROUP_LABEL,
+        group_profile_ids: Optional[Sequence[int]] = None,
+    ):
         self.people: List[Person] = list(people or [])
+        self.group_label = str(group_label or DEFAULT_GROUP_LABEL).strip()[:40] or DEFAULT_GROUP_LABEL
+        group_ids = {int(i) for i in group_profile_ids or []}
+        self.group_people = [p for p in self.people if p.profile_id in group_ids] if group_ids else list(self.people)
 
     @classmethod
     def from_config(cls, config: Optional[Dict[str, Any]], env_json: Optional[str] = None) -> "People":
@@ -137,7 +143,11 @@ class People:
                 raise PeopleConfigError(f"NL_PEOPLE is not valid JSON ({e}).") from e
         else:
             raw = ((config or {}).get("northern_lights") or {}).get("people")
-        return cls(parse_people(raw))
+        nl = (config or {}).get("northern_lights") or {}
+        return cls(
+            parse_people(raw), group_label=nl.get("group_label", DEFAULT_GROUP_LABEL),
+            group_profile_ids=nl.get("group_profile_ids"),
+        )
 
     @property
     def configured(self) -> bool:
@@ -149,8 +159,8 @@ class People:
     def choices(self) -> List[Dict[str, Any]]:
         """What the who's-watching screen offers: each person, then Both (only with two or more people)."""
         out = [{"key": p.id, "label": p.name} for p in self.people]
-        if len(self.people) >= 2:
-            out.append({"key": BOTH, "label": BOTH_LABEL})
+        if len(self.group_people) >= 2:
+            out.append({"key": BOTH, "label": self.group_label})
         return out
 
     def viewer_for(self, key: Optional[str]) -> Optional[Viewer]:
@@ -159,8 +169,8 @@ class People:
         if not self.configured:
             return IMPLICIT_VIEWER
         key = (key or "").strip().lower()
-        if key == BOTH and len(self.people) >= 2:
-            return Viewer(key=BOTH, label=BOTH_LABEL, people=tuple(self.people))
+        if key == BOTH and len(self.group_people) >= 2:
+            return Viewer(key=BOTH, label=self.group_label, people=tuple(self.group_people))
         person = self.get(key) if key else None
         if person:
             return Viewer(key=person.id, label=person.name, people=(person,))

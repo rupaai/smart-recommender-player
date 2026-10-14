@@ -1,0 +1,13 @@
+# Paths for this Mac. Keep filesystem-specific settings out of general app config.
+machine:
+  media_folders:
+    - /Users/labibarupty/Media/Movies
+    - /Users/labibarupty/Media/Shows
+  jellyfin_library:
+    movie_dir: /Users/labibarupty/Media/Movies
+    tv_dir: /Users/labibarupty/Media/Shows
+    movies_library_name: Movies
+    tv_library_name: TV Shows
+    realtime_monitor: true
+  torrent:
+    download_dir: /Users/labibarupty/codes/smart_movie_streamer/downloads

@@ -17,15 +17,17 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - **Clients:** phone and laptop browsers, an Android TV app (`tv-app/`), Chromecast.
 
 ## 2. Where things live
-- `server.py`: FastAPI app, every route. `database.py`: `DatabaseManager`, SQLite schema and migrations (`_migrate_vN_*`, gated by `PRAGMA user_version`).
+- `server.py`: FastAPI composition root, startup, and the recommendation handlers that are intentionally still in place. `routers/`: platform, profile, playback, Jellyfin, catalogue, downloads, and page endpoints. `database.py`: `DatabaseManager`, SQLite schema and migrations (`_migrate_vN_*`, gated by `PRAGMA user_version`).
 - `services/`: recommender (`recommender_service.py`, `generative_retriever.py` TIGER, `taste_model.py` + `taste_runtime.py`, `verdicts.py`, `pairs.py`), vibe search and questions (`vibe_vocab.py`, `vibe_document.py`, `vibe_index.py`, `vibe_questions.py`, `vibe_popup.py`, `vibe_moods.py`, `mood_questions.py`, `mood_popup.py`), downloads (`torrent_service.py`, `torrent_ranking.py`, `disk_guard.py`), Jellyfin (`jellyfin_service.py`, `jellyfin_playback.py`, `device_profiles.py`), deployment (`admin_api.py`, `catalogue_patch.py`, `model_bundle.py`, `paths.py`), Northern Lights (`nl_*.py`, §14).
 - `templates/index.html` + `static/app.js`, `styles.css`: the original app (tabs Discover / Download / Rate / Later / History). `templates/nl/`, `static/nl/`: Northern Lights web pages; `templates/nl/tv/`, `static/nl/tv/`: TV pages.
 - `tv-app/`: Android TV app (Kotlin WebView + Media3). `training/`: offline training (TIGER, vibe index). `utils/`: backfills and maintenance scripts. `deploy/`: server scripts, compose, runbook. `ops/mac/`: Mac nightly job and admin client. `tests/`: script-style tests (+ `tests/js/` node checks, `tests/deploy/`, `tests/mac/`).
 - Design docs: `docs/RECOMMENDER_ARCHITECTURE.md` (read before touching the recommender), `docs/RECOMMENDER_V2_DESIGN.md`, `docs/VIBE_QUESTION_BANK.md`, `docs/DEPLOYMENT_PLAN.md`, `docs/BUILD_GUIDE.md`, `docs/northern-lights/` (roadmap and one file per milestone), `PRODUCT.md`. Project plans also live in the project's shared files (`/mnt/project-files/`).
 
+Configuration split: `config.yaml` has general app settings; root `household.yaml` has profile identities, Jellyfin mappings and the shared-group label; root `machine.yaml` has this Mac's filesystem paths. `household.example.yaml` and `machine.example.yaml` are sanitized setup examples. The server uses container paths in `deploy/config.server.yaml` and receives `household.yaml` separately.
+
 ## 3. Data model (SQLite)
 - Catalogue: `catalogue_full.db` by default (`database_path` in `config.yaml`; `DATABASE_PATH` env overrides; `catalogue.db` is a small test catalogue). The server alone assigns `media_items.id` and never deletes items.
-- Core tables: `media_items` (TMDB metadata, `UNIQUE(media_type, tmdb_id)`, `vote_count`, collection fields, vibe fields `tagline`, `vibe_tags`, `facets`, `vibe_cluster_id`, `season_count`), `media_sources` (files; a show has one row per episode; `jellyfin_id` cache), `profiles` (1 Labiba, 2 Gabriele), `watch_history` (per profile; `status` seen / not_seen, "not seen" carries no rating).
+- Core tables: `media_items` (TMDB metadata, `UNIQUE(media_type, tmdb_id)`, `vote_count`, collection fields, vibe fields `tagline`, `vibe_tags`, `facets`, `vibe_cluster_id`, `season_count`), `media_sources` (files; a show has one row per episode; `jellyfin_id` cache), `profiles` (configured in root `household.yaml`; current IDs 1 Labiba, 2 Gabriele), `watch_history` (per profile; `status` seen / not_seen, "not seen" carries no rating).
 - Ratings: `rating_details` (verdict, chips, vibe-check answers, `taste_score` -1..+1, `inferred`), `rating_history`, `rating_pairs`, `season_ratings`. Feedback: `discover_sessions`, `discover_impressions`, `vibe_clusters`, `mood_tag_batches`. Lists: `watch_later`.
 - Northern Lights (v12-v20): `nl_show_prefs`, `nl_person_prefs`, `nl_interest`, `nl_show_viewer_prefs`, `nl_hidden_titles`, `nl_seen_together`, `nl_pacts`, `nl_vetoes`, `nl_chooser`.
 - Migrations are additive and idempotent. Tests that pin a schema number use "this version or newer".
@@ -99,7 +101,7 @@ Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H,
 - **M2 Browse** (merged): `nl_browse.py`, home with Continue Watching, Movies, Shows, title and show pages, search, next-episode card and per-show autoplay. Titles whose files are gone are hidden.
 - **M3 TV** (merged): TV pages with `static/nl/tv/focus.js`; Android app in `tv-app/` (WebView in front of a headless Media3 player, bridge `window.NorthernLightsNative`, now **v4**); APK built by `.github/workflows/tv-app.yml`, debug-signed with the committed keystore.
 - **M5 Subtitles** (merged): search and download through Jellyfin's OpenSubtitles plugin, appearance (size, background, position), delay (web only).
-- **M4 Who's watching** (merged): people in `northern_lights.people` config, cookie `nl_viewer` (a person or "Both of us"), per-person Jellyfin user, progress written for each viewer, per-person prefs (`/api/nl/prefs`), finishes rated to the right profiles.
+- **M4 Who's watching** (merged): people and shared-group label from root `household.yaml`, cookie `nl_viewer` (a person or configured group), per-person Jellyfin user, progress written for each viewer, per-person prefs (`/api/nl/prefs`), finishes rated to the right profiles. Profile rows are created/renamed by configured stable ID; unconfigured stored profiles are retained to protect history.
 - **M6 Picks for two** (merged, `nl_picks.py`): watchlist with shared and "Just me" titles, yes / maybe / pass, a "For both of us" row from the existing recommender, runtime chips.
 - **M7a Player polish** (merged, `nl_player_extras.py`): trickplay thumbnails, chapters, skip intro / credits, phone gestures, speed.
 - **M7b Browse polish** (merged, `nl_polish_b.py`): Recently added / watched, Unwatched only, hide from home, cast and crew, trailer, tech details, More like this.
@@ -114,7 +116,7 @@ Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H,
 
 ## 15. Waiting on Labiba (by hand)
 - **Mac commands:** `uv run python utils/backfill_collections.py`, `utils/backfill_tmdb_vibe.py`, `utils/backfill_season_counts.py`, then `training/build_vibe_index.py` (or install the nightly job, which retrains and rebuilds). Mood-tag pilot only after the cost is confirmed.
-- **Jellyfin:** install the OpenSubtitles plugin and sign in (M5); create Gabriele's Jellyfin user and put both people in `deploy/config.server.yaml` (M4); enable trickplay and run Generate Trickplay Images, install Intro Skipper and run segment detection (M7a).
+- **Jellyfin:** install the OpenSubtitles plugin and sign in (M5); create Gabriele's Jellyfin user and update root `household.yaml` (M4); enable trickplay and run Generate Trickplay Images, install Intro Skipper and run segment detection (M7a).
 - **Casting (optional):** HTTPS for the phone (`tailscale serve`), `northern_lights.cast_base_url` = mars's LAN address, `NL_CAST_SECRET`; optional custom receiver app id (`deploy/RUNBOOK.md` step 6c).
 - **Optional config:** admin tool links (`northern_lights.tools`), `northern_lights.timezone`.
 - **GitHub:** delete `ui-polish-dark`; branch protection on `main`.
@@ -125,3 +127,10 @@ Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H,
 2. Install the latest TV APK and check: picture behind the transparent page, Back, subtitles, speed, skip-intro focus with the remote.
 3. Play an mp4 and an mkv, switch audio, a text and a picture subtitle, leave and resume, phone layout.
 4. `GET /api/nl/picks` reports `engine: recommender` (else the image lacks the model and the row falls back).
+
+## 17. Server route extraction (in progress)
+- `server.py` is the FastAPI composition root: app creation, middleware, startup, and dependency construction stay there.
+- Domain routers in `routers/` now contain 111 handlers for platform, profile, playback, Jellyfin, catalogue, download, and page routes. The 14 recommendation and pick handlers remain in `server.py` by design.
+- Routers receive the live `server.py` dependency mapping. They do not import `server.py`; lookups happen at request time so existing service replacements in tests still take effect. Router builders publish handler aliases into the mapping for compatibility.
+- Shared startup, service wiring, helpers, and recommendation code still live in `server.py`; the endpoint handlers are now separated by domain. Further helper extraction should follow clear boundaries and preserve current behavior. Keep recommender behavior untouched.
+- Verification: `make check` (or the script-style Python suite using `.venv/bin/python` when uv's cache is unavailable) plus `./.venv/bin/ruff check .`.

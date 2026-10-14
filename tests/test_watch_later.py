@@ -31,8 +31,8 @@ FILM, SHOW, FILM2 = 1, 2, 3
 LAB, GAB = 1, 2
 
 
-def make_db(tmp, name="wl.db"):
-    db = DatabaseManager(os.path.join(tmp, name))
+def make_db(tmp, name="wl.db", initial_profiles=None):
+    db = DatabaseManager(os.path.join(tmp, name), initial_profiles=initial_profiles)
     with db.get_connection() as conn:
         conn.execute("INSERT INTO media_items (id, media_type, tmdb_id, title, release_year, genres) "
                      "VALUES (?, 'movie', 201, 'Film One', 2001, 'Drama')", (FILM,))
@@ -81,7 +81,28 @@ def test_names(tmp):
     print("Profile names")
     fresh = make_db(tmp, "fresh.db")
     names = {p["id"]: p["name"] for p in fresh.get_profiles()}
-    check("fresh DB seeds Labiba / Gabriele", names.get(1) == "Labiba" and names.get(2) == "Gabriele", names)
+    check("fresh standalone DB uses neutral names", names == {1: "Profile 1", 2: "Profile 2"}, names)
+
+    configured = [
+        {"id": 1, "name": "Alex"},
+        {"id": 2, "name": "Sam"},
+        {"id": 3, "name": "Kids"},
+    ]
+    household_db = make_db(tmp, "household.db", initial_profiles=configured)
+    names = {p["id"]: p["name"] for p in household_db.get_profiles()}
+    check("fresh household DB uses configured names and IDs", names == {1: "Alex", 2: "Sam", 3: "Kids"}, names)
+
+    # Existing profile IDs and their ratings remain intact when names come from config.
+    fresh.rate_item(FILM, profile_id=1, user_rating=8.0)
+    fresh.sync_configured_profiles(configured)
+    names = {p["id"]: p["name"] for p in fresh.get_profiles()}
+    with fresh.get_connection() as conn:
+        stored_rating = conn.execute(
+            "SELECT user_rating FROM watch_history WHERE media_item_id = ? AND profile_id = 1", (FILM,)
+        ).fetchone()[0]
+    check("config renames by ID and adds profiles without deleting stored data",
+          names == {1: "Alex", 2: "Sam", 3: "Kids"}
+          and stored_rating == 8.0, (names, stored_rating))
 
     def old_db(name, n1, n2):
         path = os.path.join(tmp, name)
@@ -96,12 +117,12 @@ def test_names(tmp):
 
     path = old_db("old.db", "Me", "Partner")
     names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("Me / Partner renamed", names == {1: "Labiba", 2: "Gabriele"}, names)
-    # Renamed once: a later custom rename back to 'Me' is not undone on restart.
+    check("legacy names remain intact until household config is loaded", names == {1: "Me", 2: "Partner"}, names)
+    # A later custom rename is not undone on restart.
     db = DatabaseManager(path)
     db.update_profile_name(1, "Me")
     names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("rename happens only once", names[1] == "Me", names)
+    check("profile name remains stable on restart", names[1] == "Me", names)
 
     path = old_db("custom.db", "Sam", "Alex")
     names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
@@ -109,12 +130,14 @@ def test_names(tmp):
 
     path = old_db("clash.db", "Me", "Labiba")
     names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("skipped when target name already exists", names[1] == "Me" and names[2] == "Labiba", names)
+    check("legacy migration leaves existing names unchanged", names[1] == "Me" and names[2] == "Labiba", names)
 
 
 def test_list(tmp):
     print("Watch later list")
-    db = make_db(tmp, "list.db")
+    db = make_db(tmp, "list.db", initial_profiles=[
+        {"id": 1, "name": "Labiba"}, {"id": 2, "name": "Gabriele"},
+    ])
     e = db.add_to_watch_later(FILM, LAB)
     check("add returns grouped entry", e["media_item_id"] == FILM and [a["profile_id"] for a in e["added_by"]] == [LAB], e)
     check("entry has file_path and fields", e["file_path"] == "/movies/film-one.mkv" and e["title"] == "Film One"

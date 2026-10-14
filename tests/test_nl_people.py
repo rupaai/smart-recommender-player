@@ -53,8 +53,25 @@ def main():
 
 def test_pure():
     from services import nl_people as np
+    from services.household_config import merge_household
 
     print("people config")
+    check("one neutral group label is the default", np.People().group_label == np.DEFAULT_GROUP_LABEL)
+    household_config = merge_household({}, {
+        "group": {"name": "Me & you", "profile_ids": [1, 2]},
+        "profiles": [
+            {"id": 1, "key": "person1", "name": "Alex", "jellyfin_user_id": "jf1"},
+            {"id": 2, "key": "person2", "name": "Sam", "jellyfin_user_id": "jf2"},
+        ],
+    })
+    configured_group = np.People.from_config(household_config)
+    check("household group label flows into chooser choices and viewer",
+          configured_group.choices()[-1]["label"] == "Me & you"
+          and configured_group.viewer_for("both").label == "Me & you")
+    defaulted_group = merge_household({}, {"group": {"name": "  "}, "profiles": []})
+    check("missing household group name uses the shared default",
+          np.People.from_config(defaulted_group).group_label == np.DEFAULT_GROUP_LABEL)
+
     people = np.parse_people([
         {"id": "Labiba", "name": "Labiba", "jellyfin_user_id": "labiba", "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": LAB, "profile_id": "2"},
@@ -376,6 +393,11 @@ def run(tmp):
     check("focusable cards in one row", r.status_code == 200 and page.count("data-nl-focus") >= 3 and 'data-nl-row="who"' in page and "Both of us" in page, page[:300])
     check("TV links choose under /nl/tv/who and return to the TV home", "/nl/tv/who/labiba?next=/nl/tv/" in page)
     check("no nav pills on that screen", "tv-nav" not in page)
+    server.nl_people = np.People(server.nl_people.people, group_label="Me & you", group_profile_ids=[1, 2])
+    r = client.get("/nl/tv/who")
+    check("TV chooser page receives the configured group label",
+          'data-group-label="Me &amp; you"' in r.text and "Me &amp; you" in r.text, r.text[:300])
+    server.nl_people = np.People(server.nl_people.people)
     r = client.get("/nl/tv/who/both?next=/nl/tv/")
     check("choosing on the TV sets the same cookie", r.status_code == 302 and r.headers["location"] == "/nl/tv/" and "nl_viewer=both" in r.headers.get("set-cookie", ""))
     r = client.get("/nl/tv/", headers=cookie("labiba"))

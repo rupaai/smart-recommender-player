@@ -5,7 +5,7 @@
 #   deploy/deploy.sh sha-<full commit sha>
 #
 # 1. refuses to run without a database (a fresh empty one would strand your real data)
-# 2. copies compose.yaml, config.server.yaml and the helper scripts into /srv/couchcinema
+# 2. copies compose.yaml, config.server.yaml, household.yaml and helper scripts into /srv/couchcinema
 # 3. snapshots the database (newest 7 kept)
 # 4. pulls the image, starts it, and waits for /healthz to report this commit
 # 5. on failure brings the previous tag back up and exits non-zero
@@ -73,12 +73,14 @@ main() {
   [ ! -f "$CC_ROOT/deployed_tag" ] || old_tag="$(tr -d '[:space:]' <"$CC_ROOT/deployed_tag")"
   say "Deploying $tag (currently: ${old_tag:-nothing})"
 
-  say "Copying compose.yaml, config.server.yaml and helper scripts"
+  say "Copying compose.yaml, config.server.yaml, household.yaml and helper scripts"
   local f
   for f in compose.yaml config.server.yaml; do
     [ ! -f "$CC_ROOT/$f" ] || cp -p "$CC_ROOT/$f" "$CC_ROOT/$f.prev"
     cp "$SRC_DIR/$f" "$CC_ROOT/$f"
   done
+  [ ! -f "$CC_ROOT/household.yaml" ] || cp -p "$CC_ROOT/household.yaml" "$CC_ROOT/household.yaml.prev"
+  cp "$SRC_DIR/../household.yaml" "$CC_ROOT/household.yaml"
   if [ -d "$SRC_DIR/bin" ]; then
     cp "$SRC_DIR"/bin/*.sh "$CC_ROOT/bin/"
     chmod 755 "$CC_ROOT"/bin/*.sh
@@ -135,7 +137,7 @@ rollback() {
     return 0
   fi
   say "Rolling back to $old_tag"
-  for f in compose.yaml config.server.yaml; do
+  for f in compose.yaml config.server.yaml household.yaml; do
     [ ! -f "$CC_ROOT/$f.prev" ] || cp -p "$CC_ROOT/$f.prev" "$CC_ROOT/$f"
   done
   IMAGE_TAG="$old_tag" dc up -d

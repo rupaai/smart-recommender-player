@@ -1,0 +1,16 @@
+# Private household setup. This file holds profile identities and Jellyfin mappings,
+# separately from the app's general settings. Keep profile IDs stable: existing
+# ratings and watch history refer to them.
+household:
+  group:
+    name: Me & you
+    profile_ids: [1, 2]
+  profiles:
+    - id: 1
+      key: labibakanij
+      name: Labiba
+      jellyfin_user_id: c07f6a015a284420a5931235097df58f
+    - id: 2
+      key: gabstevens
+      name: Gabriele
+      jellyfin_user_id: 89576f27230e419ead0664b1486376bd

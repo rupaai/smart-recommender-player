@@ -1,18 +1,5 @@
 # Smart Movie Streamer & Recommender Configuration
 
-# Folders to scan for media files (can be multiple paths)
-media_folders:                      # scanner scans both roots
-  - /Users/labibarupty/Media/Movies
-  - /Users/labibarupty/Media/Shows
-
-# Jellyfin dedicated library configuration
-jellyfin_library:
-  movie_dir: /Users/labibarupty/Media/Movies
-  tv_dir: /Users/labibarupty/Media/Shows
-  movies_library_name: Movies
-  tv_library_name: TV Shows
-  realtime_monitor: true
-
 # TMDB region for release info (e.g., GB, US)
 region: GB
 
@@ -97,15 +84,6 @@ torrent_ranking:
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
 
-# Northern Lights "Who's watching" (M4). Leave it commented and the app has one viewer
-# (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
-# fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, restart.
-# profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
-northern_lights:
- people:
-   - {id: labibakanij,  name: Labiba,          jellyfin_user_id: c07f6a015a284420a5931235097df58f, profile_id: 1}
-   - {id: gabstevens, name: Gabriele,    jellyfin_user_id: 89576f27230e419ead0664b1486376bd, profile_id: 2}
-
 # libtorrent configuration
 torrent:
   # Port range for incoming connections
@@ -113,8 +91,6 @@ torrent:
   max_port: 6891
   
   # Where to save downloaded files
-  download_dir: "/Users/labibarupty/codes/smart_movie_streamer/downloads"
-  
   # Disk guard (services/disk_guard.py): refuse a download that would push the media
   # folders + downloads over max_media_gb (0 = no cap) or leave less than min_free_gb free.
   max_media_gb: 0

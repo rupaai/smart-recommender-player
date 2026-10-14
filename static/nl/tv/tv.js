@@ -412,7 +412,7 @@
     });
   }
 
-  // U6: one button per person who can be reset ("Mark unwatched for me", or each name on Both of us).
+  // U6: one button per person who can be reset ("Mark unwatched for me", or each group member).
   function unwatchButtons(actions) {
     unwatchHint = el("p", "tv-unwatch-hint");
     unwatchHint.setAttribute("role", "status");
@@ -788,7 +788,7 @@
     var seq = 0;
 
     function render(data) {
-      heading.textContent = data.title || "For both of us";
+      heading.textContent = data.title || document.body.dataset.groupLabel;
       note.textContent = data.note || "";
       list.textContent = "";
       var items = data.items || [];

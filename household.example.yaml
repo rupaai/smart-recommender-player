@@ -1,0 +1,22 @@
+# Copy this to household.yaml and replace the example values.
+# Add or remove profile entries to choose how many profiles to create.
+# Keep IDs stable after people have ratings; history is linked by profile ID.
+# Larger rosters can be stored and selected here, but shared recommendations
+# still use the app's couple-oriented ranking logic today.
+household:
+  group:
+    name: Family
+    profile_ids: [1, 2, 3]
+  profiles:
+    - id: 1
+      key: alex
+      name: Alex
+      jellyfin_user_id: jellyfin-user-id-or-name
+    - id: 2
+      key: sam
+      name: Sam
+      jellyfin_user_id: jellyfin-user-id-or-name
+    - id: 3
+      key: kids
+      name: Kids
+      jellyfin_user_id: jellyfin-user-id-or-name

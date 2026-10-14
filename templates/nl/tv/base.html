@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/static/nl/subtitles.css">
   {% block head %}{% endblock %}
 </head>
-<body class="tv-page-{{ page }}" data-page="{{ page }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
+<body class="tv-page-{{ page }}" data-page="{{ page }}" data-group-label="{{ group_label }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
   <header class="tv-bar">
     <a class="tv-brand" href="/nl/tv/" aria-label="Northern Lights home">Northern Lights</a>
     {% if page != 'who' %}<nav class="tv-nav" data-nl-row="nav" data-nl-skip-initial aria-label="Sections">

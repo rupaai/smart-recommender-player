@@ -165,6 +165,9 @@ function showToast(message, action) {
 // installs may still carry the former defaults ("Me" / "Partner") until the
 // v11 migration renames them, so those are treated like "no name set".
 const DEFAULT_PROFILE_NAMES = ['Me', 'Partner'];
+function householdGroupLabel() {
+  return document.body.dataset.groupLabel;
+}
 function isDefaultProfileName(name) {
   return !name || DEFAULT_PROFILE_NAMES.includes(name);
 }
@@ -3096,7 +3099,7 @@ async function postRating(itemId, payload) {
 function flashRateFeedback(summary) {
   if (!summary || summary.tier === 'C') return;
   if (summary.tier === 'A') {
-    showToast('Saved — you both like this one');
+    showToast(`Saved — ${householdGroupLabel()} like this one`);
   } else if (summary.disagreement >= 3) {
     showToast(`Saved — you two differ by ${summary.disagreement} points`);
   }
@@ -3137,10 +3140,10 @@ async function loadCoViewSummary() {
       return;
     }
     container.innerHTML = `
-      <h2 class="section-title">Both of you liked</h2>
+      <h2 class="section-title">${escapeHtml(householdGroupLabel())} liked</h2>
       <p class="rate-sub">
-        ${escapeHtml(data.count)} title${data.count === 1 ? '' : 's'} you both rated ${escapeHtml(data.min_liked)}+.
-        “Us two” picks are built from these.
+        ${escapeHtml(data.count)} title${data.count === 1 ? '' : 's'} rated ${escapeHtml(data.min_liked)}+ by this group.
+        ${escapeHtml(householdGroupLabel())} picks are built from these.
       </p>
       <div class="rate-coview-chips">
         ${data.items.slice(0, 12).map(i => `<span class="taste-tag">${escapeHtml(i.title)}</span>`).join('')}
