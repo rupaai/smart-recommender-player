@@ -2,7 +2,7 @@
 
 A lightweight, locally hosted cinema companion and recommendation engine designed to run out-of-the-box on a **Raspberry Pi (4 or 5)**, Mac, or PC with zero cloud dependencies.
 
-Features a **Mobile-First PWA**, a **Direct Search & Download Subsystem** for instant acquisition with live progress polling, an **Offline Recommender Engine** with mood and taste biasing, automated **Jellyfin file structuring**, and a completely decoupled **Offline Model Training Module** (`/training`).
+Features a **Mobile-First PWA**, a **Direct Search & Download Subsystem** for instant acquisition with live progress polling, an **Offline Recommender Engine** with mood and taste biasing, automated **Jellyfin file structuring**, and a completely decoupled **Offline Model Training Module** (`/training`). 
 
 ---
 
