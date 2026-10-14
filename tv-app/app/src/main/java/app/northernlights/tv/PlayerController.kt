@@ -47,6 +47,7 @@ class PlayerController(
     private var ticks = 0
     private var subtitleStyleJson: String? = null
     private var speed = 1.0 // bridge v4: kept across streams, a new ExoPlayer would start at 1x
+    private var selectedSubtitleIndex = -1 // the side-loaded track Media3 has selected, -1 = none
 
     val isActive: Boolean get() = player != null
 
@@ -95,6 +96,8 @@ class PlayerController(
         close(sendStopped = false, notifyClosed = false)
         startedSent = false
         pendingSubtitleIndex = req.subtitleIndex
+        selectedSubtitleIndex = -1
+        playerView.subtitleView?.visibility = View.VISIBLE
         ticks = 0
 
         val exo = ExoPlayer.Builder(activity)
@@ -205,13 +208,23 @@ class PlayerController(
         player?.setPlaybackSpeed(rate.toFloat())
     }
 
-    /** Select a side-loaded text track by the page's track index; -1 = off. */
+    /**
+     * Select a side-loaded text track by the page's track index; -1 = off.
+     * A track selection change makes Media3 re-select every renderer's tracks, which can stutter the picture,
+     * so "off" only hides the subtitle view (the track stays selected) and picking the same track again
+     * just shows it. Only a different track changes the selection.
+     */
     fun setSubtitle(index: Int) {
         if (player == null) return
+        val view = playerView.subtitleView
         if (index < 0) {
             pendingSubtitleIndex = null
-            setSubtitlesOff()
-        } else if (!selectSubtitleLocally(index)) {
+            view?.visibility = View.INVISIBLE
+            return
+        }
+        view?.visibility = View.VISIBLE
+        if (index == selectedSubtitleIndex) return
+        if (!selectSubtitleLocally(index)) {
             pendingSubtitleIndex = index // tracks not loaded yet; onTracksChanged retries
         }
     }
@@ -305,6 +318,7 @@ class PlayerController(
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
                     .setOverrideForType(TrackSelectionOverride(g, 0))
                     .build()
+                selectedSubtitleIndex = index
                 return true
             }
         }

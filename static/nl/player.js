@@ -24,6 +24,8 @@
   }
   var NEXT_CARD_SECONDS = 30;   // the next-episode card appears this long before the end (P11)
   var COUNTDOWN_SECONDS = 10;   // and counts down for this long before starting the episode
+  var SUB_WARM_AFTER_MS = 8000; // TV: fetch the text subtitles this long after a stream starts (see warmSubtitles)
+  var SUB_WARM_MAX = 8;
   var DELAY_STEP = 0.25;        // subtitle delay buttons (P16)
   var DELAY_MAX = 60;
   var SUB_SIZES = ["S", "M", "L", "XL"];
@@ -185,6 +187,7 @@
     menu.hidden = true;
     menu.innerHTML = "";
     S.menuOpen = false;
+    releaseSubtitleHold();
     showControls();
     if (isTv && menuOpener && document.activeElement !== menuOpener) { menuOpener.focus(); }   // the remote keeps its place
     menuOpener = null;
@@ -749,7 +752,28 @@
       } };
     }));
   }
+  // TV: the subtitle menus and the finder pause the film while they are open, and play it again when the last one
+  // closes (only if it was playing). Moving from one subtitle menu to the next keeps it paused: the release waits a tick.
+  var subHold = { active: false, resume: false, timer: null };
+  function holdForSubtitles() {
+    if (!isTv || casting()) { return; }
+    clearTimeout(subHold.timer);
+    if (subHold.active) { return; }
+    subHold.active = true;
+    subHold.resume = !player.paused;
+    if (subHold.resume) { player.pause(); }
+  }
+  function releaseSubtitleHold() {
+    if (!subHold.active) { return; }
+    clearTimeout(subHold.timer);
+    subHold.timer = setTimeout(function () {
+      if (S.menuOpen || S.finderOpen) { return; }
+      subHold.active = false;
+      if (subHold.resume && player.paused) { playNow(); }
+    }, 0);
+  }
   function openSubtitleMenu() {
+    holdForSubtitles();
     var cur = currentSubtitleIndex();
     var items = subtitleChoices().map(function (t) {
       return { label: t.label, selected: t.index === cur, onSelect: function () { chooseSubtitle(t.index); } };
@@ -801,6 +825,7 @@
     player.setSubtitleDelay(S.subDelay);
   }
   function openSubtitleSettings() {
+    holdForSubtitles();
     var items = [];
     if (player.canStyleSubtitles) {
       items.push({ kind: "cycle", getLabel: function () { return "Size: " + S.subStyle.size; }, onSelect: function () {
@@ -830,6 +855,8 @@
 
   function openFinder() {
     if (!S.stream) { return; }
+    holdForSubtitles();
+    S.finderOpen = true;
     NLSubtitles.open({
       container: $("nl-subfind"),
       itemId: itemId,
@@ -837,6 +864,8 @@
       tv: isTv,
       onDownloaded: addDownloadedSubtitle,
       onClose: function () {
+        S.finderOpen = false;
+        releaseSubtitleHold();
         showControls();
         if (isTv) { $("nl-subs").focus(); }
       }
@@ -942,6 +971,21 @@
     applySpeed();
     applyFit();
     noteConversion(stream);
+    if (isNative) { warmSubtitles(stream); }
+  }
+  // TV: the first time a subtitle inside the file is asked for, Jellyfin reads through the whole file to pull it out,
+  // so switching to it took seconds and the picture stuttered. A while after the film starts, fetch each text track
+  // once (one at a time) so Jellyfin has them ready and a switch is instant.
+  var warmTimer = null;
+  function warmSubtitles(stream) {
+    clearTimeout(warmTimer);
+    var urls = textTracksOf(stream).map(function (t) { return t.url; }).slice(0, SUB_WARM_MAX);
+    if (!urls.length || !window.fetch) { return; }
+    warmTimer = setTimeout(function next() {
+      if (S.stream !== stream || !urls.length) { return; }
+      fetch(urls.shift(), { credentials: "same-origin" }).then(function (r) { return r.text(); }, function () { /* offline */ })
+        .then(function () { warmTimer = setTimeout(next, 500); });
+    }, SUB_WARM_AFTER_MS);
   }
   // What the native player needs besides the stream (see the NorthernLightsNative contract in player-core.js).
   function nativeMeta(stream) {

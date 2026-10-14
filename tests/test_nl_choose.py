@@ -451,7 +451,8 @@ def run(tmp):
     r = client.get("/nl/choose")
     check("without a choice it goes to the who's-watching screen first", r.status_code == 302 and "/nl/who?next=" in r.headers["location"], r.headers.get("location"))
     r = client.get("/nl/tv/choose", headers=cookie("labiba"))
-    check("the TV page opens with its script and the nav pill", r.status_code == 200 and "/static/nl/choose.js" in r.text and 'id="tv-choose"' in r.text and "/nl/tv/choose" in r.text, r.status_code)
+    check("the TV page opens with its script (no nav pill: the TV bar is Home, Downloads, Search)", r.status_code == 200
+          and "/static/nl/choose.js" in r.text and 'id="tv-choose"' in r.text and 'href="/nl/tv/choose"' not in r.text, r.status_code)
     check("the TV page redirects to the TV who screen", client.get("/nl/tv/choose").headers["location"].startswith("/nl/tv/who?next="))
     check("the home page has a Choose for us button", "/nl/choose" in client.get("/nl/", headers=cookie("labiba")).text)
     check("the me pages carry the 'bring back' list", "nl-vetoes" in client.get("/nl/me", headers=cookie("labiba")).text and "tv-vetoes" in client.get("/nl/tv/me", headers=cookie("labiba")).text)
