@@ -1,7 +1,7 @@
-# Config used when Homehub runs this app (see ../homehub.yaml). Paths are inside the
-# container: Homehub gives each environment (dev, prod) its own /data folder, so dev
+# Config used when Homelab runs this app (see ../homelab.yaml). Paths are inside the
+# container: Homelab gives each environment (dev, prod) its own /data folder, so dev
 # never sees prod's catalogue or downloads.
-# Jellyfin and Prowlarr aren't part of a Homehub deploy yet; the app runs without them.
+# Jellyfin and Prowlarr aren't part of a Homelab deploy yet; the app runs without them.
 
 media_folders:
   - /data/media/Movies
