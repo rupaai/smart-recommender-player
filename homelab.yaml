@@ -1,4 +1,4 @@
-# How Homehub runs this app. See https://github.com/rupaai/homelab (docs/milestone1.md).
+# How Homelab runs this app. See https://github.com/rupaai/homelab (docs/milestone1.md).
 id: movies
 name: Movie Night
 icon: 🎬
@@ -21,7 +21,7 @@ data:
     path: /data
 
 env:
-  CONFIG_PATH: /app/homehub/config.yaml
+  CONFIG_PATH: /app/homelab/config.yaml
   MODELS_DIR: /data/models/current
 
 secrets: [TMDB_API_KEY]
