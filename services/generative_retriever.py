@@ -659,6 +659,13 @@ def route_recommend(
         result["concept_routed_to"] = "legacy"
         return result
 
+    # "No animation" and other genres typed with a negation are hard exclusions,
+    # and the generative engine applies none of the query's exclusions.
+    if parse_query_intent(kwargs.get("query")).get("named_exclude_genres"):
+        result = _legacy()
+        result["exclusion_routed_to"] = "legacy"
+        return result
+
     # A typed request is about how the film should FEEL; the predictor only
     # knows your watch history. When the vibe index is built, the legacy engine
     # answers it with text-to-film similarity.

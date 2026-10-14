@@ -8,6 +8,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - `main`: has everything since PR #67/#68 (2026-10-13): the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
+- `claude/project-thread-sx7sn7`: typed "no animation" (and other negated genre names) now hard-excludes the genre; PR open for Labiba. Variety and animation-share options are in `/mnt/project-files/recommender-variety/brainstorm.md`, waiting on her pick.
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
 ## 1. What this is
@@ -53,8 +54,10 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Write plain, short user-facing text.
 
 ## 7. Recommender: known open problems
-- Generative engine ignores query exclusions, rating floor and diversity; the genre filter needs 20+ matches.
-- Taste bonus saturates at +2.0 and has no negative signal; `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
+- **Same ~50 films every time:** SQL keeps the 250 best-rated titles (Bayesian TMDB score), unwatched leaves ~190, and only the top 50 are ever shown. The questions path never shuffles, and `/api/recommend` shuffles only untargeted requests. On Labiba's Mac copy (2026-10-13), 11 different mood answers gave just 88 distinct films. Nothing suppresses titles already shown (`discover_impressions` is logged, never read).
+- **Animation share:** about 9% of the catalogue rated 6+, 16% of the quality pool, and up to half the top 10 after a "light" answer (6 of 30 moods weight Animation; "Grown-up" still adds a little animation weight). Taste does not cause it today because it saturates (below), but un-capping it would: her Animation weight is her 3rd biggest after the 2026-10-09 ratings.
+- Generative engine ignores query exclusions, rating floor and diversity; the genre filter needs 20+ matches. Queries with a typed "no <genre>" are routed to legacy.
+- Taste bonus saturates at +2.0 (genre weights are raw sums, so with ~85 ratings almost every film hits the cap and taste stops ranking anything) and has no negative signal; `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
 - Concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; genre chips widen instead of narrow; era/runtime filters silently fall back; the variety shuffle runs after MMR.
 - Origin parser leftovers: duplicate `chinese`/`portuguese` keys, Kollywood/Tollywood swapped, Nigerian = Yoruba only.
 - `finish_active_watch` in the old app writes `watch_history` without `profile_id` (Northern Lights finishes go to the right profiles).

@@ -504,6 +504,26 @@ def test_query_intent(build):
     check("a scary query does not exclude Horror", "Horror" not in scary["exclude"],
           scary["exclude"])
 
+    # A genre typed by name with a negation is a hard exclusion, and the word
+    # must not stay behind as a content word that boosts the very genre.
+    no_anim = parse_query_intent("something funny tonight, no animation")
+    check("'no animation' excludes Animation", "Animation" in no_anim["exclude_genres"],
+          no_anim["exclude_genres"])
+    check("'no animation' does not boost animation as a content word",
+          "animation" not in no_anim["content_words"], no_anim["content_words"])
+    listed = parse_query_intent("nothing animated or musicals please")
+    check("a negated list of genres excludes each one",
+          {"Animation", "Music"} <= set(listed["exclude_genres"]), listed["exclude_genres"])
+    check("'less animation' is not a hard exclusion",
+          not parse_query_intent("less animation")["exclude_genres"])
+    check("an un-negated genre name is not excluded",
+          not parse_query_intent("a funny animation")["exclude_genres"])
+    check("a negated word is never a content word",
+          "zombies" not in parse_query_intent("no zombies please")["content_words"])
+    relax = resolve_effective_genres(MOOD_MAPPINGS[7]["genres"], None, "relaxing, no animation")
+    check("a named exclusion beats the mood's own genres",
+          "Animation" in relax["exclude"] and "Animation" not in relax["include"], relax)
+
 
 def test_genre_exclusion_sql(build):
     print("\n[13] SQL genre exclusion returns rows (regression: NOT LIKE trap)")
@@ -811,6 +831,36 @@ def test_origin_intent(build):
           sorted(x for x in langs if x))
 
 
+def test_negated_genre_ranking(build):
+    print("\n[17b] 'no animation' removes animation and boosts nothing animated")
+    from services.recommender_service import RecommenderService
+    db = build()
+    with db.get_connection() as conn:
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, vote_count, genres, overview) "
+                "VALUES (?, 2020, 'movie', 8.0, 9000, 'Animation, Comedy', 'A funny animation.');",
+                (f"Cartoon {i}",))
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, vote_count, genres, overview) "
+                "VALUES (?, 2020, 'movie', 7.0, 9000, 'Comedy', 'A funny story.');",
+                (f"Live {i}",))
+    rec = RecommenderService(db)
+    out = rec.recommend(mood_id=8, query="something funny tonight, no animation", page_size=50)
+    titles = [i["title"] for i in out["items"]]
+    check("no animated film comes back", titles and not any(t.startswith("Cartoon") for t in titles),
+          titles[:5])
+
+
+def test_negated_origin(build):
+    print("\n[17c] A negated place is not a request for it")
+    from services.recommender_service import parse_origin_intent
+    check("'no anime' is not an anime request", parse_origin_intent("funny, no anime") is None)
+    check("'anything but korean' is not a Korean request",
+          parse_origin_intent("anything but korean") is None)
+    check("'korean movies' still is", (parse_origin_intent("korean movies") or {}).get("label") == "Korean")
+
+
 def test_small_cinema_ranking(build):
     """Regression tests for ranking a small, low-vote national cinema.
 
@@ -1010,6 +1060,8 @@ def main():
         test_download_survives_refresh(build)
         test_resume_and_eta(build)
         test_origin_intent(build)
+        test_negated_genre_ranking(build)
+        test_negated_origin(build)
         test_small_cinema_ranking(build)
         test_concept_intent(build)
     finally:
