@@ -1,0 +1,31 @@
+# Config used when Homehub runs this app (see ../homehub.yaml). Paths are inside the
+# container: Homehub gives each environment (dev, prod) its own /data folder, so dev
+# never sees prod's catalogue or downloads.
+# Jellyfin and Prowlarr aren't part of a Homehub deploy yet; the app runs without them.
+
+media_folders:
+  - /data/media/Movies
+  - /data/media/Shows
+
+jellyfin_library:
+  movie_dir: /data/media/Movies
+  tv_dir: /data/media/Shows
+  movies_library_name: Movies
+  tv_library_name: TV Shows
+  realtime_monitor: false
+
+region: GB
+
+supported_extensions: [.mkv, .mp4, .avi, .mov, .m4v, .webm]
+
+database_path: /data/catalogue.db
+
+torrent:
+  download_dir: /data/downloads
+
+recommender:
+  default_top_n: 5
+  exclude_watched: true
+  enable_tier2_profiling: true
+  shortlist_size: 1500
+  final_pool: 200

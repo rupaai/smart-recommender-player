@@ -53,10 +53,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # ARM too, so the image runs natively on Apple Silicon Macs (Homehub milestone 1).
+      # Pull requests only prove the Intel build, to keep them fast.
+      - if: github.event_name == 'push'
+        uses: docker/setup-qemu-action@v4
       - uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64
+          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: ${{ github.event_name == 'push' }}
           build-args: |
             GIT_SHA=${{ github.sha }}
