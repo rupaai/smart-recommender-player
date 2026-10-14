@@ -27,11 +27,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from services import mood_questions, vibe_moods
 from services.mood_questions import BANK, BY_ID, likelihood
-from services.vibe_popup import POOL_TOP, features
+from services.vibe_popup import features
 
 MAX_QUESTIONS = 6
 MIN_ANSWERS = 2
 FLOOR = 0.05
+# The mood mix re-ranks this many of the best-scored titles. Wider than the old
+# pop-up's 300, so different moods can reach different films.
+POOL_TOP = 1000
 GROUP_MIN = 0.15        # a tier 2 question needs its group to hold this much of the belief
 TIE_GAP = 0.1           # tier 3 needs the top two moods this close
 STOP_TOP = 0.55
@@ -109,6 +112,7 @@ class MoodSession:
         self.vibe_index = vibe_index
         self.prior = prior
         self.belief = new_belief(prior)
+        self.avoid: Dict[str, float] = {}               # genre -> soft push down, from answers
         self.asked: List[Tuple[str, str]] = []         # (question id, option id | "skip")
         self.current: Optional[Dict[str, Any]] = None
         self.done = False
@@ -131,7 +135,10 @@ class MoodSession:
         return v
 
     def _mood_fit(self, it: Dict[str, Any], belief: Dict[str, float]) -> float:
-        return self.mood_weight * sum(belief.get(m, 0.0) * f for m, f in zip(MOOD_IDS, self._fits(it)))
+        fit = sum(belief.get(m, 0.0) * f for m, f in zip(MOOD_IDS, self._fits(it)))
+        if self.avoid:
+            fit -= max((self.avoid.get(g, 0.0) for g in features(it)["genres"]), default=0.0)
+        return self.mood_weight * fit
 
     def scored(self, belief: Optional[Dict[str, float]] = None) -> List[Tuple[float, Dict[str, Any]]]:
         """(score, item), best first: pool score + MOOD_WEIGHT x sum P(mood) x fit. Ties keep pool order."""
@@ -227,6 +234,8 @@ class MoodSession:
             if opt is None:
                 raise ValueError("Unknown option.")
             self.belief = update(self.belief, opt)
+            for g, w in (opt.get("avoid") or {}).items():
+                self.avoid[g] = max(self.avoid.get(g, 0.0), w)
         self.asked.append((question_id, option_id))
         self.current = None
         self.updated = time.time()

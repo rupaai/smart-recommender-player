@@ -679,7 +679,9 @@ def route_recommend(
         return _legacy()
 
     try:
-        result = generative_retriever.recommend(**kwargs)
+        # Shown-memory is a legacy ranking step; the generative engine takes no such arguments.
+        gen_kwargs = {k: v for k, v in kwargs.items() if k not in ("remember_shown", "skip_session_id")}
+        result = generative_retriever.recommend(**gen_kwargs)
         result["engine"] = "generative"
         return result
     except Exception as e:

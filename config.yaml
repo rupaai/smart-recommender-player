@@ -35,8 +35,12 @@ recommender:
   enable_tier2_profiling: true
 
   # Candidate funnel sizes (quality cut → diverse pool):
-  shortlist_size: 250     # top-rated items kept after the Bayesian quality cut
-  final_pool: 50          # diverse pool served for pagination
+  shortlist_size: 1500    # top-rated items kept after the Bayesian quality cut
+  final_pool: 200         # diverse pool served for pagination
+  # Taste formula: average = how much more you liked a genre than your own
+  # average, averaged over a film's genres (utils/eval_taste_formula.py checks it);
+  # sum = the old capped sum of liked-genre weights.
+  taste_formula: average
 
   # Mood-map questions (services/mood_popup.py): score = pool score + mood_weight x
   # sum over moods of P(mood) x fit(film, mood). Higher = answers move the order more.

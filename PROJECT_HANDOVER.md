@@ -8,7 +8,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - `main`: has everything since PR #67/#68 (2026-10-13): the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
-- `claude/project-thread-sx7sn7`: typed "no animation" (and other negated genre names) now hard-excludes the genre; PR open for Labiba. Variety and animation-share options are in `/mnt/project-files/recommender-variety/brainstorm.md`, waiting on her pick.
+- `claude/project-thread-sx7sn7` (PR #70): typed "no animation" fix, plus variety and animation rebalance (§10.11). Waiting for Labiba to merge.
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
 ## 1. What this is
@@ -54,10 +54,10 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Write plain, short user-facing text.
 
 ## 7. Recommender: known open problems
-- **Same ~50 films every time:** SQL keeps the 250 best-rated titles (Bayesian TMDB score), unwatched leaves ~190, and only the top 50 are ever shown. The questions path never shuffles, and `/api/recommend` shuffles only untargeted requests. On Labiba's Mac copy (2026-10-13), 11 different mood answers gave just 88 distinct films. Nothing suppresses titles already shown (`discover_impressions` is logged, never read).
-- **Animation share:** about 9% of the catalogue rated 6+, 16% of the quality pool, and up to half the top 10 after a "light" answer (6 of 30 moods weight Animation; "Grown-up" still adds a little animation weight). Taste does not cause it today because it saturates (below), but un-capping it would: her Animation weight is her 3rd biggest after the 2026-10-09 ratings.
+- Variety (§10.11) only remembers Discover's own impressions. Rows like "For both of us" don't log impressions, so memory doesn't rotate them.
+- Genre spread shelves are fixed in `SPREAD_GENRES`. Animation and Family are exempt only when the request or mood answers ask for them.
 - Generative engine ignores query exclusions, rating floor and diversity; the genre filter needs 20+ matches. Queries with a typed "no <genre>" are routed to legacy.
-- Taste bonus saturates at +2.0 (genre weights are raw sums, so with ~85 ratings almost every film hits the cap and taste stops ranking anything) and has no negative signal; `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
+- Taste: `taste_formula: average` replaced the capped sum (§10.11). The `sum` path and `get_profile_taste_profile` are still used by the rating queue and the cold-start path. `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
 - Concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; genre chips widen instead of narrow; era/runtime filters silently fall back; the variety shuffle runs after MMR.
 - Origin parser leftovers: duplicate `chinese`/`portuguese` keys, Kollywood/Tollywood swapped, Nigerian = Yoruba only.
 - `finish_active_watch` in the old app writes `watch_history` without `profile_id` (Northern Lights finishes go to the right profiles).
@@ -81,6 +81,7 @@ The app is **Northern Lights**. The original app's look is the ticket look (§6)
 - **10.8b "This or that" pairs:** done (`services/pairs.py`, Bradley-Terry nudge). Ranking does not read the pair nudge yet.
 - **10.9 Per-season TV verdicts:** done. `utils/backfill_season_counts.py` TMDB pass still to run on the Mac.
 - **10.10 Mood map:** 30 night moods in 6 groups (`vibe_moods.py`), entropy question picker (`mood_questions.py`, `mood_popup.py`), ranking by mood mix (`recommender.mood_weight`, 3.0), "Tonight: …" line in results. Weights are first guesses; tune by playing it. No learning across nights yet.
+- **10.11 Variety and animation balance** (2026-10-14, PR #70): the candidate pool is 1,500 and up to 200 are shown (`shortlist_size`, `final_pool`); the mood mix re-ranks the top 1,000. Discover remembers what it showed: a title shown and not opened loses 1 point per showing, fading over 14 days and capped at 3. "Not this one" is pushed out for 30 days, and a series shares the penalty (`_apply_memory`, `get_shown_memory`). Genre spread allows at most 2 of any 10 picks from one shelf (animation, horror, documentary, music, war, western, family) unless asked (`apply_genre_spread`). "Grown-up" pushes animation and family down (option `avoid`), and animation weight is cut in Cosy, Brain off, Adventure and Background. Taste is averaged (`build_taste_affinity`): how much more you liked a genre than your average, shrunk, then averaged over the film's genres, with keywords added. Leave-one-out on Labiba's 85 ratings gives rank correlation +0.15, against 0 for the old capped sum (`utils/eval_taste_formula.py`). The signal is weak, so re-check as ratings grow. On her Mac copy, the same search on 6 nights gave 60 different top-10 films (10 before), and animation is at most 2 in any top 10.
 - **Not built:** Phase 5 learning (weight fitting, `p(option)`, `usefulness(q)`), co-view predictor (movies only), Watch later as a ranking signal.
 
 ## 11. Download tab and "Best match" sort

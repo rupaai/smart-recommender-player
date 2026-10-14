@@ -31,8 +31,13 @@ DEFAULT_WEIGHT = 0.3
 
 
 def _o(id: str, emoji: str, label: str, groups: Dict[str, float] | None = None,
-       moods: Dict[str, float] | None = None, default: float = DEFAULT_WEIGHT) -> Dict[str, Any]:
+       moods: Dict[str, float] | None = None, default: float = DEFAULT_WEIGHT,
+       avoid: Dict[str, float] | None = None) -> Dict[str, Any]:
+    """avoid: {genre (lower case): 0..1}, a soft push down for films of that genre
+    (mood fits are never negative, so a mood alone can't say "less of this")."""
     o: Dict[str, Any] = {"id": id, "emoji": emoji, "label": label, "default": default}
+    if avoid:
+        o["avoid"] = avoid
     if groups is not None:
         o["groups"] = groups
     if moods is not None:
@@ -88,7 +93,8 @@ BANK: List[Dict[str, Any]] = [
         _o("cosy", "🛋️", "Not funny, just cosy", moods={"cosy_comfort": 1.0, "switch_off": 1.0}),
     ]},
     {"id": "L2", "tier": 2, "group": "light", "text": "Grown-up, or fine for anyone?", "options": [
-        _o("grownup", "🍷", "Grown-up", moods={"family_all": 0.1, "animated_any": 0.3}, default=1.0),
+        _o("grownup", "🍷", "Grown-up", moods={"family_all": 0.05, "animated_any": 0.05}, default=1.0,
+           avoid={"animation": 0.5, "family": 0.5}),
         _o("anyone", "👨‍👩‍👧", "For anyone", moods={"family_all": 1.0, "animated_any": 1.0}),
         _o("dontmind", "🤷", "Don't mind", moods={}, default=1.0),
     ]},

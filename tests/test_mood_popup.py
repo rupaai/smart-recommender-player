@@ -379,7 +379,18 @@ def test_weight():
                 f.write(text)
             check(f"config {text.strip()[:30]!r} -> {want}", mp.load_mood_weight(path) == want)
 
+def test_grownup_avoid():
+    print("\n'Grown-up' pushes animation down")
+    s = answered(L2="grownup")
+    order = [x["kind"] for x in s.ranked()]
+    check("animated films rank below every other kind", order[-3:] == ["family"] * 3, order)
+    check("a cartoon gets a negative mood score", min(x["mood_fit"] for x in s.ranked() if x["kind"] == "family") < 0)
+    plain = answered(L2="dontmind")
+    check("'Don't mind' pushes nothing down", not plain.avoid, plain.avoid)
+
+
 if __name__ == "__main__":
+    test_grownup_avoid()
     test_bank()
     test_questions()
     test_update()

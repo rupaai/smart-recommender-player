@@ -852,6 +852,67 @@ def test_negated_genre_ranking(build):
           titles[:5])
 
 
+def test_shown_memory(build):
+    print("\n[17d] Discover remembers what it showed and nobody opened")
+    from services.recommender_service import RecommenderService
+    db = build()
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM media_items;")
+        for i in range(40):
+            conn.execute(
+                "INSERT INTO media_items (title, release_year, media_type, rating, vote_count, genres) "
+                "VALUES (?, 2020, 'movie', ?, 9000, 'Drama');", (f"Film {i}", 8.5 - i * 0.02))
+    rec = RecommenderService(db, shortlist_size=100, final_pool=40)
+    first = rec.recommend(mood_id=8, page_size=10, remember_shown=True)["items"]
+    sid = db.create_discover_session(profile="together", media_type="movie", query_text=None, request={}, engine="t")
+    db.log_impressions(sid, first, 1)
+    again = rec.recommend(mood_id=8, page_size=10, remember_shown=True)["items"]
+    check("the next search leads with films not shown last time",
+          not ({i["id"] for i in first} & {i["id"] for i in again}),
+          ([i["title"] for i in first[:3]], [i["title"] for i in again[:3]]))
+    paging = rec.recommend(mood_id=8, page_size=10, remember_shown=True, skip_session_id=sid)["items"]
+    check("paging the same session is not penalised by its own page",
+          [i["id"] for i in paging] == [i["id"] for i in first])
+    off = rec.recommend(mood_id=8, page_size=10)["items"]
+    check("memory is off unless asked for", [i["id"] for i in off] == [i["id"] for i in first])
+    db.record_outcome(first[0]["id"], "opened", sid)
+    db.record_outcome(first[1]["id"], "dismissed", sid)
+    pool = rec.recommend(mood_id=8, remember_shown=True, return_pool=True)["pool"]
+    rank = {it["id"]: n for n, it in enumerate(pool)}
+    check("an opened film is not pushed down", rank[first[0]["id"]] == 0, rank[first[0]["id"]])
+    check("a dismissed film drops to the bottom", rank[first[1]["id"]] == len(pool) - 1, rank[first[1]["id"]])
+
+
+def test_genre_spread(build):
+    print("\n[17e] No shelf fills a page unless asked")
+    from services.recommender_service import apply_genre_spread
+    items = [{"id": i, "genres": "Animation, Family" if i < 8 else "Drama"} for i in range(20)]
+    out = apply_genre_spread(items)
+    check("at most 2 animated in the first 10", sum(1 for x in out[:10] if "Animation" in x["genres"]) == 2,
+          [x["id"] for x in out[:10]])
+    check("nothing is dropped", sorted(x["id"] for x in out) == list(range(20)))
+    check("the best film still leads", out[0]["id"] == 0)
+    asked = apply_genre_spread(items, {"Animation", "Family"})
+    check("an asked-for genre is left alone", [x["id"] for x in asked] == list(range(20)))
+
+
+def test_averaged_taste(build):
+    print("\n[17f] Averaged taste: no cap, no snowball, no multi-genre inflation")
+    from services.recommender_service import averaged_taste, build_taste_affinity
+    rows = ([{"genres": "Animation, Family", "tier2_keywords": "", "score": 0.3}] * 20
+            + [{"genres": "Drama", "tier2_keywords": "", "score": 0.6}] * 5
+            + [{"genres": "Romance", "tier2_keywords": "", "score": -0.3}] * 5)
+    aff = build_taste_affinity(rows)
+    drama = averaged_taste({"drama"}, set(), aff)
+    anim = averaged_taste({"animation", "family"}, set(), aff)
+    check("many middling ratings of a genre don't beat a few loved ones", drama > anim, (drama, anim))
+    check("a disliked genre scores negative", averaged_taste({"romance"}, set(), aff) < 0)
+    many = averaged_taste({"drama", "animation", "family", "adventure", "comedy"}, set(), aff)
+    check("more genres don't add up", many < drama, (many, drama))
+    one = build_taste_affinity([{"genres": "Horror", "tier2_keywords": "", "score": 0.7}])
+    check("a single rating already gives a signal", averaged_taste({"horror"}, set(), one) > 0)
+
+
 def test_negated_origin(build):
     print("\n[17c] A negated place is not a request for it")
     from services.recommender_service import parse_origin_intent
@@ -1062,6 +1123,9 @@ def main():
         test_origin_intent(build)
         test_negated_genre_ranking(build)
         test_negated_origin(build)
+        test_shown_memory(build)
+        test_genre_spread(build)
+        test_averaged_taste(build)
         test_small_cinema_ranking(build)
         test_concept_intent(build)
     finally:
