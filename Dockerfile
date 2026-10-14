@@ -20,6 +20,8 @@ COPY server.py database.py scanner.py enricher.py ./
 COPY services ./services
 COPY templates ./templates
 COPY static ./static
+# Config for when Homehub runs the app (homehub.yaml points CONFIG_PATH here).
+COPY homehub ./homehub
 
 # Everything under /app is root-owned and read-only to the app; it writes only to mounted volumes.
 RUN useradd --create-home --uid 1000 app

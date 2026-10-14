@@ -1,0 +1,28 @@
+# How Homehub runs this app. See https://github.com/rupaai/homelab (docs/milestone1.md).
+id: movies
+name: Movie Night
+icon: 🎬
+
+# CI pushes ghcr.io/rupaai/smart-recommender-player:sha-<commit> for every push to main.
+image: ghcr.io/rupaai/smart-recommender-player
+tag: "sha-{commit}"
+build:
+  branch: main
+  workflow: ci.yml
+
+port: 8000
+health: /healthz
+promotion: auto-dev        # new builds go to movies-dev on their own; prod waits for Promote
+environments: [dev, prod]
+
+# Each environment gets its own copy of this folder. Prod's is copied before every promote.
+data:
+  - name: data
+    path: /data
+
+env:
+  CONFIG_PATH: /app/homehub/config.yaml
+  MODELS_DIR: /data/models/current
+
+secrets: [TMDB_API_KEY]
+memory: 2g
