@@ -509,7 +509,8 @@ def run(tmp):
     r = client.get("/nl/", headers=cookie("labiba"))
     check("home has the picks row", r.status_code == 200 and 'id="nl-picks"' in r.text and "picks.js" in r.text)
     r = client.get("/nl/tv/", headers=cookie("labiba"))
-    check("TV home has the picks row and a Watchlist pill", r.status_code == 200 and 'id="tv-picks"' in r.text and "/nl/tv/watchlist" in r.text)
+    check("TV home has the picks row and no Watchlist pill (the TV bar is Home, Downloads, Search)", r.status_code == 200
+          and 'id="tv-picks"' in r.text and 'href="/nl/tv/watchlist"' not in r.text)
     r = client.get("/nl/movies", headers=cookie("labiba"))
     check("web nav links the watchlist", "/nl/watchlist" in r.text)
 

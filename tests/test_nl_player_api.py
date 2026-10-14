@@ -174,6 +174,15 @@ def run(tmp):
           jp.extract_tracks({"MediaStreams": [{"Index": 9, "Type": "Subtitle", "Codec": "subrip", "DeliveryMethod": "External",
                                                "DeliveryUrl": "/Users/x/Items?api_key=K"}]}, "jf1", "ms1")
           ["subtitle_tracks"][0]["url"] == "/nl/jf/Videos/jf1/ms1/Subtitles/9/0/Stream.vtt")
+    srt = jp.extract_tracks({"MediaStreams": [
+        {"Index": 3, "Type": "Subtitle", "Codec": "subrip", "DeliveryMethod": "External",
+         "DeliveryUrl": f"/Videos/jf1/ms1/Subtitles/3/0/Stream.srt?api_key={SECRET}"},
+        {"Index": 6, "Type": "Subtitle", "Codec": "ass", "DeliveryMethod": "External",
+         "DeliveryUrl": "/Videos/jf1/ms1/Subtitles/6/0/Stream.ass?CopyTimestamps=true"}]}, "jf1", "ms1")["subtitle_tracks"]
+    check("an SRT DeliveryUrl is asked for as WebVTT (the TV app only reads WebVTT)",
+          srt[0]["url"] == "/nl/jf/Videos/jf1/ms1/Subtitles/3/0/Stream.vtt", srt[0]["url"])
+    check("an ASS DeliveryUrl becomes .vtt and keeps its other query parameters",
+          srt[1]["url"] == "/nl/jf/Videos/jf1/ms1/Subtitles/6/0/Stream.vtt?CopyTimestamps=true", srt[1]["url"])
     check("seconds_to_ticks", jp.seconds_to_ticks(1) == 10_000_000 and jp.seconds_to_ticks(42.5) == 425_000_000
           and jp.seconds_to_ticks(-3) == 0)
 

@@ -27,7 +27,15 @@ button { font: inherit; color: inherit; }
 /* ---- bar */
 .tv-bar { position: relative; display: flex; align-items: center; gap: 4rem; padding: 2.25rem var(--side) 2.25rem; }
 .tv-brand { font-family: var(--font-display); font-stretch: 72%; font-weight: 800; text-transform: uppercase; font-size: 2.5rem; line-height: 1; letter-spacing: 0.01em; }
+.tv-bar-row { flex: 1; display: flex; align-items: center; gap: 4rem; min-width: 0; }
 .tv-nav { display: flex; gap: 1.25rem; padding: 0.75rem 0.5rem; }
+/* The person, in the top-right corner: a round initial and the name, no pill, so it never reads as a tab. */
+.tv-account { margin-left: auto; display: inline-flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 0.5rem; border-radius: 999px;
+  color: var(--text-2); font-size: 1.5rem; font-weight: 700; transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease; }
+.tv-account-avatar { width: 3.5rem; height: 3.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none;
+  background: var(--aurora-violet); color: var(--text); font-family: var(--font-display); font-stretch: 72%; font-weight: 800; font-size: 1.75rem; text-transform: uppercase; }
+.tv-account:focus { transform: scale(1.06); background: var(--text); color: var(--action-ink);
+  box-shadow: 0 0 0 0.3rem var(--action), 0 0 3rem 0.6rem rgba(255, 106, 43, 0.55); }
 .tv-foil { position: absolute; left: 0; right: 0; bottom: 0; height: 0.25rem;
   background: linear-gradient(90deg, var(--aurora-green), var(--aurora-teal), var(--aurora-violet), var(--aurora-magenta), var(--aurora-glint)); }
 
@@ -130,7 +138,7 @@ button { font: inherit; color: inherit; }
 .tv-me-btn { justify-content: flex-start; min-width: 44rem; }
 
 @media (prefers-reduced-motion: reduce) {
-  .tv-pill, .tv-btn, .tv-art { transition: none; }
+  .tv-pill, .tv-btn, .tv-art, .tv-account { transition: none; }
 }
 
 /* ---- M6: picks for two, watchlist, yes / maybe / pass, runtime chips */

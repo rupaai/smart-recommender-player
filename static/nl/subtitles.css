@@ -1,65 +1,82 @@
-/* Northern Lights "Find subtitles" panel (M5). A dark overlay that works on the player and on the light
- * title pages alike, so its colours are its own. .nls-tv is the 10-foot version (sizes in rem, which the
- * TV pages and the TV player scale to the screen). */
+/* Northern Lights "Find subtitles" panel (M5). A dark panel that works on the player and on the light title pages
+ * alike, so its colours are its own. Web: a centred card (a bottom sheet on phones). .nls-tv is the 10-foot version:
+ * a sheet on the right that leaves the (paused) picture showing, sizes in rem (the TV pages and player scale to the screen). */
 .nls-host { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
-  padding: 16px; background: rgba(0, 0, 0, 0.78); color: #f2f0ec; font-family: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  padding: 16px; background: rgba(0, 0, 0, 0.7); color: #f2f0ec; font-family: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 .nls-host[hidden] { display: none !important; }
 .nls-host *, .nls-host *::before, .nls-host *::after { box-sizing: border-box; }
 
-.nls-panel { width: min(640px, 100%); max-height: min(86vh, 760px); display: flex; flex-direction: column; gap: 12px; padding: 18px;
-  background: #1b1a24; border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 16px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
-.nls-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.nls-title { margin: 0; font-size: 1.25rem; font-weight: 800; }
+.nls-panel { width: min(620px, 100%); max-height: min(86vh, 760px); display: flex; flex-direction: column; gap: 14px; padding: 20px;
+  background: #18161f; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+.nls-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.nls-titles { min-width: 0; }
+.nls-title { margin: 0; font-size: 1.25rem; font-weight: 800; line-height: 1.2; }
+.nls-sub { margin: 4px 0 0; font-size: 0.85rem; color: #a9a5b4; }
 .nls-tools { display: flex; gap: 8px; flex-wrap: wrap; }
-.nls-btn { min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.08); color: inherit; font: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
-.nls-btn:hover { background: rgba(255, 255, 255, 0.18); }
+.nls-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.06); color: inherit; font: inherit;
+  font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+.nls-btn:hover { background: rgba(255, 255, 255, 0.14); }
 .nls-btn:disabled { opacity: 0.5; cursor: default; }
+.nls-btn-label { color: #a9a5b4; font-weight: 600; }
 .nls-retry { align-self: flex-start; }
 
 .nls-status { margin: 0; font-size: 0.95rem; line-height: 1.4; color: #b9b6c2; white-space: pre-line; }
 .nls-status.nls-error { color: #ffb08a; font-weight: 700; }
-.nls-status.nls-busy::before { content: ""; display: inline-block; width: 0.9em; height: 0.9em; margin-right: 0.6em; vertical-align: -0.1em;
-  border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: #fff; border-radius: 50%; animation: nls-spin 0.9s linear infinite; }
+.nls-busy::before { content: ""; display: inline-block; width: 0.9em; height: 0.9em; margin-right: 0.6em; vertical-align: -0.1em;
+  border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: currentColor; border-radius: 50%; animation: nls-spin 0.9s linear infinite; }
 @keyframes nls-spin { to { transform: rotate(360deg); } }
 
-.nls-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; min-height: 0; padding: 5px; margin: -5px; }
-.nls-row { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; min-height: 56px; padding: 10px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 12px; background: rgba(255, 255, 255, 0.05); color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.nls-row:hover { background: rgba(255, 255, 255, 0.14); }
-.nls-row:disabled { opacity: 0.5; cursor: default; }
-.nls-name { font-size: 0.95rem; font-weight: 700; overflow-wrap: anywhere; line-height: 1.3; }
-.nls-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.nls-chip { padding: 1px 9px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.3); font-size: 0.75rem; font-weight: 700; color: #d6d3de; line-height: 1.5; }
-.nls-badge { background: #2fc495; border-color: #2fc495; color: #14121f; }
-.nls-bits { font-size: 0.8rem; color: #b9b6c2; }
+.nls-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; padding: 4px; margin: -4px; }
+.nls-row { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%; min-height: 56px; padding: 10px 14px;
+  border: 0; border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.nls-row + .nls-row::before { content: ""; position: absolute; left: 14px; right: 14px; top: -1px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.nls-row:hover { background: rgba(255, 255, 255, 0.08); }
+.nls-row.is-dim { opacity: 0.45; }
+.nls-row-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.nls-name { flex: 1; min-width: 0; font-size: 0.95rem; font-weight: 700; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nls-meta { font-size: 0.8rem; color: #a9a5b4; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.nls-badge { flex: none; padding: 1px 9px; border-radius: 999px; background: #2fc495; color: #14121f; font-size: 0.75rem; font-weight: 800; line-height: 1.5; }
+.nls-row.is-exact { box-shadow: inset 3px 0 0 #2fc495; }
+.nls-foot { margin: 0; font-size: 0.8rem; color: #8b8796; }
 .nls-lang-row { flex-direction: row; align-items: center; min-height: 48px; }
 .nls-tick { width: 1.2em; color: #ff6a2b; font-weight: 800; }
 
 .nls-host :focus { outline: none; }
-.nls-host :focus-visible, .nls-host .nls-row:focus, .nls-host .nls-btn:focus { outline: 2px solid #ff6a2b; outline-offset: 2px; }
+.nls-host :focus-visible, .nls-host .nls-row:focus, .nls-host .nls-btn:focus { outline: 2px solid #ff6a2b; outline-offset: 0; }
 
-/* ---- TV: 1920x1080 design size, text at least 1.5rem, focus = white fill + orange ring + glow */
-.nls-tv { padding: 3rem; }
-.nls-tv .nls-panel { width: min(70rem, 100%); max-height: 92vh; gap: 1.25rem; padding: 2.25rem; border-radius: 1.5rem; }
-.nls-tv .nls-title { font-size: 2.5rem; }
-.nls-tv .nls-btn { min-height: 4.5rem; padding: 0 2.25rem; font-size: 1.5rem; }
+/* ---- TV: a sheet on the right, 1920x1080 design size, text at least 1.5rem. Focus = white fill with an orange edge,
+ * no glow (it bled over the neighbouring rows). */
+.nls-tv.nls-host { justify-content: flex-end; align-items: stretch; padding: 0;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.55) 60%, rgba(0, 0, 0, 0.75)); }
+.nls-tv .nls-panel { width: 56rem; max-width: 100%; max-height: none; height: 100%; gap: 1.5rem; padding: 4rem 3.5rem 3rem;
+  border: 0; border-left: 0.1rem solid rgba(255, 255, 255, 0.12); border-radius: 0; background: rgba(20, 18, 31, 0.97); box-shadow: -2rem 0 6rem rgba(0, 0, 0, 0.5); }
+.nls-tv .nls-head { flex-direction: column; gap: 1.5rem; }
+.nls-tv .nls-title { font-size: 2.75rem; }
+.nls-tv .nls-sub { margin-top: 0.5rem; font-size: 1.5rem; }
+.nls-tv .nls-btn { min-height: 4rem; padding: 0 1.75rem; gap: 1rem; font-size: 1.5rem; border-width: 0.1rem; }
 .nls-tv .nls-status { font-size: 1.5rem; }
-.nls-tv .nls-list { gap: 0.75rem; padding: 0.5rem; margin: -0.5rem; }
-.nls-tv .nls-row { min-height: 5.5rem; padding: 1rem 1.5rem; gap: 0.6rem; border-radius: 1rem; }
-.nls-tv .nls-name { font-size: 1.5rem; }
-.nls-tv .nls-chip { font-size: 1.5rem; padding: 0 1rem; }
-.nls-tv .nls-bits { font-size: 1.5rem; }
+.nls-tv .nls-list { gap: 0.25rem; padding: 0.5rem; margin: 0 -0.5rem; flex: 1; }
+.nls-tv .nls-row { min-height: 6.5rem; padding: 1.1rem 1.5rem; gap: 0.4rem; border-radius: 1rem; transition: background 0.12s ease, color 0.12s ease; }
+.nls-tv .nls-row + .nls-row::before { left: 1.5rem; right: 1.5rem; }
+.nls-tv .nls-row-top { gap: 1rem; }
+.nls-tv .nls-name { font-size: 1.6rem; }
+.nls-tv .nls-meta { font-size: 1.5rem; }
+.nls-tv .nls-badge { font-size: 1.5rem; padding: 0 1rem; }
+.nls-tv .nls-row.is-exact { box-shadow: inset 0.35rem 0 0 #2fc495; }
+.nls-tv .nls-foot { font-size: 1.5rem; }
 .nls-tv .nls-lang-row { min-height: 4.5rem; }
 .nls-tv.nls-host .nls-row:focus, .nls-tv.nls-host .nls-btn:focus { outline: none; background: #f2f0ec; color: #1d1b29; border-color: #f2f0ec;
-  box-shadow: 0 0 0 0.25rem #ff6a2b, 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
-.nls-tv.nls-host .nls-row:focus .nls-chip, .nls-tv.nls-host .nls-row:focus .nls-bits { color: #1d1b29; border-color: rgba(29, 27, 41, 0.45); }
-.nls-tv.nls-host .nls-row:focus .nls-badge { background: #14121f; color: #fff; border-color: #14121f; }
+  box-shadow: inset 0.5rem 0 0 #ff6a2b; }
+.nls-tv.nls-host .nls-row:focus::before, .nls-tv.nls-host .nls-row:focus + .nls-row::before { border-top-color: transparent; }
+.nls-tv.nls-host .nls-row:focus .nls-meta, .nls-tv.nls-host .nls-btn:focus .nls-btn-label { color: #4a4658; }
+.nls-tv.nls-host .nls-btn:focus { box-shadow: 0 0 0 0.25rem #ff6a2b; }
 
 @media (max-width: 640px) {
-  .nls-host { padding: 0; align-items: flex-end; }
-  .nls-panel { max-height: 92vh; border-radius: 16px 16px 0 0; }
+  .nls-host:not(.nls-tv) { padding: 0; align-items: flex-end; }
+  .nls-host:not(.nls-tv) .nls-panel { max-height: 92vh; border-radius: 18px 18px 0 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .nls-status.nls-busy::before { animation-duration: 2.4s; }
+  .nls-busy::before { animation-duration: 2.4s; }
+  .nls-tv .nls-row { transition: none; }
 }

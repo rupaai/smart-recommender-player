@@ -239,13 +239,21 @@ def subtitle_label(stream: Dict[str, Any]) -> str:
     return " \u00b7 ".join(parts)
 
 
+_SUB_EXT = re.compile(r"Stream\.[A-Za-z0-9]+$")
+
+
 def _subtitle_url(stream: Dict[str, Any], jf_id: str, source_id: str) -> str:
     """Proxied WebVTT URL for a text subtitle (API key stripped, only under Videos/)."""
     delivery = stream.get("DeliveryUrl")
     if delivery and stream.get("DeliveryMethod") == "External":
         rel = strip_api_key(delivery).lstrip("/")
-        if safe_proxy_path(rel.split("?", 1)[0]) is not None:
-            return PROXY_PREFIX + rel
+        path, sep, query = rel.partition("?")
+        # Jellyfin names the file after the subtitle's own format (Stream.srt, Stream.ass) when the device profile
+        # lists it. Every player of ours reads WebVTT only (the TV app tells Media3 it is WebVTT), and Jellyfin
+        # converts on the fly when asked for .vtt, so always ask for .vtt.
+        path = _SUB_EXT.sub("Stream.vtt", path)
+        if safe_proxy_path(path) is not None:
+            return PROXY_PREFIX + path + sep + query
     return proxy_url(f"Videos/{jf_id}/{source_id}/Subtitles/{stream.get('Index')}/0/Stream.vtt")
 
 

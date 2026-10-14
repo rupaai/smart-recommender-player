@@ -29,7 +29,6 @@
   ];
   var DEFAULT_LANG = "eng";
   var LANG_KEY = "nl.subLang";
-  var POLL_NOTE = "Searching OpenSubtitles through Jellyfin…";
   var current = null;
 
   function lsGet(k) { try { return global.localStorage.getItem(k); } catch (e) { return null; } }
@@ -80,7 +79,7 @@
     if (current) { current.close(); }
     var host = opts.container;
     var tv = !!opts.tv;
-    var state = { view: "results", lang: savedLang(), results: [], status: null, busy: false, seq: 0, closed: false };
+    var state = { view: "results", lang: savedLang(), results: [], status: null, busy: false, downloading: null, seq: 0, closed: false };
 
     host.textContent = "";
     host.className = "nls-host" + (tv ? " nls-tv" : "");
@@ -104,51 +103,73 @@
       if (first) { first.focus(); }
     }
 
-    function chip(text, cls) { return el("span", "nls-chip" + (cls ? " " + cls : ""), text); }
+    // Release names ("Dune.Part.Two.2024.1080p.WEBRip.x264-[YTS.MX].srt") read better with spaces and no extension.
+    function cleanName(r) {
+      var n = String(r.name || "").replace(/\.(srt|ass|ssa|vtt|sub|zip)$/i, "").replace(/[._]+/g, " ").replace(/\s+/g, " ").trim();
+      return n || (r.language_name || langName(state.lang)) + " subtitles";
+    }
+    function shortCount(n) {
+      if (n >= 1000000) { return (n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, "") + "M"; }
+      if (n >= 1000) { return (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k"; }
+      return String(n);
+    }
 
+    // One row per subtitle: the name on one line, then a short plain line (what it is, how popular). An exact match
+    // for the file gets the green "Exact match" badge and a green edge. While it downloads, the row says so.
     function resultRow(r) {
-      var b = el("button", "nls-row");
+      var b = el("button", "nls-row" + (r.hash_match ? " is-exact" : ""));
       b.type = "button";
-      b.appendChild(el("span", "nls-name", r.name || (r.language_name + " subtitles")));
-      var meta = el("span", "nls-meta");
-      if (r.hash_match) { meta.appendChild(chip("Exact match", "nls-badge")); }
-      if (r.language_name) { meta.appendChild(chip(r.language_name)); }
-      if (r.hearing_impaired) { meta.appendChild(chip("SDH")); }
-      if (r.forced) { meta.appendChild(chip("Forced")); }
-      if (r.format) { meta.appendChild(chip(String(r.format).toUpperCase())); }
+      var top = el("span", "nls-row-top");
+      if (r.hash_match) { top.appendChild(el("span", "nls-badge", "Exact match")); }
+      top.appendChild(el("span", "nls-name", cleanName(r)));
+      b.appendChild(top);
       var bits = [];
-      if (r.provider) { bits.push(r.provider); }
-      if (typeof r.downloads === "number") { bits.push("↓ " + r.downloads.toLocaleString("en-US")); }
-      if (typeof r.rating === "number" && r.rating > 0) { bits.push("★ " + r.rating.toFixed(1)); }
-      if (bits.length) { meta.appendChild(el("span", "nls-bits", bits.join(" · "))); }
-      b.appendChild(meta);
-      b.setAttribute("aria-label", (r.hash_match ? "Exact match. " : "") + (r.name || r.language_name) +
-        (r.hearing_impaired ? ", SDH" : "") + (r.forced ? ", forced" : "") + (r.provider ? ", " + r.provider : ""));
+      if (state.downloading === r.id) {
+        bits.push(state.downloadText);
+      } else {
+        if (r.hearing_impaired) { bits.push("SDH (with sound descriptions)"); }
+        if (r.forced) { bits.push("Forced (foreign lines only)"); }
+        if (typeof r.downloads === "number" && r.downloads > 0) { bits.push(shortCount(r.downloads) + " downloads"); }
+        if (typeof r.rating === "number" && r.rating > 0) { bits.push("★ " + r.rating.toFixed(1)); }
+      }
+      b.appendChild(el("span", "nls-meta" + (state.downloading === r.id ? " nls-busy" : ""), bits.join("  ·  ") || " "));
+      b.setAttribute("aria-label", (r.hash_match ? "Exact match. " : "") + cleanName(r) +
+        (r.hearing_impaired ? ", SDH" : "") + (r.forced ? ", forced" : ""));
       b.addEventListener("click", function () { download(r); });
       return b;
     }
 
     function render(keepFocus) {
+      var focusedId = keepFocus && document.activeElement ? document.activeElement.getAttribute("data-id") : null;
       panel.textContent = "";
       var head = el("div", "nls-head");
-      head.appendChild(el("h2", "nls-title", state.view === "languages" ? "Language" : "Find subtitles"));
+      var titles = el("div", "nls-titles");
+      titles.appendChild(el("h2", "nls-title", state.view === "languages" ? "Subtitle language" : "Find subtitles"));
+      if (state.view === "results") {
+        titles.appendChild(el("p", "nls-sub", tv ? "Pick one to add it. Back to close." : "Pick one to add it to this title."));
+      }
+      head.appendChild(titles);
       var tools = el("div", "nls-tools");
       if (state.view === "results") {
-        var lang = el("button", "nls-btn nls-lang", "Language: " + langName(state.lang));
+        var lang = el("button", "nls-btn nls-lang");
         lang.type = "button";
         lang.disabled = state.busy;
+        lang.appendChild(el("span", "nls-btn-label", "Language"));
+        lang.appendChild(el("span", "nls-btn-value", langName(state.lang)));
         lang.addEventListener("click", function () { state.view = "languages"; render(); });
         tools.appendChild(lang);
       }
-      var close = el("button", "nls-btn nls-close", state.view === "languages" ? "Back" : "Close");
-      close.type = "button";
-      close.addEventListener("click", function () { if (state.view === "languages") { state.view = "results"; render(); } else { api.close(); } });
-      tools.appendChild(close);
+      if (!tv || state.view === "languages") {   // on the TV, Back closes; a Close button would only be one more stop
+        var close = el("button", "nls-btn nls-close", state.view === "languages" ? "Back" : "Close");
+        close.type = "button";
+        close.addEventListener("click", function () { if (state.view === "languages") { state.view = "results"; render(); } else { api.close(); } });
+        tools.appendChild(close);
+      }
       head.appendChild(tools);
       panel.appendChild(head);
 
       if (state.view === "languages") {
-        var list = el("div", "nls-list");
+        var list = el("div", "nls-list nls-langs");
         list.setAttribute("role", "listbox");
         LANGS.forEach(function (l) {
           var b = el("button", "nls-row nls-lang-row");
@@ -188,10 +209,18 @@
         var rows = el("div", "nls-list");
         state.results.forEach(function (r) {
           var row = resultRow(r);
-          if (state.busy) { row.disabled = true; }
+          row.setAttribute("data-id", r.id);
+          if (state.busy && state.downloading !== r.id) { row.classList.add("is-dim"); }
           rows.appendChild(row);
         });
         panel.appendChild(rows);
+        if (state.results.some(function (r) { return r.provider; })) {
+          panel.appendChild(el("p", "nls-foot", "From " + state.results[0].provider + " through Jellyfin."));
+        }
+      }
+      if (focusedId) {
+        var again2 = panel.querySelector("[data-id='" + focusedId.replace(/[^A-Za-z0-9_-]/g, "") + "']");
+        if (again2) { again2.focus(); return; }
       }
       if (!keepFocus) { focusFirst(); }
     }
@@ -201,13 +230,13 @@
       state.view = "results";
       state.results = [];
       state.busy = false;
-      state.status = { kind: "busy", text: POLL_NOTE };
+      state.status = { kind: "busy", text: "Looking for " + langName(state.lang) + " subtitles…" };
       render();
       request(url(state.lang)).then(function (data) {
         if (state.closed || mine !== state.seq) { return; }
         state.results = data.results || [];
         state.status = state.results.length
-          ? { kind: "info", text: state.results.length + " found for " + (data.language_name || langName(state.lang)) + ". Exact matches are listed first." }
+          ? null
           : { kind: "error", text: data.message || ("No subtitles found for " + langName(state.lang) + "."), retry: false };
         render();
       }).catch(function (err) {
@@ -220,26 +249,30 @@
     function download(r) {
       if (state.busy) { return; }
       state.busy = true;
-      state.status = { kind: "busy", text: "Downloading “" + (r.name || r.language_name) + "”…" };
+      state.downloading = r.id;
+      state.downloadText = "Downloading…";
+      state.status = null;
       render(true);
       var mine = ++state.seq;
       request("/api/nl/subtitles/" + encodeURIComponent(opts.itemId) + (opts.sourceId ? "?source=" + encodeURIComponent(opts.sourceId) : ""), {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subtitle_id: r.id })
       }).then(function () {
         if (state.closed || mine !== state.seq) { return; }
-        state.status = { kind: "busy", text: "Added. Loading it…" };
+        state.downloadText = "Added. Loading it…";
         render(true);
         return Promise.resolve(opts.onDownloaded ? opts.onDownloaded(r) : null).then(function () {
           api.close();
         }, function (err) {
           if (state.closed) { return; }
           state.busy = false;
+          state.downloading = null;
           state.status = { kind: "error", text: (err && err.message) || "The subtitle was saved, but it didn’t show up yet. Look in the Subtitles menu in a moment.", retry: false };
           render();
         });
       }).catch(function (err) {
         if (state.closed || mine !== state.seq) { return; }
         state.busy = false;
+        state.downloading = null;
         state.status = { kind: "error", text: err.message, retry: false };
         render();
       });
