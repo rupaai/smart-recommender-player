@@ -53,13 +53,13 @@ MOODS: List[Dict[str, Any]] = [
     _mood("cosy_comfort", "Cosy and comforting",
           {"tension": (0.1, 0.8), "ending_valence": (0.85, 0.8), "darkness": (0.1, 0.7), "weight": (0.25, 0.5),
            "humour": (0.5, 0.3), "gore": (0.0, 0.6)},
-          {"Family": 1.0, "Animation": 0.7, "Comedy": 0.5, "Romance": 0.3},
+          {"Family": 1.0, "Animation": 0.3, "Comedy": 0.5, "Romance": 0.5},
           ["christmas", "small town", "friendship", "holiday", "found family"],
           ["warm", "cozy", "comforting", "gentle", "wholesome"]),
     _mood("switch_off", "Brain off, easy fun",
           {"attention": (0.1, 1.0), "humour": (0.75, 0.7), "weight": (0.1, 0.8), "energy": (0.6, 0.3),
            "tension": (0.25, 0.3)},
-          {"Comedy": 1.0, "Action": 0.5, "Family": 0.4, "Animation": 0.3},
+          {"Comedy": 1.0, "Action": 0.5, "Family": 0.4},
           ["parody", "spoof", "buddy", "slapstick", "road trip"],
           ["silly", "playful", "giddy", "joyful"]),
     _mood("laugh_out_loud", "Proper laughs",
@@ -95,7 +95,7 @@ MOODS: List[Dict[str, Any]] = [
           ["epic-awe", "triumphant", "chaotic"]),
     _mood("adventure_escape", "Escape somewhere else",
           {"fantasy": (0.75, 0.8), "spectacle": (0.7, 0.6), "ending_valence": (0.7, 0.4), "darkness": (0.3, 0.3)},
-          {"Adventure": 1.0, "Fantasy": 0.9, "Animation": 0.4, "Family": 0.3, "Science Fiction": 0.3},
+          {"Adventure": 1.0, "Fantasy": 0.9, "Animation": 0.2, "Family": 0.3, "Science Fiction": 0.3},
           ["quest", "journey", "magic", "parallel world", "treasure", "another world"],
           ["epic-awe", "lush", "dreamy", "joyful"]),
     _mood("brainy_puzzle", "A puzzle to solve",
@@ -193,7 +193,7 @@ MOODS: List[Dict[str, Any]] = [
           ["devastating", "haunting", "raw", "melancholy"]),
     _mood("background", "Something on in the background",
           {"attention": (0.1, 1.0), "talkiness": (0.4, 0.4), "tension": (0.2, 0.4), "weight": (0.2, 0.4)},
-          {"Comedy": 0.7, "Documentary": 0.7, "Family": 0.4, "Animation": 0.3},
+          {"Comedy": 0.7, "Documentary": 0.7, "Family": 0.4},
           ["sitcom", "nature", "travel", "cooking", "episodic"],
           ["cozy", "comforting", "gentle"]),
     _mood("date_night", "Date night",
@@ -281,9 +281,15 @@ def parts(features: Dict[str, Any], mood: Dict[str, Any]) -> Dict[str, float]:
         # Share of the film that is this mood, plus whether it has the mood's core genre.
         out["genres"] = 0.6 * sum(hits) / len(hits) + 0.4 * max(hits)
 
-    kws = [str(k).lower() for k in (features.get("kw") or ())]
-    if kws and mood.get("keywords"):
-        out["keywords"] = _saturate(sum(1 for t in mood["keywords"] if _kw_hit(t.lower(), kws)))
+    # All keywords in one padded string, built once per film: matching " term "
+    # against it is the same whole-word test as _kw_hit, but fast enough for
+    # 1,000 films x 30 moods. " | " keeps a term from spanning two keywords.
+    kw_text = features.get("_kw_text")
+    if kw_text is None:
+        kws = [str(k).lower() for k in (features.get("kw") or ())]
+        kw_text = features["_kw_text"] = (" " + " | ".join(kws) + " ") if kws else ""
+    if kw_text and mood.get("keywords"):
+        out["keywords"] = _saturate(sum(1 for t in mood["keywords"] if f" {t.lower()} " in kw_text))
 
     feels = set(features.get("feels") or ())
     if feels and mood.get("feels"):

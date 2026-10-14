@@ -1326,6 +1326,33 @@ class DatabaseManager:
                 added += conn.total_changes - before
         return added
 
+    def get_shown_memory(self, days: int = 30, skip_session_id: Optional[int] = None) -> Dict[int, Dict[str, Any]]:
+        """What Discover showed lately, per title: the ages in days of each session
+        that showed it and was not acted on, and whether it was dismissed.
+
+        `skip_session_id` leaves out the session being paged through, so "Show more"
+        doesn't penalise the page the user just saw."""
+        out: Dict[int, Dict[str, Any]] = {}
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT media_item_id, outcome,
+                       julianday('now') - julianday(shown_at) AS age
+                FROM discover_impressions
+                WHERE shown_at >= datetime('now', '-{int(days)} days')
+                  AND session_id != ?;
+                """,
+                (-1 if skip_session_id is None else int(skip_session_id),),
+            ).fetchall()
+        for r in rows:
+            m = out.setdefault(int(r["media_item_id"]), {"ignored_ages": [], "dismissed": False})
+            outcome = r["outcome"] or "shown"
+            if outcome == "dismissed":
+                m["dismissed"] = True
+            elif outcome == "shown":
+                m["ignored_ages"].append(max(float(r["age"] or 0.0), 0.0))
+        return out
+
     def record_outcome(
         self,
         media_item_id: int,
@@ -3425,6 +3452,32 @@ class DatabaseManager:
             "preferred_keywords": keyword_scores,
             "rating_count": len(rows),
         }
+
+    def get_profile_taste_rows(self, profile_id: int) -> List[Dict[str, Any]]:
+        """Every title this profile has seen and rated, liked or not, with a taste
+        score in -1..+1 (the verdict's taste_score, else the 1-10 rating mapped
+        around 6.5). Feeds the averaged taste formula (`build_taste_affinity`)."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT mi.genres, mi.tier2_keywords, wh.user_rating, rd.taste_score
+                FROM watch_history wh
+                JOIN media_items mi ON wh.media_item_id = mi.id
+                LEFT JOIN rating_details rd
+                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
+                WHERE wh.profile_id = ? AND wh.status = 'seen'
+                  AND (rd.taste_score IS NOT NULL OR wh.user_rating IS NOT NULL);
+                """,
+                (profile_id,),
+            ).fetchall()
+        out = []
+        for r in rows:
+            if r["taste_score"] is not None:
+                score = float(r["taste_score"])
+            else:
+                score = max(-1.0, min(1.0, (float(r["user_rating"]) - 6.5) / 3.5))
+            out.append({"genres": r["genres"], "tier2_keywords": r["tier2_keywords"], "score": score})
+        return out
 
     def get_all_profile_tastes(self, min_rating: float = 7.0) -> Dict[int, Dict[str, Any]]:
         """Every profile's taste + rating stats, keyed by profile id.

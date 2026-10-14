@@ -103,6 +103,14 @@ def test_fit():
           vm._film_genres(["Sci-Fi & Fantasy"]))
     check("keywords match whole words (war is not award)",
           not vm._kw_hit("war", ["award winning"]) and vm._kw_hit("war", ["world war ii"]))
+    fx = {"kw": ["award winning", "world war ii"], "genres": set()}
+    war = {"keywords": ["war"], "dial_weight": {}, "dials": {}}
+    check("fit's keyword test is whole-word too", vm.parts(fx, war).get("keywords") == 0.5, vm.parts(fx, war))
+    check("a term can't span two keywords",
+          "keywords" not in vm.parts({"kw": ["world", "war"], "genres": set()},
+                                     {"keywords": ["world war"], "dial_weight": {}, "dials": {}})
+          or vm.parts({"kw": ["world", "war"], "genres": set()},
+                      {"keywords": ["world war"], "dial_weight": {}, "dials": {}})["keywords"] == 0.0)
 
 
 if __name__ == "__main__":

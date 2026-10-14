@@ -341,6 +341,46 @@ QUERY_STOPWORDS = frozenset({
 # Tokens that must never be treated as a genre request on their own.
 QUERY_NON_GENRE = frozenset({"scifi", "concept", "concepts", "idea", "ideas"})
 
+# Genre names typed into a request. Only NEGATED mentions act on these ("no
+# animation", "nothing animated or scary"): they become hard exclusions. Before
+# they existed, "funny, no animation" matched no intent word at all, so
+# "animation" was kept as a content word and BOOSTED every film whose synopsis
+# or keywords said animation. "Drama" is left out on purpose: "no drama" usually
+# means low conflict, and excluding Drama would empty most of the catalogue.
+GENRE_WORDS: Dict[str, str] = {
+    "animation": "Animation", "animated": "Animation", "animations": "Animation",
+    "cartoon": "Animation", "cartoons": "Animation",
+    "horror": "Horror", "comedy": "Comedy", "comedies": "Comedy",
+    "romance": "Romance", "romantic": "Romance", "romcom": "Romance", "romcoms": "Romance",
+    "documentary": "Documentary", "documentaries": "Documentary",
+    "musical": "Music", "musicals": "Music",
+    "war": "War", "western": "Western", "westerns": "Western",
+    "thriller": "Thriller", "thrillers": "Thriller", "crime": "Crime",
+    "mystery": "Mystery", "fantasy": "Fantasy", "action": "Action",
+    "adventure": "Adventure", "superhero": "Action", "superheroes": "Action",
+    "history": "History", "historical": "History",
+    "scifi": "Science Fiction", "sci": "Science Fiction",
+    "family": "Family", "kids": "Family",
+}
+# Words a negation reaches through when it lists genres: "no animation or
+# musicals", "nothing animated, scary or kids stuff".
+GENRE_LIST_FILLERS = {"or", "and", "nor", "any", "more", "movies", "movie", "films",
+                      "film", "stuff", "please", "fi", "too", "much", "a", "an"}
+GENRE_NEGATION_REACH = 6
+
+
+def _genre_negated(tokens: List[str], i: int) -> bool:
+    """A negator before a genre word, reaching back through a list of genres."""
+    for j in range(i - 1, max(i - 1 - GENRE_NEGATION_REACH, -1), -1):
+        # "less animation" is a softer wish than "no animation": not an exclusion.
+        if tokens[j] in NEGATORS and tokens[j] != "less":
+            return True
+        if tokens[j] in GENRE_WORDS or tokens[j] in GENRE_LIST_FILLERS or tokens[j] in QUERY_INTENT:
+            continue
+        return False
+    return False
+
+
 GUILTY_PLEASURE_KEYWORDS = frozenset({
     "guilty pleasure", "so bad it's good", "so bad its good",
     "cringe", "b-movie", "b movie", "trash", "campy", "cheesy"
@@ -411,6 +451,99 @@ PROFILE_MIX: Dict[str, Tuple[float, float]] = {
 
 # Vibe search (design doc §2.6): weight of the text-to-film similarity, and
 # how many nearest titles join the SQL shortlist.
+# Memory of what Discover already showed (see RecommenderService._apply_memory).
+# A title shown and not opened loses MEMORY_IGNORED points per showing, fading to
+# nothing over MEMORY_IGNORED_DAYS; "Not this one" removes it for MEMORY_DISMISSED_DAYS.
+MEMORY_IGNORED = 1.0
+MEMORY_IGNORED_CAP = 3.0
+MEMORY_IGNORED_DAYS = 14
+MEMORY_DISMISSED = 5.0
+MEMORY_DISMISSED_DAYS = 30
+
+# Averaged taste (recommender.taste_formula: average). The old formula ADDED a
+# weight per liked genre, so the more films of a genre you rated the bigger its
+# bonus, a film with five genres beat one with two, and with ~85 ratings every
+# film hit the +2.0 cap and taste stopped ranking anything. Here a genre's
+# affinity is how much more (or less) you liked its films than your own average,
+# shrunk towards 0 for genres with few ratings; a film gets the MEAN over its
+# genres, so neither rating lots of one genre nor carrying many genres inflates it.
+TASTE_GENRE_SHRINK = 3.0
+TASTE_MEAN_SHRINK = 5.0
+TASTE_KEYWORD_SHRINK = 2.0
+TASTE_KEYWORD_MIN = 1         # a keyword needs this many rated films to count
+TASTE_GENRE_SCALE = 4.0
+TASTE_KEYWORD_SCALE = 3.0
+TASTE_KEYWORD_FULL = 3        # keyword evidence counts fully from this many matches
+
+
+def build_taste_affinity(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """rows: [{genres, tier2_keywords, score -1..+1}] for one profile ->
+    {"genres": {g: affinity}, "keywords": {k: affinity}, "n": count}."""
+    if not rows:
+        return {"genres": {}, "keywords": {}, "n": 0}
+    # Your average, shrunk towards neutral while there are few ratings: with one
+    # rating, "above your own average" would be nothing at all.
+    mean = sum(r["score"] for r in rows) / (len(rows) + TASTE_MEAN_SHRINK)
+
+    def affinities(field: str, shrink: float, min_count: int) -> Dict[str, float]:
+        total: Dict[str, float] = {}
+        count: Dict[str, int] = {}
+        for r in rows:
+            for key in set(_split_lower(r.get(field))):
+                total[key] = total.get(key, 0.0) + (r["score"] - mean)
+                count[key] = count.get(key, 0) + 1
+        return {k: total[k] / (count[k] + shrink) for k in total if count[k] >= min_count}
+
+    return {
+        "genres": affinities("genres", TASTE_GENRE_SHRINK, 1),
+        "keywords": affinities("tier2_keywords", TASTE_KEYWORD_SHRINK, TASTE_KEYWORD_MIN),
+        "n": len(rows),
+    }
+
+
+def averaged_taste(item_genres: Set[str], item_keywords: Set[str], affinity: Dict[str, Any]) -> float:
+    """One film's taste score under the averaged formula (can be negative)."""
+    genres = affinity.get("genres") or {}
+    keywords = affinity.get("keywords") or {}
+    score = 0.0
+    if item_genres:
+        score += TASTE_GENRE_SCALE * sum(genres.get(g, 0.0) for g in item_genres) / len(item_genres)
+    hits = [keywords[k] for k in item_keywords if k in keywords]
+    if hits:
+        score += (TASTE_KEYWORD_SCALE * sum(hits) / len(hits)
+                  * min(1.0, len(hits) / TASTE_KEYWORD_FULL))
+    return score
+
+
+# Genre spread: "shelves" a page should not fill up with unless asked. At most
+# SPREAD_MAX titles from one shelf in any SPREAD_WINDOW consecutive picks.
+SPREAD_GENRES = frozenset({"animation", "horror", "documentary", "music", "war", "western", "family"})
+SPREAD_MAX = 2
+SPREAD_WINDOW = 10
+
+
+def apply_genre_spread(items: List[Dict[str, Any]], exempt: Optional[Set[str]] = None,
+                       max_per_window: int = SPREAD_MAX, window: int = SPREAD_WINDOW) -> List[Dict[str, Any]]:
+    """Reorder so no shelf genre takes more than `max_per_window` of any `window`
+    consecutive picks. Titles are only moved later, never dropped; when nothing
+    fits, the best remaining title goes next anyway. `exempt` holds the genres
+    the request asked for (lower case), which are never held back."""
+    shelves = SPREAD_GENRES - {g.lower() for g in (exempt or set())}
+    if not shelves:
+        return items
+    tagged = [(it, set(_split_lower(it.get("genres"))) & shelves) for it in items]
+    out: List[Tuple[Dict[str, Any], Set[str]]] = []
+    while tagged:
+        recent: Dict[str, int] = {}
+        for _, gs in out[-(window - 1):]:
+            for g in gs:
+                recent[g] = recent.get(g, 0) + 1
+        pick = next((k for k, (_, gs) in enumerate(tagged)
+                     if all(recent.get(g, 0) < max_per_window for g in gs)), 0)
+        out.append(tagged.pop(pick))
+    return [it for it, _ in out]
+
+
 VIBE_WEIGHT = 3.0
 VIBE_SHORTLIST = 400
 
@@ -422,6 +555,15 @@ TIER_BOOSTS: Dict[str, float] = {
     "B": 0.8,
     "C": 0.0,
 }
+
+
+def _origin_negated(before: str) -> bool:
+    """True when the words just before an origin phrase negate it."""
+    words = re.findall(r"[a-z]+", before)[-3:]
+    if not words:
+        return False
+    return (any(w in NEGATORS for w in words) or words[-1] == "except"
+            or words[-2:] in (["anything", "but"], ["everything", "but"]))
 
 
 def parse_origin_intent(query: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -442,7 +584,12 @@ def parse_origin_intent(query: Optional[str]) -> Optional[Dict[str, Any]]:
     for phrase, spec in ORIGIN_INTENT.items():
         # Whole words only (an optional plural "s"): a bare substring test read
         # "indiana jones" as Indian, "polished" as Polish and "animated" as anime.
-        if re.search(rf"\b{re.escape(phrase)}s?\b", text):
+        m = re.search(rf"\b{re.escape(phrase)}s?\b", text)
+        # "no anime", "anything but korean": a negated place is not a request
+        # for it (it used to restrict the results to exactly that place).
+        if m and _origin_negated(text[:m.start()]):
+            continue
+        if m:
             # Prefer the longest matching phrase (most specific region).
             if best is None or len(phrase) > len(best[0]):
                 best = (phrase, spec)
@@ -546,6 +693,21 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
         if not negated:
             result["weight"] += intent.get("weight", 0.2)
 
+    # Typed genre names, negated: a hard exclusion the user asked for by name.
+    named_exclude: Set[str] = set()
+    negated_words: Set[str] = set()
+    for i, word in enumerate(tokens):
+        if word in GENRE_WORDS and _genre_negated(tokens, i):
+            named_exclude.add(GENRE_WORDS[word])
+            negated_words.add(word)
+            matched_terms.append(f"no {word}")
+        elif word not in QUERY_INTENT and _is_negated(tokens, i):
+            # "no zombies": a negated word must never boost films that mention it.
+            negated_words.add(word)
+    seen_exclude |= named_exclude
+    seen_include -= named_exclude
+    result["boost_genres"] = [g for g in result["boost_genres"] if g not in named_exclude]
+
     # "A great concept to interpret" is a QUALITY bar, not a genre. Detected
     # separately so it can veto Family/Animation/Music and pull in themes,
     # rather than silently resolving to whichever mood genres were nearby.
@@ -571,9 +733,11 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
     # horror" is a real constraint and must not be silently discarded.
     if concept_requested:
         seen_include -= seen_exclude
+    seen_include -= named_exclude
 
     result["include_genres"] = sorted(seen_include)
     result["exclude_genres"] = sorted(seen_exclude)
+    result["named_exclude_genres"] = sorted(named_exclude)
     result["weight"] = round(min(result["weight"], 1.0), 2)
     result["matched_terms"] = matched_terms
     result["concept_requested"] = concept_requested
@@ -585,6 +749,7 @@ def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
         w for w in set(tokens)
         if len(w) > 3 and w not in QUERY_STOPWORDS
         and w not in QUERY_INTENT and w not in QUERY_NON_GENRE
+        and w not in negated_words
     )
     return result
 
@@ -615,9 +780,14 @@ def resolve_effective_genres(
     # and never let a mood's own genre veto its films (mood 4 = Horror must
     # still be able to return horror).
     exclude: List[str] = []
+    named = set(intent.get("named_exclude_genres", []))
     if intent["exclude_genres"]:
         for g in intent["exclude_genres"]:
-            if g in include and g in mood_list and mood_list and intent["weight"] < 0.3:
+            # A genre typed by name ("no animation") is excluded even when the
+            # mood's own genres include it: the user said so in words.
+            if g in named:
+                include = [x for x in include if x != g]
+            elif g in include and g in mood_list and mood_list and intent["weight"] < 0.3:
                 continue
             if g not in exclude:
                 exclude.append(g)
@@ -733,12 +903,14 @@ class RecommenderService:
         db_manager: DatabaseManager,
         api_key: Optional[str] = None,
         enable_tier2: bool = True,
-        shortlist_size: int = 250,
-        final_pool: int = 50,
+        shortlist_size: int = 1500,
+        final_pool: int = 200,
         vibe_index: Optional[Any] = None,
         taste_runtime: Optional[Any] = None,
+        taste_formula: str = "average",
     ):
         self.db = db_manager
+        self.taste_formula = taste_formula     # "average" (build_taste_affinity) or "sum" (old, capped)
         self.taste_runtime = taste_runtime     # services.taste_runtime.TasteRuntime, optional
         self.vibe_index = vibe_index           # services.vibe_index.VibeIndex, optional
         self._title_search = None
@@ -797,6 +969,45 @@ class RecommenderService:
         ranked.sort(key=lambda it: it.get("recommendation_score") or 0.0, reverse=True)
         return ranked
 
+    def _apply_memory(self, ranked: List[Dict[str, Any]], skip_session_id: Optional[int]) -> List[Dict[str, Any]]:
+        """Push down what Discover showed lately and nobody opened, and keep
+        "Not this one" titles out for a month. Without this every search
+        returned the same top 50, because the scores never change between nights."""
+        try:
+            memory = self.db.get_shown_memory(MEMORY_DISMISSED_DAYS, skip_session_id)
+        except Exception as e:  # noqa: BLE001
+            print(f"[Recommender] Shown-memory lookup failed ({e}); ranking without it.", flush=True)
+            return ranked
+        if not memory:
+            return ranked
+        penalties: Dict[int, float] = {}
+        for iid, m in memory.items():
+            penalty = sum(MEMORY_IGNORED * (1.0 - age / MEMORY_IGNORED_DAYS)
+                          for age in m["ignored_ages"] if age < MEMORY_IGNORED_DAYS)
+            penalty = min(penalty, MEMORY_IGNORED_CAP)
+            if m["dismissed"]:
+                penalty += MEMORY_DISMISSED
+            if penalty > 0:
+                penalties[iid] = penalty
+        # A whole series shares the penalty: series order swaps a sequel for the
+        # first film you haven't seen, which would bring that film straight back.
+        try:
+            ctx = self.db.get_series_context(list(penalties)) if penalties else {}
+        except Exception:  # noqa: BLE001
+            ctx = {}
+        for iid, s in ctx.items():
+            for member in s.get("members") or []:
+                mid = member.get("id")
+                if mid is not None and penalties.get(mid, 0.0) < penalties.get(iid, 0.0):
+                    penalties[mid] = penalties[iid]
+        for it in ranked:
+            penalty = penalties.get(it.get("id"), 0.0)
+            if penalty > 0:
+                it["memory_penalty"] = round(penalty, 2)
+                it["recommendation_score"] = round(float(it.get("recommendation_score") or 0.0) - penalty, 2)
+        ranked.sort(key=lambda it: it.get("recommendation_score") or 0.0, reverse=True)
+        return ranked
+
     def _resolve_profiles(self, profile: str) -> Tuple[int, int]:
         """Maps a profile selector to concrete profile ids.
 
@@ -827,6 +1038,8 @@ class RecommenderService:
         own_w, other_w = mix
 
         def bonus_for(taste: Dict[str, Any]) -> float:
+            if "affinity" in taste:
+                return averaged_taste(item_genres, item_keywords, taste["affinity"])
             genres = taste.get("preferred_genres", {})
             keywords = taste.get("preferred_keywords", {})
             total = 0.0
@@ -874,6 +1087,9 @@ class RecommenderService:
 
         own_taste = tastes.get(own_id, {})
         other_taste = tastes.get(other_id, {})
+        if self.taste_formula == "average":
+            own_taste = {**own_taste, "affinity": build_taste_affinity(self.db.get_profile_taste_rows(own_id))}
+            other_taste = {**other_taste, "affinity": build_taste_affinity(self.db.get_profile_taste_rows(other_id))}
 
         # For `me`/`partner` the mix is defined from the VIEWER's seat, so
         # swapping the ids must also swap which weight is "own". Swapping ids
@@ -1090,37 +1306,29 @@ class RecommenderService:
         if not candidates or top_n <= 0:
             return []
 
+        # Genre sets and title stems computed once: the pool is now 200, and
+        # re-splitting them inside the double loop made MMR the slowest step.
+        genres_of = [frozenset(_split_lower(c.get("genres"))) for c in candidates]
+        stem_of = [(c.get("title") or "").split(":")[0] for c in candidates]
+        # max_sim[i]: item i's highest similarity to anything selected so far,
+        # updated incrementally as each pick is made.
+        max_sim = [0.0] * len(candidates)
+        remaining = list(range(len(candidates)))
         selected: List[Dict[str, Any]] = []
-        unselected = list(candidates)
 
-        while unselected and len(selected) < top_n:
-            best_item = None
-            best_mmr_score = -float("inf")
-
-            for item in unselected:
-                rel = item.get("recommendation_score", 0.0)
-
-                # Similarity against already selected set
-                max_sim = 0.0
-                item_genres = set(_split_lower(item.get("genres")))
-
-                for sel in selected:
-                    sel_genres = set(_split_lower(sel.get("genres")))
-                    sim = jaccard_similarity(item_genres, sel_genres)
-                    # Deduplicate franchises/same main title stems
-                    if item.get("title", "").split(":")[0] == sel.get("title", "").split(":")[0]:
-                        sim += 0.5
-                    if sim > max_sim:
-                        max_sim = sim
-
-                mmr_score = lambda_param * rel - (1 - lambda_param) * max_sim
-                if mmr_score > best_mmr_score:
-                    best_mmr_score = mmr_score
-                    best_item = item
-
-            if best_item:
-                selected.append(best_item)
-                unselected.remove(best_item)
+        while remaining and len(selected) < top_n:
+            best = max(remaining, key=lambda i: (
+                lambda_param * (candidates[i].get("recommendation_score") or 0.0)
+                - (1 - lambda_param) * max_sim[i], -i))
+            remaining.remove(best)
+            selected.append(candidates[best])
+            for i in remaining:
+                sim = jaccard_similarity(genres_of[i], genres_of[best])
+                # Deduplicate franchises/same main title stems
+                if stem_of[i] == stem_of[best]:
+                    sim += 0.5
+                if sim > max_sim[i]:
+                    max_sim[i] = sim
 
         return selected
 
@@ -1142,6 +1350,8 @@ class RecommenderService:
         pool_hook: Optional[Any] = None,
         return_pool: bool = False,
         only_ids: Optional[List[int]] = None,
+        remember_shown: bool = False,
+        skip_session_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Executes multi-stage filtering, scoring, MMR diversity pruning, and pagination.
 
@@ -1153,6 +1363,9 @@ class RecommenderService:
         return_pool=True stops there and returns {"pool": ranked, ...}, so
         the pop-up can re-rank the same pool after every answer without
         running SQL again (see `finalize`).
+
+        remember_shown=True pushes down titles Discover showed lately that
+        nobody opened (skip_session_id: the session being paged through).
         """
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
 
@@ -1354,6 +1567,8 @@ class RecommenderService:
             ranked = self._apply_vibe(ranked, vibe)
         if self.taste_runtime is not None:
             ranked = self.taste_runtime.apply(ranked, profile)
+        if remember_shown:
+            ranked = self._apply_memory(ranked, skip_session_id)
         if pool_hook is not None:
             ranked = pool_hook(ranked)
 
@@ -1374,13 +1589,17 @@ class RecommenderService:
             or bool(vibe)   # a vibe-ranked list is a targeted answer too
             or pool_hook is not None
         )
-        result = self.finalize(ranked, page, page_size, shuffle=variety and not targeted)
+        result = self.finalize(ranked, page, page_size, shuffle=variety and not targeted,
+                               spread_exempt=set(genre_spec["include"]))
         result["vibe"] = vibe_info
         return result
 
     def finalize(self, ranked: List[Dict[str, Any]], page: int = 1, page_size: int = 10,
-                 shuffle: bool = False) -> Dict[str, Any]:
-        """Series order, diversity and the page slice for an already-scored pool."""
+                 shuffle: bool = False, spread_exempt: Optional[Set[str]] = None) -> Dict[str, Any]:
+        """Series order, diversity and the page slice for an already-scored pool.
+
+        spread_exempt: genres the request asked for, which the genre spread
+        never holds back."""
         if not ranked:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": [], "has_more": False}
 
@@ -1398,6 +1617,9 @@ class RecommenderService:
         # stable within a bucket so pagination stays coherent while browsing.
         if shuffle and len(diverse_candidates) > page_size:
             random.Random(int(time.time() // 600)).shuffle(diverse_candidates)
+
+        # Stage 3b: no shelf (animation, horror, ...) fills a page unless asked.
+        diverse_candidates = apply_genre_spread(diverse_candidates, spread_exempt)
 
         # Stage 4: Pagination Slice
         total_results = len(diverse_candidates)

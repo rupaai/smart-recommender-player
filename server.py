@@ -124,8 +124,9 @@ recommender_service = RecommenderService(
     db_manager=db,
     api_key=api_key,
     enable_tier2=enable_tier2,
-    shortlist_size=recommender_cfg.get("shortlist_size", 250),
-    final_pool=recommender_cfg.get("final_pool", 50),
+    shortlist_size=recommender_cfg.get("shortlist_size", 1500),
+    final_pool=recommender_cfg.get("final_pool", 200),
+    taste_formula=recommender_cfg.get("taste_formula", "average"),
     vibe_index=vibe_index,
     taste_runtime=taste_runtime,
 )
@@ -530,7 +531,8 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
         # "Show more" after the questions pop-up: page through the same
         # answered pool instead of starting over.
         results = await asyncio.to_thread(
-            recommender_service.finalize, popup.ranked(), req.page, effective_page_size)
+            recommender_service.finalize, popup.ranked(), req.page, effective_page_size,
+            spread_exempt=_spread_exempt(popup))
         results["engine"] = "legacy"
     else:
         # Feature-flag router: dispatches between the untouched legacy recommender
@@ -601,6 +603,8 @@ def _recommend_kwargs(req: RecommendRequest, page_size: int) -> Dict[str, Any]:
         min_rating_override=req.min_rating,
         variety=True,   # cold-start freshness: seeded 10-minute rotation
         profile=req.profile,
+        remember_shown=True,   # push down what Discover showed lately and nobody opened
+        skip_session_id=req.session_id,
     )
 
 
@@ -651,8 +655,20 @@ def _mood_list(popup: Any, n: int = 3) -> Optional[List[Dict[str, Any]]]:
     return [{"id": m, "label": _MOOD_LABELS.get(m, m), "p": round(p, 2)} for m, p in top(n)]
 
 
+def _spread_exempt(popup: Any) -> set:
+    """Genres a questions session asked for, which the genre spread leaves alone:
+    the request's genre chips, plus Animation / Family once the answers point
+    clearly at "Animated, any age" or "Fun for everyone"."""
+    kwargs = (getattr(popup, "request", None) or {}).get("kwargs") or {}
+    exempt = set(kwargs.get("genres_override") or [])
+    belief = getattr(popup, "belief", None) or {}
+    if belief.get("animated_any", 0.0) + belief.get("family_all", 0.0) >= 0.3:
+        exempt |= {"Animation", "Family"}
+    return exempt
+
+
 def _popup_response(popup: Any, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    results = recommender_service.finalize(popup.ranked(), 1, page_size)
+    results = recommender_service.finalize(popup.ranked(), 1, page_size, spread_exempt=_spread_exempt(popup))
     results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
     moods = _mood_list(popup)
     if moods is not None:
