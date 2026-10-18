@@ -1420,7 +1420,13 @@ function renderDirectResults(results, query) {
   header.innerHTML = `${results.length} result${results.length === 1 ? '' : 's'} for “${escapeHtml(query)}”`;
   container.appendChild(header);
 
+  // One card per file: indexers often list the same torrent more than once.
+  const seenSlots = new Set();
   results.forEach((item, idx) => {
+    const containerId = downloadSlotId(item.magnet);
+    if (seenSlots.has(containerId)) return;
+    seenSlots.add(containerId);
+
     const card = document.createElement('div');
     card.className = 'torrent-card';
 
@@ -1434,7 +1440,6 @@ function renderDirectResults(results, query) {
       badgeClass = 'badge-res-720';
     }
 
-    const containerId = `direct-dl-slot-${idx}`;
     const mediaType = item.media_type || state.directMediaType;
     const quality = item.quality || 'HD';
     const sizeText = item.size_display || formatSize(item.size_bytes);
@@ -1471,13 +1476,40 @@ function renderDirectResults(results, query) {
       </div>
       <div class="torrent-stub">
         <div class="torrent-action-row" id="${containerId}">
-          ${directDownloadButton(encodeURIComponent(item.magnet), fileTitle, containerId, mediaType, 'Download', movieId)}
+          ${directSlotHtml(encodeURIComponent(item.magnet), fileTitle, containerId, mediaType, movieId)}
         </div>
       </div>
     `;
 
     container.appendChild(card);
   });
+}
+
+// A result's download slot belongs to its file (the torrent's info hash), never
+// to its place in the list: after a re-sort or a new search, a running
+// download's progress, Cancel and Play must stay on the copy that was picked.
+function downloadSlotId(magnet) {
+  const text = String(magnet || '');
+  const hash = /btih:([a-z0-9]+)/i.exec(text);
+  if (hash) return `direct-dl-${hash[1].toLowerCase()}`;
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return `direct-dl-x${h.toString(36)}`;
+}
+
+// What a result's slot shows when the list is (re)drawn: the download already
+// running or finished for that same file, otherwise a Download button.
+function directSlotHtml(encodedMagnet, title, containerId, mediaType, linkedMovieId) {
+  const dl = Object.values(state.activeDownloads).find(d => d.containerId === containerId);
+  if (!dl) return directDownloadButton(encodedMagnet, title, containerId, mediaType, 'Download', linkedMovieId);
+  if (dl.progress >= 100 || dl.status === 'completed') {
+    return `<button class="btn-ready-watch" onclick="playLocalItem(${dl.movieId}, ${jsArg(dl.title)})">
+              ${icon('play')}<span>Ready — play it</span>
+            </button>`;
+  }
+  return `<button class="btn-download-direct" disabled>
+            <span class="spinner" aria-hidden="true"></span><span>Downloading…</span>
+          </button>`;
 }
 
 function sortKeyIsBest() {
@@ -1623,6 +1655,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
 
       // Update in-memory tracker
       state.activeDownloads[movieId] = {
+        ...state.activeDownloads[movieId],
         movieId,
         title: data.name || movieTitle,
         mediaType,
