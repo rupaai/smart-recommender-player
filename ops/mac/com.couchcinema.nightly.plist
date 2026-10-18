@@ -7,10 +7,12 @@
   replaces them with real absolute paths before copying this file into
   ~/Library/LaunchAgents/. Loading this file unmodified will fail.
 
-  Schedule: runs every day at 03:30 local time. launchd runs a missed
-  StartCalendarInterval job once the Mac wakes, so a job that was due while
-  the Mac was asleep or powered off runs at the next wake/boot instead of
-  being skipped.
+  Schedule: launchd starts it every hour at :30. nightly.sh (with
+  scheduled) does the night's work once a day, from 03:30, the first time the
+  server can be reached, and otherwise exits quietly. So a Mac that is asleep
+  or off at 03:30 runs it the first hour it is on and online. (launchd only
+  catches up a missed time after sleep, not after a shutdown, and a sleeping
+  Mac often has no network when it does: hence hourly.)
 -->
 <plist version="1.0">
 <dict>
@@ -21,6 +23,7 @@
 	<array>
 		<string>/bin/bash</string>
 		<string>__REPO__/ops/mac/nightly.sh</string>
+		<string>--scheduled</string>
 	</array>
 
 	<key>WorkingDirectory</key>
@@ -28,8 +31,6 @@
 
 	<key>StartCalendarInterval</key>
 	<dict>
-		<key>Hour</key>
-		<integer>3</integer>
 		<key>Minute</key>
 		<integer>30</integer>
 	</dict>

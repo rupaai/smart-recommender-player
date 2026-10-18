@@ -97,7 +97,7 @@ command -v uv || echo "uv not found: run  brew install uv"
 bash ops/mac/install.sh
 ```
 
-It ends with "Installed. It runs every night at 03:30". If it says it could not reach the server, check you are on your home wifi, then run it again.
+It ends with "Installed. It runs once a day from 03:30". If it says it could not reach the server, check you are on your home wifi, then run it again.
 
 7. **[Mac]** Quick test, backup only (about 10 seconds). A new file should appear:
 
@@ -139,7 +139,7 @@ If it fails, the log says which step; nothing on the server changes unless the l
     - **[Mac]** `tail -5 ~/Library/Logs/CouchCinema/$(date +%F).log` should end with `7. done:`.
     - **[Mac]** `curl -s http://192.168.1.183:8000/healthz`: `model_bundle` shows last night's date.
     - **[Mac]** `launchctl print gui/$(id -u)/com.couchcinema.nightly | grep -E "state|last exit"`: `last exit code = 0`.
-12. If the Mac was asleep, launchd runs the job when it wakes. To wake it for the job: `sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00`.
+12. If the Mac is off or asleep at 03:30, the job runs the first hour after that it is on and can reach the server (it tries every hour at :30).
 
 **If something goes wrong**
 

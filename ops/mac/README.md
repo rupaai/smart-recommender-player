@@ -1,11 +1,11 @@
 # The nightly job on your Mac
 
-Every night at 03:30 your Mac does the heavy work, then hands the result to the server (`mars`):
+Once a day your Mac does the heavy work, then hands the result to the server (`mars`). It tries at 03:30 and then every hour at :30, and runs the first time the Mac is on and can reach the server. A Mac that is off, asleep or away from home is not an error: it just tries again next hour.
 
 | Step | What happens | When |
 |---|---|---|
 | 1 Backup | Downloads a copy of the server's database (your ratings and watch history) to `~/CouchCinemaBackups/<date>.db`. Keeps 30 days. | Every night |
-| 2 Catalogue | Looks for new films and shows on TMDB, keeps only good ones (at least 200 votes and rating 6.0), sends them to the server. | Sundays |
+| 2 Catalogue | Looks for new films and shows on TMDB, keeps only good ones (at least 200 votes and rating 6.0), sends them to the server. | Weekly (first run a week after the last refresh) |
 | 3 Snapshot | Downloads the database again so the model learns from the server's own ids. | Every night |
 | 4 Train | Retrains the "what to watch next" model and the vibe search. | Every night |
 | 5 Check | Scores the new models. If any score is more than 1% worse than what the server runs now, it is held back. | Every night |
@@ -34,14 +34,14 @@ It asks for the server address, the admin token and the ntfy topic, checks it ca
 | Run it without the weekly catalogue part | `bash ops/mac/nightly.sh --skip-catalogue` |
 | Only take a backup | `bash ops/mac/nightly.sh --skip-catalogue --skip-train` |
 | Train but don't publish | `bash ops/mac/nightly.sh --skip-catalogue --skip-publish` |
-| Run the catalogue refresh tonight | `bash ops/mac/nightly.sh --catalogue` |
+| Run the catalogue refresh now, even if it is not due | `bash ops/mac/nightly.sh --catalogue` |
 | Start the scheduled job right now | `launchctl kickstart -k gui/$(id -u)/com.couchcinema.nightly` |
 | Check the job is installed | `launchctl print gui/$(id -u)/com.couchcinema.nightly` |
 | Which model does the server run? | `uv run python ops/mac/cc.py model-status` |
 | Go back to the previous model | `uv run python ops/mac/cc.py rollback-model` |
 | Remove the job | `bash ops/mac/install.sh --uninstall` |
 
-If the Mac is asleep at 03:30, launchd runs the job when it wakes. To wake it for the job: `sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00`.
+Once a day's run has reached the server it is done for that day, even if a step failed (you get the alert for that). If the Mac could not reach the server all day, you get one quiet alert after 21:00 saying so. `~/.couchcinema/last-run` holds the date of the last run that reached the server; delete it to make the next hourly try run again today.
 
 ## Settings
 
@@ -55,6 +55,7 @@ The check is a safety net, not a full test. It asks: given the films you liked s
 
 ## When something looks wrong
 
+- **Phone alert "nightly has not run today":** the Mac was on but never reached the server (not at home and Tailscale off?). Nothing to fix; it tries again next hour.
 - **Phone alert "nightly failed":** open the log (above); the last lines say which step stopped and why. The server keeps running the previous model.
 - **"model held back":** not an error. The new model scored worse than the one on the server, so nothing changed. The bundle is kept in `~/CouchCinemaBundles/`.
 - **"could not download the database":** the Mac couldn't reach the server. Check you are at home or on Tailscale.

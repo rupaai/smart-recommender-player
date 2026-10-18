@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# The nightly job on the Mac (docs/DEPLOYMENT_PLAN.md, P7.1). launchd runs it at 03:30.
+# The nightly job on the Mac (docs/DEPLOYMENT_PLAN.md, P7.1).
 #
-#   nightly.sh [--skip-backup] [--skip-catalogue] [--catalogue] [--skip-train] [--skip-publish]
+#   nightly.sh [--scheduled] [--skip-backup] [--skip-catalogue] [--catalogue] [--skip-train] [--skip-publish]
 #
-#   --catalogue       refresh the catalogue tonight even if it is not Sunday
+#   --scheduled       how launchd runs it: every hour at :30 from 03:30. Runs the night once a
+#                     day, the first time the server can be reached; until then it exits quietly
+#                     (a laptop that is asleep, off or away from home is not a failure)
+#   --catalogue       refresh the catalogue now even if the last refresh is less than a week old
 #   --skip-*          leave a step out (handy for trying one step on its own)
 #
-# Steps: 1 backup, 2 catalogue refresh (Sundays), 3 fresh snapshot, 4 train, 5 evaluate,
+# Steps: 1 backup, 2 catalogue refresh (weekly), 3 fresh snapshot, 4 train, 5 evaluate,
 # 6 publish, 7 report. Settings live in config.yaml (nightly:) and ~/.couchcinema/env.
 # One run at a time (lock), everything is logged to ~/Library/Logs/CouchCinema/<date>.log.
 set -uo pipefail
@@ -18,13 +21,18 @@ BACKUP_DIR="${CC_BACKUP_DIR:-$HOME/CouchCinemaBackups}"
 BUNDLE_DIR="${CC_BUNDLE_DIR:-$HOME/CouchCinemaBundles}"
 WORK="$CC_HOME/work"
 TODAY="$(date +%F)"
+HOUR="${CC_HOUR:-$(date +%H)}"   # CC_HOUR: tests only
 LOG="$LOG_DIR/$TODAY.log"
 mkdir -p "$LOG_DIR" "$BACKUP_DIR" "$BUNDLE_DIR" "$WORK"
 
-DO_BACKUP=1; DO_CATALOGUE=""; DO_TRAIN=1; DO_PUBLISH=1
-[ "$(date +%u)" = 7 ] && DO_CATALOGUE=1
+SCHEDULED=""; DO_BACKUP=1; DO_CATALOGUE=""; DO_TRAIN=1; DO_PUBLISH=1
+# Weekly: due when the last successful refresh is a week old (or never happened), whichever
+# day the Mac is first on, so a missed Sunday is not a missed week.
+last_catalogue="$(cat "$CC_HOME/last-catalogue" 2>/dev/null || echo never)"
+if [ -z "$(find "$CC_HOME/last-catalogue" -mtime -7 2>/dev/null)" ]; then DO_CATALOGUE=1; fi
 for arg in "$@"; do
   case "$arg" in
+    --scheduled) SCHEDULED=1 ;;
     --skip-backup) DO_BACKUP="" ;;
     --skip-catalogue) DO_CATALOGUE="skip" ;;
     --catalogue) DO_CATALOGUE=1 ;;
@@ -34,6 +42,12 @@ for arg in "$@"; do
   esac
 done
 [ "$DO_CATALOGUE" = skip ] && DO_CATALOGUE=""
+
+# Scheduled runs: once a day, not before 03:00. Silent exits, so the day's log stays readable.
+if [ -n "$SCHEDULED" ]; then
+  [ "$HOUR" -ge 3 ] || exit 0
+  [ "$(cat "$CC_HOME/last-run" 2>/dev/null)" = "$TODAY" ] && exit 0
+fi
 
 exec >>"$LOG" 2>&1
 log() { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$*"; }
@@ -65,6 +79,27 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ >"$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
+
+# A scheduled run waits a minute for the network (a Mac waking up joins wifi and Tailscale a
+# little after launchd starts the job). Still nothing: try again next hour, no alert. Only
+# when a whole day has gone by without reaching the server (from 21:00), one alert a day.
+if [ -n "$SCHEDULED" ]; then
+  server="${CC_SERVER:-$(env_value CC_SERVER)}"; tries="${CC_REACH_TRIES:-6}"
+  until curl -fsS --max-time 5 -o /dev/null "${server%/}/healthz" 2>/dev/null; do
+    tries=$((tries - 1))
+    if [ "$tries" -le 0 ]; then
+      log "server $server not reachable (asleep, off the home network or Tailscale off); trying again next hour"
+      last_ok="$(cat "$CC_HOME/last-run" 2>/dev/null || echo never)"
+      if [ "$HOUR" -ge 21 ] && [ "$(cat "$CC_HOME/last-unreachable-alert" 2>/dev/null)" != "$TODAY" ]; then
+        echo "$TODAY" >"$CC_HOME/last-unreachable-alert"
+        notify "CouchCinema nightly has not run today" "The Mac could not reach $server all day (last run: $last_ok). It keeps trying every hour while the Mac is on." default
+      fi
+      exit 0
+    fi
+    sleep "${CC_REACH_WAIT:-10}"
+  done
+  echo "$TODAY" >"$CC_HOME/last-run"   # reached the server: today's attempt counts, pass or fail
+fi
 
 cd "$REPO" || exit 1
 CC=(uv run python ops/mac/cc.py)
@@ -121,6 +156,7 @@ fi
 if [ -n "$DO_CATALOGUE" ]; then
   log "2. catalogue refresh"
   if refresh_catalogue; then
+    date +%F >"$CC_HOME/last-catalogue"
     log "2. catalogue refresh done"
   else
     log "2. catalogue refresh FAILED; carrying on with training on what the server has"
@@ -128,7 +164,7 @@ if [ -n "$DO_CATALOGUE" ]; then
     RESULT="catalogue refresh failed"
   fi
 else
-  log "2. catalogue refresh: not tonight"
+  log "2. catalogue refresh: not tonight (last one $last_catalogue)"
 fi
 
 # ---- 3. fresh snapshot -------------------------------------------------------

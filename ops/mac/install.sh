@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the nightly job on your Mac. Safe to run again.
 #
-#   bash ops/mac/install.sh              set up and start the 03:30 job
+#   bash ops/mac/install.sh              set up and start the nightly job (or update it)
 #   bash ops/mac/install.sh --uninstall  stop and remove it
 #
 # It asks for three things (or reads CC_SERVER, ADMIN_TOKEN, NTFY_TOPIC from the environment):
@@ -57,6 +57,6 @@ launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 launchctl print "$DOMAIN/$LABEL" >/dev/null || die "launchd did not accept the job"
 say ""
-say "Installed. It runs every night at 03:30 (or when the Mac wakes, if it was asleep)."
+say "Installed. It runs once a day from 03:30, or the first hour after that the Mac is on and can reach the server."
 say "Try it now:   launchctl kickstart -k $DOMAIN/$LABEL"
 say "Watch it:     tail -f ~/Library/Logs/CouchCinema/\$(date +%F).log"
