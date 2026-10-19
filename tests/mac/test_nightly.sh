@@ -14,11 +14,11 @@ logged() { grep -qE -- "$1" "$LOGFILE" && ok "$2" || fail "$2 (log lacks $1)"; }
 new_sandbox() {
   T="$(mktemp -d)"
   mkdir -p "$T/repo/ops/mac" "$T/repo/training/tiger" "$T/repo/training/data/ml-latest-small" "$T/bin" "$T/home/.couchcinema"
-  cp "$REPO_ROOT/ops/mac/nightly.sh" "$T/repo/ops/mac/"
+  cp "$REPO_ROOT/ops/mac/nightly.sh" "$REPO_ROOT/ops/mac/train-now.sh" "$REPO_ROOT/ops/mac/install.sh" "$T/repo/ops/mac/"
   cp "$REPO_ROOT/training/retrain_tiger.sh" "$T/repo/training/"
   echo '{"items":{}}' >"$T/repo/training/tiger/semantic_ids.json"
   : >"$T/repo/training/data/ml-latest-small/ratings.csv"
-  printf 'CC_SERVER=http://srv.example:8000\nNTFY_TOPIC=testtopic\nHEALTHCHECKS_NIGHTLY_URL=https://hc.example/ping\n' >"$T/home/.couchcinema/env"
+  printf 'CC_SERVER=http://srv.example:8000\nADMIN_TOKEN=tok\nNTFY_TOPIC=testtopic\nHEALTHCHECKS_NIGHTLY_URL=https://hc.example/ping\n' >"$T/home/.couchcinema/env"
   CALLS="$T/calls.log"; : >"$CALLS"
   cat >"$T/bin/uv" <<'STUB'
 #!/usr/bin/env bash
@@ -38,12 +38,16 @@ exit 0
 STUB
   # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash\necho "curl $*" >>"$CALLS"\ncase "$*" in *healthz*) [ -z "${STUB_NO_SERVER:-}" ] || exit 7 ;; esac\nexit 0\n' >"$T/bin/curl"
-  chmod +x "$T/bin/uv" "$T/bin/curl"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\necho "launchctl $*" >>"$CALLS"\n' >"$T/bin/launchctl"
+  printf '#!/usr/bin/env bash\necho Darwin\n' >"$T/bin/uname"
+  # shellcheck disable=SC2016
+  printf '#!/usr/bin/env bash\necho "osascript $*" >>"$CALLS"\n' >"$T/bin/osascript"
+  chmod +x "$T/bin/uv" "$T/bin/curl" "$T/bin/launchctl" "$T/bin/uname" "$T/bin/osascript"
   export CALLS T
   export PATH="$T/bin:$PATH" HOME="$T/home" CC_HOME="$T/home/.couchcinema" \
          CC_LOG_DIR="$T/logs" CC_BACKUP_DIR="$T/backups" CC_BUNDLE_DIR="$T/bundles"
-  export CC_REACH_WAIT=0 CC_REACH_TRIES=2
-  unset STUB_GATE_EXIT STUB_FAIL STUB_NO_SERVER CC_HOUR
+  unset STUB_GATE_EXIT STUB_FAIL STUB_NO_SERVER
   LOGFILE="$T/logs/$(date +%F).log"
 }
 run() { bash "$T/repo/ops/mac/nightly.sh" "$@"; }
@@ -128,42 +132,43 @@ echo 99999999 >"$T/home/.couchcinema/nightly.lock/pid"
 run --skip-catalogue
 has "cc.py export" "a stale lock is taken over"
 
-echo "== nightly: scheduled run, Mac offline"
-new_sandbox
-CC_HOUR=10 STUB_NO_SERVER=1 run --scheduled --skip-catalogue; rc=$?
-[ $rc -eq 0 ] && ok "exits cleanly" || fail "exit code $rc"
-has "curl .*srv.example:8000/healthz" "checks the server first"
-hasnt "cc.py export" "does not start the night"
-hasnt "curl .*testtopic" "no alert while the day is young"
-logged "trying again next hour" "log says it will retry"
-[ ! -f "$CC_HOME/last-run" ] && ok "today is not marked done" || fail "marked done while offline"
-CC_HOUR=22 STUB_NO_SERVER=1 run --scheduled --skip-catalogue
-CC_HOUR=23 STUB_NO_SERVER=1 run --scheduled --skip-catalogue
-[ "$(grep -c 'curl .*testtopic' "$CALLS")" = 1 ] && ok "one alert after a whole day offline" || fail "expected exactly one late alert"
-
-echo "== nightly: scheduled run, back online later"
-CC_HOUR=11 run --scheduled --skip-catalogue; rc=$?
-[ $rc -eq 0 ] && ok "exit 0" || fail "exit code $rc"
-has "push-bundle" "the night ran once the server answered"
-[ "$(cat "$CC_HOME/last-run")" = "$(date +%F)" ] && ok "today marked done" || fail "today not marked done"
-: >"$CALLS"
-CC_HOUR=12 run --scheduled --skip-catalogue
-hasnt "healthz|cc.py" "the next hour does nothing"
-
-echo "== nightly: scheduled run before 03:00 waits"
-new_sandbox
-CC_HOUR=01 run --scheduled --skip-catalogue
-hasnt "curl|cc.py" "nothing before 03:00"
-
-echo "== nightly: catalogue is weekly, not tied to Sundays"
+echo "== catalogue is weekly, not tied to Sundays"
 new_sandbox
 run --skip-train
 has "build_full_catalogue" "first run refreshes (never refreshed)"
 [ -f "$CC_HOME/last-catalogue" ] && ok "refresh date saved" || fail "no last-catalogue"
 : >"$CALLS"; run --skip-train
 hasnt "build_full_catalogue" "not again within the week"
+logged "not due \\(last one" "log says when the last one was"
 touch -t "$(date -d '-8 days' +%Y%m%d%H%M 2>/dev/null || date -v-8d +%Y%m%d%H%M)" "$CC_HOME/last-catalogue"
 : >"$CALLS"; run --skip-train
 has "build_full_catalogue" "due again after a week"
+
+echo "== Train button: server not reachable"
+new_sandbox
+out="$(STUB_NO_SERVER=1 bash "$T/repo/ops/mac/train-now.sh" </dev/null 2>&1)"; rc=$?
+[ $rc -ne 0 ] && ok "non-zero exit" || fail "should have failed"
+has "curl .*srv.example:8000/healthz" "checks the server first"
+hasnt "cc.py" "did not start"
+hasnt "curl .*testtopic" "no phone alert: you are watching"
+echo "$out" | grep -q "Can't reach the server" && ok "says why" || fail "no clear message: $out"
+
+echo "== Train button: trains and publishes"
+new_sandbox
+out="$(bash "$T/repo/ops/mac/train-now.sh" --skip-catalogue </dev/null 2>&1)"; rc=$?
+[ $rc -eq 0 ] && ok "exit 0" || fail "exit code $rc: $out"
+has "push-bundle" "publishes the new model"
+has "osascript .*Done: published a new model" "Mac notification with the result"
+
+echo "== install: adds the button, removes the old schedule"
+new_sandbox
+mkdir -p "$T/agents"; : >"$T/agents/com.couchcinema.nightly.plist"
+CC_AGENTS_DIR="$T/agents" CC_APPS_DIR="$T/apps" bash "$T/repo/ops/mac/install.sh" >/dev/null 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "exit 0" || fail "exit code $rc"
+[ ! -f "$T/agents/com.couchcinema.nightly.plist" ] && ok "old schedule file removed" || fail "old plist left"
+has "launchctl bootout .*com.couchcinema.nightly" "old job unloaded"
+hasnt "launchctl bootstrap" "nothing scheduled"
+[ -x "$T/apps/Train CouchCinema.command" ] && grep -q "$T/repo/ops/mac/train-now.sh" "$T/apps/Train CouchCinema.command" \
+  && ok "button points at train-now.sh" || fail "no button"
 
 [ $FAILS -eq 0 ] && echo "all nightly tests passed" || { echo "$FAILS failed"; exit 1; }

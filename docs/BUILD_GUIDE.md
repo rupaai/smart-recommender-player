@@ -81,7 +81,7 @@ ssh -t gabstevens@192.168.1.183 "sudo grep -E '^(ADMIN_TOKEN|NTFY_TOPIC)=' /srv/
 
 Keep that Terminal window open. You need the part after `ADMIN_TOKEN=` and the part after `NTFY_TOPIC=`.
 
-**C. Install the nightly job on your Mac (about 3 minutes)**
+**C. Set up training on your Mac (about 3 minutes)**
 
 5. **[Mac]** Update the project and check `uv` is installed (`brew install uv` if the second line says "not found"):
 
@@ -97,7 +97,7 @@ command -v uv || echo "uv not found: run  brew install uv"
 bash ops/mac/install.sh
 ```
 
-It ends with "Installed. It runs once a day from 03:30". If it says it could not reach the server, check you are on your home wifi, then run it again.
+It ends with "Installed. To train and send a new model to the app, open "Train CouchCinema"". If it says it could not reach the server, check you are on your home wifi, then run it again.
 
 7. **[Mac]** Quick test, backup only (about 10 seconds). A new file should appear:
 
@@ -108,13 +108,7 @@ ls ~/CouchCinemaBackups
 
 **D. The first real run (about 30 minutes)**
 
-8. **[Mac]** Do the first full run yourself, while the Mac is awake and plugged in, so you can watch it. This trains the models and sends them to the server:
-
-```
-bash ops/mac/nightly.sh --skip-catalogue
-```
-
-In a second Terminal tab you can follow along with `tail -f ~/Library/Logs/CouchCinema/$(date +%F).log`. The last line says what happened: "published a new model" or "model held back: ..." (not an error, see `ops/mac/README.md`).
+8. **[Mac]** Open **Train CouchCinema** (Spotlight, or Applications in your home folder), with the Mac plugged in. A Terminal window shows it working; it trains the models and sends them to the server. The last line says what happened: "published a new model" or "model held back: ..." (not an error, see `ops/mac/README.md`).
 
 9. **[Mac]** Check the server picked it up. `model_bundle` should show a name starting `bundle-` with today's date:
 
@@ -122,7 +116,7 @@ In a second Terminal tab you can follow along with `tail -f ~/Library/Logs/Couch
 curl -s http://192.168.1.183:8000/healthz
 ```
 
-**E. Optional, for the Sunday catalogue refresh**
+**E. Optional, for the weekly catalogue refresh** (the button runs it when the last one is a week old)
 
 10. It needs your TMDB key in `~/codes/smart_movie_streamer/.env` (it is already there for the app). TMDB is not reachable from where Claude builds things, so this part has only been tested with stand-ins. Try it once yourself, it takes a while (the first time, up to an hour):
 
@@ -133,19 +127,15 @@ bash ops/mac/nightly.sh --catalogue --skip-train
 
 If it fails, the log says which step; nothing on the server changes unless the last step (the patch) succeeds.
 
-**F. Check the first night's run (next morning)**
+**F. After that**
 
-11. You get a phone alert only if something broke. No alert means fine, but check anyway:
-    - **[Mac]** `tail -5 ~/Library/Logs/CouchCinema/$(date +%F).log` should end with `7. done:`.
-    - **[Mac]** `curl -s http://192.168.1.183:8000/healthz`: `model_bundle` shows last night's date.
-    - **[Mac]** `launchctl print gui/$(id -u)/com.couchcinema.nightly | grep -E "state|last exit"`: `last exit code = 0`.
-12. If the Mac is off or asleep at 03:30, the job runs the first hour after that it is on and can reach the server (it tries every hour at :30).
+11. Nothing runs on its own. Press **Train CouchCinema** whenever you want fresh picks (say, after a few evenings of watching and rating). Each press also saves a backup of the server's database to `~/CouchCinemaBackups`.
 
 **If something goes wrong**
 
 - Server refuses a model (the log says why): the old model keeps running; tell Claude "the nightly publish was refused, here is the log" and paste the last 20 lines.
 - New model feels worse: **[Mac]** `uv run python ops/mac/cc.py rollback-model` goes back one model.
-- Stop the nightly job: **[Mac]** `bash ops/mac/install.sh --uninstall`.
+- Remove the Train button: **[Mac]** `bash ops/mac/install.sh --uninstall`.
 
 ## Step 4: Milestone M4, Polish (whenever you like)
 

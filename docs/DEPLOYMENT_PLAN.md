@@ -300,7 +300,8 @@ All under `/admin`, require header `Authorization: Bearer $ADMIN_TOKEN`, return 
 ### [x] P7.2 launchd job (Haiku)
 - `ops/mac/com.couchcinema.nightly.plist` with `StartCalendarInterval` at 03:30. launchd runs a missed job when the Mac wakes. Install instructions in `ops/mac/README.md` (`launchctl bootstrap gui/$(id -u) …`).
 - **Done when:** `launchctl print` shows the job and a manual `launchctl kickstart` runs it.
-- **As built:** `ops/mac/com.couchcinema.nightly.plist` (a template: `__REPO__` and `__HOME__` are replaced by `ops/mac/install.sh`, which also writes `~/.couchcinema/env` (mode 600), checks the server can be reached, and loads the job; `--uninstall` removes it) and `ops/mac/README.md`. Not loaded for real in the build sandbox (no macOS).
+- **Changed 2026-10-19:** no schedule. The Mac was usually asleep or off at 03:30, so every scheduled run failed. Training now runs from a button (`ops/mac/train-now.sh`, installed as "Train CouchCinema" in `~/Applications` by `install.sh`, which also removes the old launchd job).
+- **As built (before that):** `ops/mac/com.couchcinema.nightly.plist` (a template: `__REPO__` and `__HOME__` are replaced by `ops/mac/install.sh`, which also writes `~/.couchcinema/env` (mode 600), checks the server can be reached, and loads the job; `--uninstall` removes it) and `ops/mac/README.md`. Not loaded for real in the build sandbox (no macOS).
 
 ## Phase 8: Know when something breaks
 
