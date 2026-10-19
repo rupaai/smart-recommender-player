@@ -192,6 +192,7 @@ def test_database(tmp):
     check("running again is harmless", DatabaseManager(path).get_schema_version() >= 18)
 
     print("vetoes and the chooser")
+    # Far-future times: set_veto prunes expired "tonight" rows against the real clock.
     now = "2099-10-16 20:00:00"
     up.set_veto("*", x, "tonight", "2099-10-17 05:00:00")
     check("a tonight veto applies to everyone while it runs", up.get_vetoed_ids(["labiba"], now) == {x} and up.get_vetoed_ids(["partner"], now) == {x})

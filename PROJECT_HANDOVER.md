@@ -85,6 +85,7 @@ The app is **Northern Lights**. The original app's look is the ticket look (§6)
 
 ## 11. Download tab and "Best match" sort
 Done. Downloads start only from the Download tab ("Choose a copy" on Discover jumps there with the catalogue link). `services/torrent_ranking.py` scores quality × seeder health × size fit × scope match; tuning numbers in `config.yaml` `torrent_ranking:`. Numbers were tuned on sample lists only; tune from real results.
+Each result's download slot is keyed by the torrent's info hash (`downloadSlotId` in `static/app.js`), never by its position in the list, so re-sorting or searching again keeps progress, Cancel and Play on the copy that was picked; the same torrent listed twice is drawn once (`tests/js/direct_download_slots_check.js`).
 
 ## 12. Watch later
 Done (schema v11). One shared list, one row per person per title (`watch_later`), "I'm …" switch in the header, bookmark on Discover / Rate / search, the Later tab, auto-done on rating or finishing. Northern Lights M6 adds "Just me" rows and yes / maybe / pass answers (§14).
