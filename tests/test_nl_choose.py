@@ -192,12 +192,13 @@ def test_database(tmp):
     check("running again is harmless", DatabaseManager(path).get_schema_version() >= 18)
 
     print("vetoes and the chooser")
-    now = "2026-10-16 20:00:00"
-    up.set_veto("*", x, "tonight", "2026-10-17 05:00:00")
+    # Far-future times: set_veto prunes expired "tonight" rows against the real clock.
+    now = "2099-10-16 20:00:00"
+    up.set_veto("*", x, "tonight", "2099-10-17 05:00:00")
     check("a tonight veto applies to everyone while it runs", up.get_vetoed_ids(["labiba"], now) == {x} and up.get_vetoed_ids(["partner"], now) == {x})
-    check("... and ends at its time", up.get_vetoed_ids(["labiba"], "2026-10-17 05:00:00") == set() and up.get_vetoed_ids(["labiba"], "2026-10-17 05:00:01") == set())
+    check("... and ends at its time", up.get_vetoed_ids(["labiba"], "2099-10-17 05:00:00") == set() and up.get_vetoed_ids(["labiba"], "2099-10-17 05:00:01") == set())
     up.set_veto("labiba", x, "never")
-    check("never is one person's, with no end", up.get_vetoed_ids(["labiba"], "2030-01-01 00:00:00") == {x} and up.get_vetoed_ids(["partner"], "2030-01-01 00:00:00") == set())
+    check("never is one person's, with no end", up.get_vetoed_ids(["labiba"], "2100-01-01 00:00:00") == {x} and up.get_vetoed_ids(["partner"], "2100-01-01 00:00:00") == set())
     check("the list names title and kind", [(r["kind"], r["title"], r["person_key"]) for r in up.get_vetoes(["labiba"], now)] in ([("never", "X", "labiba"), ("tonight", "X", "*")], [("tonight", "X", "*"), ("never", "X", "labiba")]), up.get_vetoes(["labiba"], now))
     check("clearing removes it", up.clear_veto("labiba", x) is True and up.clear_veto("labiba", x) is False and up.clear_veto("*", x) is True and up.get_vetoes(["labiba"], now) == [])
     for bad in (("*", x, "sometimes", None), ("*", x, "tonight", None), ("*", 99999, "never", None)):
