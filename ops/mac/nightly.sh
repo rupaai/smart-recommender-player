@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# The nightly job on the Mac (docs/DEPLOYMENT_PLAN.md, P7.1). launchd runs it at 03:30.
+# The training run on the Mac (docs/DEPLOYMENT_PLAN.md, P7.1). Nothing schedules it: the Train
+# button (ops/mac/train-now.sh, "Train CouchCinema" in ~/Applications) runs it when you choose.
 #
 #   nightly.sh [--skip-backup] [--skip-catalogue] [--catalogue] [--skip-train] [--skip-publish]
 #
-#   --catalogue       refresh the catalogue tonight even if it is not Sunday
+#   --catalogue       refresh the catalogue now even if the last refresh is less than a week old
 #   --skip-*          leave a step out (handy for trying one step on its own)
 #
-# Steps: 1 backup, 2 catalogue refresh (Sundays), 3 fresh snapshot, 4 train, 5 evaluate,
+# Steps: 1 backup, 2 catalogue refresh (weekly), 3 fresh snapshot, 4 train, 5 evaluate,
 # 6 publish, 7 report. Settings live in config.yaml (nightly:) and ~/.couchcinema/env.
 # One run at a time (lock), everything is logged to ~/Library/Logs/CouchCinema/<date>.log.
 set -uo pipefail
@@ -22,7 +23,9 @@ LOG="$LOG_DIR/$TODAY.log"
 mkdir -p "$LOG_DIR" "$BACKUP_DIR" "$BUNDLE_DIR" "$WORK"
 
 DO_BACKUP=1; DO_CATALOGUE=""; DO_TRAIN=1; DO_PUBLISH=1
-[ "$(date +%u)" = 7 ] && DO_CATALOGUE=1
+# Weekly: due when the last successful refresh is a week old, or never happened.
+last_catalogue="$(cat "$CC_HOME/last-catalogue" 2>/dev/null || echo never)"
+[ -n "$(find "$CC_HOME/last-catalogue" -mtime -7 2>/dev/null)" ] || DO_CATALOGUE=1
 for arg in "$@"; do
   case "$arg" in
     --skip-backup) DO_BACKUP="" ;;
@@ -35,7 +38,8 @@ for arg in "$@"; do
 done
 [ "$DO_CATALOGUE" = skip ] && DO_CATALOGUE=""
 
-exec >>"$LOG" 2>&1
+# From the Train button (a terminal) you watch it as it goes; either way it is all in the log.
+if [ -t 1 ]; then exec > >(tee -a "$LOG") 2>&1; else exec >>"$LOG" 2>&1; fi
 log() { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
 env_value() { [ -f "$CC_HOME/env" ] && grep -m1 "^$1=" "$CC_HOME/env" | cut -d= -f2- | tr -d "\"'" || true; }
@@ -121,6 +125,7 @@ fi
 if [ -n "$DO_CATALOGUE" ]; then
   log "2. catalogue refresh"
   if refresh_catalogue; then
+    date +%F >"$CC_HOME/last-catalogue"
     log "2. catalogue refresh done"
   else
     log "2. catalogue refresh FAILED; carrying on with training on what the server has"
@@ -128,7 +133,7 @@ if [ -n "$DO_CATALOGUE" ]; then
     RESULT="catalogue refresh failed"
   fi
 else
-  log "2. catalogue refresh: not tonight"
+  log "2. catalogue refresh: not due (last one $last_catalogue)"
 fi
 
 # ---- 3. fresh snapshot -------------------------------------------------------

@@ -1,16 +1,16 @@
-# The nightly job on your Mac
+# Training on your Mac (the Train button)
 
-Every night at 03:30 your Mac does the heavy work, then hands the result to the server (`mars`):
+Nothing runs on a schedule. When you want fresh picks, open **Train CouchCinema** (Applications in your home folder, or Spotlight; drag it to the Dock to keep it handy). A Terminal window opens, checks the server can be reached, then your Mac does the heavy work and hands the result to the server (`mars`), which the app uses straight away. It takes about 10 to 20 minutes, and you get a Mac notification when it's done.
 
 | Step | What happens | When |
 |---|---|---|
-| 1 Backup | Downloads a copy of the server's database (your ratings and watch history) to `~/CouchCinemaBackups/<date>.db`. Keeps 30 days. | Every night |
-| 2 Catalogue | Looks for new films and shows on TMDB, keeps only good ones (at least 200 votes and rating 6.0), sends them to the server. | Sundays |
-| 3 Snapshot | Downloads the database again so the model learns from the server's own ids. | Every night |
-| 4 Train | Retrains the "what to watch next" model and the vibe search. | Every night |
-| 5 Check | Scores the new models. If any score is more than 1% worse than what the server runs now, it is held back. | Every night |
+| 1 Backup | Downloads a copy of the server's database (your ratings and watch history) to `~/CouchCinemaBackups/<date>.db`. Keeps 30 days. | Every run |
+| 2 Catalogue | Looks for new films and shows on TMDB, keeps only good ones (at least 200 votes and rating 6.0), sends them to the server. | When the last refresh is a week old |
+| 3 Snapshot | Downloads the database again so the model learns from the server's own ids. | Every run |
+| 4 Train | Retrains the "what to watch next" model and the vibe search. | Every run |
+| 5 Check | Scores the new models. If any score is more than 1% worse than what the server runs now, it is held back. | Every run |
 | 6 Publish | Sends the new models to the server, which checks them and switches over with no downtime. | When step 5 passes |
-| 7 Report | Pings healthchecks.io (if you set it up). Phone alert (ntfy) if anything broke. | Every night |
+| 7 Report | Mac notification with the result; pings healthchecks.io (if you set it up) and a phone alert (ntfy) if anything broke. | Every run |
 
 Nothing here can delete your films or ratings: the server never removes titles, and the Mac never sends watch history.
 
@@ -23,25 +23,23 @@ cd ~/codes/smart_movie_streamer
 bash ops/mac/install.sh
 ```
 
-It asks for the server address, the admin token and the ntfy topic, checks it can reach the server, and starts the job. The exact steps, with where to find the token, are in `docs/BUILD_GUIDE.md` (Step 3).
+It asks for the server address, the admin token and the ntfy topic, checks it can reach the server, puts the Train button in `~/Applications`, and removes the old 03:30 schedule if it is there. The exact steps, with where to find the token, are in `docs/BUILD_GUIDE.md` (Step 3).
 
 ## Every day use
 
 | I want to... | Command (on the Mac) |
 |---|---|
-| See last night's log | `cat ~/Library/Logs/CouchCinema/$(date +%F).log` |
-| Run the whole night now | `bash ops/mac/nightly.sh` |
+| Train now (same as the button) | `bash ops/mac/train-now.sh` |
+| See today's log | `cat ~/Library/Logs/CouchCinema/$(date +%F).log` |
 | Run it without the weekly catalogue part | `bash ops/mac/nightly.sh --skip-catalogue` |
 | Only take a backup | `bash ops/mac/nightly.sh --skip-catalogue --skip-train` |
 | Train but don't publish | `bash ops/mac/nightly.sh --skip-catalogue --skip-publish` |
-| Run the catalogue refresh tonight | `bash ops/mac/nightly.sh --catalogue` |
-| Start the scheduled job right now | `launchctl kickstart -k gui/$(id -u)/com.couchcinema.nightly` |
-| Check the job is installed | `launchctl print gui/$(id -u)/com.couchcinema.nightly` |
+| Refresh the catalogue now, even if it is not due | `bash ops/mac/nightly.sh --catalogue` |
 | Which model does the server run? | `uv run python ops/mac/cc.py model-status` |
 | Go back to the previous model | `uv run python ops/mac/cc.py rollback-model` |
-| Remove the job | `bash ops/mac/install.sh --uninstall` |
+| Remove the button | `bash ops/mac/install.sh --uninstall` |
 
-If the Mac is asleep at 03:30, launchd runs the job when it wakes. To wake it for the job: `sudo pmset repeat wakeorpoweron MTWRFSU 03:25:00`.
+The finer-grained commands above run `nightly.sh` directly (the name is from when it ran at night). If you set up a healthchecks.io check for the old nightly job, pause or delete it there: with no schedule it would report missing pings.
 
 ## Settings
 
@@ -55,6 +53,7 @@ The check is a safety net, not a full test. It asks: given the films you liked s
 
 ## When something looks wrong
 
-- **Phone alert "nightly failed":** open the log (above); the last lines say which step stopped and why. The server keeps running the previous model.
+- **"Can't reach the server":** you are not at home and Tailscale is off. Nothing was changed; press the button again once you are connected.
+- **"Training stopped with an error" (or phone alert "nightly failed"):** the lines above it in Terminal, or the log, say which step stopped and why. The server keeps running the previous model.
 - **"model held back":** not an error. The new model scored worse than the one on the server, so nothing changed. The bundle is kept in `~/CouchCinemaBundles/`.
 - **"could not download the database":** the Mac couldn't reach the server. Check you are at home or on Tailscale.
