@@ -1814,11 +1814,19 @@ class DatabaseManager:
         return self.get_person_prefs(person_id) or {}
 
     def mark_watch_done_for_profiles(
-        self, session_id: int, profile_ids: List[int], user_rating: Optional[float] = None, notes: Optional[str] = None
+        self,
+        session_id: int,
+        profile_ids: List[int],
+        user_rating: Optional[float] = None,
+        notes: Optional[str] = None,
+        verdict: Optional[str] = None,
     ) -> Optional[int]:
         """Finishes the active watch session and logs it as seen by exactly these profiles
         (who's watching), instead of the legacy row that always landed on profile 1.
         Returns the media_item_id, or None if the session is unknown."""
+        from services import verdicts as vd
+
+        verdict = vd.validate_verdict(verdict)
         profile_ids = list(dict.fromkeys(profile_ids))
         if not profile_ids:
             raise ValueError("at least one profile is required")
@@ -1846,8 +1854,15 @@ class DatabaseManager:
                 return None
             media_item_id = row["media_item_id"]
         for pid in profile_ids:
-            if user_rating is not None:
-                self.rate_item(media_item_id, profile_id=pid, user_rating=user_rating, status="seen", notes=notes)
+            if user_rating is not None or verdict is not None:
+                self.rate_item(
+                    media_item_id,
+                    profile_id=pid,
+                    user_rating=user_rating,
+                    status="seen",
+                    notes=notes,
+                    verdict=verdict,
+                )
                 continue
             # Seen but not rated: never wipe a rating this person already gave.
             with self.get_connection() as conn:
