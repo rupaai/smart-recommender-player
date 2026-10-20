@@ -36,7 +36,7 @@ recommender:
   enable_tier2_profiling: true
 
   # Candidate funnel sizes (quality cut → diverse pool):
-  shortlist_size: 1500    # top-rated items kept after the Bayesian quality cut
+  shortlist_size: 500     # top-rated items kept after the Bayesian quality cut
   final_pool: 200         # diverse pool served for pagination
   # Taste formula: average = how much more you liked a genre than your own
   # average, averaged over a film's genres (utils/eval_taste_formula.py checks it);

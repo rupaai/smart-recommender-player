@@ -903,7 +903,7 @@ class RecommenderService:
         db_manager: DatabaseManager,
         api_key: Optional[str] = None,
         enable_tier2: bool = True,
-        shortlist_size: int = 1500,
+        shortlist_size: int = 500,
         final_pool: int = 200,
         vibe_index: Optional[Any] = None,
         taste_runtime: Optional[Any] = None,
