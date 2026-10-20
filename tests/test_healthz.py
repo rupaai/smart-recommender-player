@@ -6,6 +6,7 @@ Throwaway SQLite DB and models dir in a tempdir.
     uv run python tests/test_healthz.py
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -96,6 +97,22 @@ def test_healthz(tmp):
         body = r.json()
         check("503 when SELECT 1 fails", r.status_code == 503, r.status_code)
         check("503 body is ok false with error", body.get("ok") is False and "unable to open" in body.get("error", ""), body)
+    finally:
+        server.db.get_connection = real_get_connection
+
+    # A database that opens and reads fine but cannot be written must fail too.
+    @contextlib.contextmanager
+    def read_only_connection():
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    server.db.get_connection = read_only_connection
+    try:
+        r = client.get("/healthz")
+        check("503 when the database is read-only", r.status_code == 503 and r.json().get("ok") is False, r.text)
     finally:
         server.db.get_connection = real_get_connection
 

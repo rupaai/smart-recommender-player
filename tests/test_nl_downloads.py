@@ -100,15 +100,19 @@ def test_pure():
     store[21] = {"status": "error", "error": "x"}
     store[22] = {"status": "connecting"}
     store[23] = {"status": "organizing"}
-    out = nd.build_list(store, nd.DownloadRequests(), lambda i: None, lambda i: True)
+    pure_tmp = tempfile.mkdtemp(prefix="nl_dl_pure_")
+    from database import DatabaseManager
+    pure_db = DatabaseManager(os.path.join(pure_tmp, "p.db"))
+    out = nd.build_list(store, nd.DownloadRequests(pure_db), lambda i: None, lambda i: True)
     order = [r["state"] for r in out["downloads"]]
     check("downloading, importing, queued, failed, then ready", order[:4] == ["downloading", "importing", "queued", "failed"] and set(order[4:]) == {"ready"}, order)
     check("only the newest few finished ones are listed", order.count("ready") == nd.MAX_READY_SHOWN)
     check("counts: active = queued + downloading + importing", out["counts"]["active"] == 3 and out["counts"]["failed"] == 1, out["counts"])
-    reqs = nd.DownloadRequests()
+    reqs = nd.DownloadRequests(pure_db)
     for i in range(nd.MAX_REQUESTS + 5):
         reqs.remember(i, "m", "t", "movie")
     check("the remembered links are bounded", reqs.get(0) is None and reqs.get(nd.MAX_REQUESTS + 4) is not None)
+    shutil.rmtree(pure_tmp, ignore_errors=True)
 
 
 def run(tmp):

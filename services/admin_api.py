@@ -1,4 +1,4 @@
-"""Admin endpoints the Mac's nightly job talks to (docs/DEPLOYMENT_PLAN.md, P6.1 and P6.2).
+"""Admin endpoints the Mac's nightly job talks to (P6.1 and P6.2 of the old deployment plan).
 
 Every route needs `Authorization: Bearer $ADMIN_TOKEN`. With ADMIN_TOKEN unset the whole
 router answers 404, as if it did not exist.

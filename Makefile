@@ -1,6 +1,6 @@
-.PHONY: check lint shellcheck test test-deploy
+.PHONY: check lint shellcheck test test-mac
 
-check: lint shellcheck test test-deploy
+check: lint shellcheck test test-mac
 
 lint:
 	uv run ruff check .
@@ -15,12 +15,10 @@ test:
 	for f in tests/test_*.py; do echo "== $$f"; CONFIG_PATH=$$T/config.yaml uv run python $$f > $$T/out.log 2>&1 || { cat $$T/out.log; echo "FAILED: $$f"; exit 1; }; done; \
 	echo "all test files passed"
 
-# Server scripts (deploy/, tests/deploy/). CI's runner has shellcheck; locally it is optional.
+# The Mac scripts (ops/mac, tests/mac). CI's runner has shellcheck; locally it is optional.
 shellcheck:
-	@if command -v shellcheck >/dev/null 2>&1; then find deploy tests/deploy ops/mac tests/mac -name '*.sh' | xargs shellcheck -x -P SCRIPTDIR -e SC2015; else echo "shellcheck not installed; skipped (CI runs it)"; fi
+	@if command -v shellcheck >/dev/null 2>&1; then find ops/mac tests/mac -name '*.sh' | xargs shellcheck -x -P SCRIPTDIR -e SC2015; else echo "shellcheck not installed; skipped (CI runs it)"; fi
 
-# The deploy scripts run against stand-ins for useradd, docker, systemd and friends, in a
-# temp dir; nothing touches the machine (tests/deploy/harness.sh).
-test-deploy:
+# The Mac scripts run against stand-ins for uv, launchctl and friends, in a temp dir; nothing touches the machine.
+test-mac:
 	@set -e; for f in tests/mac/test_*.sh; do echo "== $$f"; bash $$f; done
-	@set -e; for f in tests/deploy/test_*.sh; do echo "== $$f"; bash $$f; done

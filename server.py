@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import socket
 import time
 import uuid
@@ -20,7 +19,6 @@ import uvicorn
 import yaml
 from dotenv import load_dotenv
 from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import iterate_in_threadpool, run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,8 +26,6 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from database import DatabaseManager
-from enricher import TMDBEnricher
-from scanner import LocalFileScanner
 from services.device_profiles import profile_for
 from services.nl_cast import (
     CastConfig,
@@ -152,7 +148,14 @@ def reload_models() -> None:
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
 torrent_downloader = TorrentDownloader(config, db_manager=db)
-download_requests = nl_downloads.DownloadRequests()   # M10a: what Retry needs; the magnet link never leaves the server
+download_requests = nl_downloads.DownloadRequests(db)   # what Retry and a restart need; the magnet link never leaves the server
+
+
+async def run_download(download_id: str, movie_id: int, magnet: str, title: str, media_type: str) -> None:
+    """Runs one download. Only when it ends (any way but the app stopping) is it marked finished, so a
+    restart carries on with the unfinished ones (resume_downloads)."""
+    await torrent_downloader.download(magnet, download_id, movie_id, title, media_type=media_type)
+    await asyncio.to_thread(download_requests.finished, download_id)
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
@@ -201,18 +204,28 @@ nl_extras = NLExtras(db, nl_browse, _nl_tmdb, lambda: recommender_service.vibe_i
 
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
-# Enable CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # Mac -> server admin routes (export, catalogue patch, model bundles); 404 unless ADMIN_TOKEN is set.
 app.include_router(build_admin_router(lambda: db.db_path, reload_models))
+
+
+@app.on_event("startup")
+async def resume_downloads() -> None:
+    """Starts again the downloads that were running when the app stopped, and removes staging folders
+    that no stored download owns."""
+    try:
+        pending = await asyncio.to_thread(download_requests.unfinished)
+        owned = await asyncio.to_thread(download_requests.download_ids)
+        await asyncio.to_thread(torrent_downloader.remove_orphan_staging, owned)
+        for r in pending:
+            did = r["download_id"]
+            downloads_store[did] = {"download_id": did, "movie_id": r["movie_id"], "status": "connecting",
+                                    "progress": 0.0, "error": None, "name": r["title"],
+                                    "media_type": r["media_type"], "created_at": time.time()}
+            asyncio.create_task(run_download(did, r["movie_id"], r["magnet"], r["title"], r["media_type"]))
+        if pending:
+            print(f"[Downloader] Resuming {len(pending)} download(s) from before the restart.", flush=True)
+    except Exception as e:
+        print(f"[Downloader] Could not resume downloads ({e}); server continues.", flush=True)
 
 
 @app.on_event("startup")
@@ -264,10 +277,16 @@ def get_local_ip() -> str:
     return ip
 
 
+def jellyfin_link_base(request: Request) -> str:
+    """Jellyfin's address as the browser sees it: the host the page was loaded from, port 8096.
+    (The app's own address is the container's inside Docker, so it is no use in a link.)"""
+    return f"http://{request.url.hostname or 'localhost'}:8096"
+
+
 def is_jellyfin_online() -> bool:
-    """Checks if Jellyfin local server is responding on port 8096."""
+    """Checks if Jellyfin is responding, at JELLYFIN_URL (the app cannot reach it as localhost in Docker)."""
     try:
-        resp = requests.get("http://localhost:8096/web/", timeout=1.5)
+        resp = requests.get(f"{os.getenv('JELLYFIN_URL', 'http://localhost:8096').rstrip('/')}/web/", timeout=1.5)
         return resp.status_code == 200
     except Exception:
         return False
@@ -386,21 +405,11 @@ class TorrentCancelRequest(BaseModel):
     movie_id: Optional[int] = None  # legacy clients; only safe when exactly one copy is active
 
 
-class MediaCleanupRequest(BaseModel):
-    paths: List[str]
-    item_ids: Optional[List[int]] = None
-
-
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def serve_index(request: Request) -> Any:
     """Serves the mobile-first PWA interface."""
-    local_ip = get_local_ip()
-    return templates.TemplateResponse(
-        request=request,
-        name="index.html",
-        context={"local_ip": local_ip},
-    )
+    return templates.TemplateResponse(request=request, name="index.html", context={})
 
 
 def _model_bundle_id() -> Optional[str]:
@@ -415,10 +424,15 @@ def _model_bundle_id() -> Optional[str]:
 
 @app.get("/healthz")
 async def healthz() -> Any:
-    """Liveness/readiness: git SHA, model bundle, DB schema version. 503 if the DB cannot be read."""
+    """Liveness/readiness: git SHA, model bundle, DB schema version. 503 if the DB cannot be read or written."""
     try:
         with db.get_connection() as conn:
-            conn.execute("SELECT 1").fetchone()
+            # Rewriting the schema version in a transaction we roll back proves the file is writable.
+            # A read-only database (wrong owner after a move) passes a plain read but fails here.
+            conn.execute("BEGIN IMMEDIATE")
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            conn.execute(f"PRAGMA user_version = {int(version)}")
+            conn.execute("ROLLBACK")
         schema = db.get_schema_version()
     except Exception as e:  # noqa: BLE001 - any DB failure means not ready
         return JSONResponse(status_code=503, content={"ok": False, "error": str(e)})
@@ -431,15 +445,13 @@ async def healthz() -> Any:
 
 
 @app.get("/api/status")
-async def get_status() -> Dict[str, Any]:
+async def get_status(request: Request) -> Dict[str, Any]:
     """Returns system status including Jellyfin online state and catalogue statistics."""
-    local_ip = get_local_ip()
     jf_online = is_jellyfin_online()
     stats = db.get_stats()
     return {
         "jellyfin_online": jf_online,
-        "jellyfin_url": f"http://{local_ip}:8096",
-        "local_ip": local_ip,
+        "jellyfin_url": jellyfin_link_base(request),
         "stats": stats,
     }
 
@@ -455,54 +467,6 @@ async def repair_jellyfin_libraries() -> Dict[str, Any]:
     """Attaches missing paths to Movies/TV Shows libraries, forces realtime
     monitoring, recreates EMPTY libraries as a fallback, then refreshes."""
     return await asyncio.to_thread(jellyfin_service.repair_libraries)
-
-
-@app.get("/api/jellyfin/repair")
-async def repair_jellyfin_libraries_get(apply: int = 0) -> Dict[str, Any]:
-    """GET form of the repair endpoint (for curl/fetch-tooling convenience).
-    Pass ?apply=1 to actually mutate; without it this only reports."""
-    if not apply:
-        diag = await asyncio.to_thread(jellyfin_service.diagnostics)
-        return {
-            "mode": "dry-run",
-            "note": "call /api/jellyfin/repair (POST) or ?apply=1 to fix libraries",
-            "current_state": diag,
-        }
-    return await asyncio.to_thread(jellyfin_service.repair_libraries)
-
-
-@app.get("/api/media/files")
-async def list_media_files() -> Dict[str, Any]:
-    """Read-only listing of every video file under the configured media roots.
-
-    Diagnostic helper (e.g. verifying the organizer's folder layout):
-    returns per-root absolute file paths with sizes and mtimes.
-    """
-    VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".webm"}
-
-    def _scan() -> Dict[str, Any]:
-        out: Dict[str, Any] = {"roots": {}}
-        for root_dir in config.get("media_folders", []) or []:
-            files: List[Dict[str, Any]] = []
-            if os.path.isdir(root_dir):
-                for dirpath, _dirnames, filenames in os.walk(root_dir):
-                    for fname in filenames:
-                        if os.path.splitext(fname)[1].lower() in VIDEO_EXTS:
-                            fpath = os.path.join(dirpath, fname)
-                            try:
-                                st = os.stat(fpath)
-                                files.append({
-                                    "path": fpath,
-                                    "size": st.st_size,
-                                    "mtime": st.st_mtime,
-                                })
-                            except OSError:
-                                continue
-            files.sort(key=lambda f: f["path"])
-            out["roots"][root_dir] = {"exists": os.path.isdir(root_dir), "files": files}
-        return out
-
-    return await asyncio.to_thread(_scan)
 
 
 @app.get("/api/moods")
@@ -791,7 +755,7 @@ async def get_current_watch() -> Dict[str, Any]:
 
 
 @app.get("/api/stream/{item_id}")
-async def stream_media(item_id: int) -> Dict[str, Any]:
+async def stream_media(item_id: int, request: Request) -> Dict[str, Any]:
     """Returns the Jellyfin playback URL for the selected movie or episode."""
     item = db.get_item_by_id(item_id)
     if not item or not item.get("sources"):
@@ -800,9 +764,8 @@ async def stream_media(item_id: int) -> Dict[str, Any]:
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Video file not found on disk.")
 
-    local_ip = get_local_ip()
     file_name = os.path.basename(file_path)
-    jellyfin_url = f"http://{local_ip}:8096/web/index.html#!/details?filename={file_name}"
+    jellyfin_url = f"{jellyfin_link_base(request)}/web/index.html#!/details?filename={file_name}"
     return {"jellyfin_url": jellyfin_url}
 
 
@@ -1161,6 +1124,24 @@ async def nl_subtitle_download(
     return {"success": True}
 
 
+# A Chromecast receiver page on another origin reads the cast stream. Only requests that carry a valid cast
+# token get CORS headers (no cookies are involved), so no other page can read the proxy.
+_CAST_CORS = {"Access-Control-Allow-Origin": "*"}
+
+
+@app.options("/nl/jf/{path:path}")
+async def nl_jellyfin_proxy_preflight(path: str, request: Request) -> Response:
+    clean = safe_proxy_path(path)
+    tokens = token_values(request.url.query)
+    if clean is None or len(tokens) != 1 or not nl_cast_tokens.check(tokens[0], "GET", clean)[0]:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return Response(status_code=204, headers={
+        **_CAST_CORS,
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+    })
+
+
 @app.get("/nl/jf/{path:path}")
 async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
     """Streams Jellyfin video, HLS and artwork (Items/<id>/Images/...) through our app. GET only,
@@ -1214,10 +1195,12 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
             content=text,
             status_code=upstream.status_code,
             media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "no-store", **(_CAST_CORS if cast_token else {})},
         )
 
     out_headers = {k: v for k, v in upstream.headers.items() if k.lower() in _PROXY_RESPONSE_HEADERS}
+    if cast_token:
+        out_headers.update(_CAST_CORS)
     if is_image_path(clean) and upstream.status_code == 200:
         out_headers["Cache-Control"] = "private, max-age=86400"
 
@@ -1832,9 +1815,8 @@ async def nl_downloads_retry(download_id: str) -> Dict[str, Any]:
         "created_at": time.time(),
     }
     torrent_downloader.cancelled_tasks.discard(key)
-    asyncio.create_task(
-        torrent_downloader.download(req["magnet"], str(key), movie_id, req["title"], media_type=req["media_type"])
-    )
+    download_requests.remember(key, req["magnet"], req["title"], req["media_type"], movie_id=movie_id)
+    asyncio.create_task(run_download(str(key), movie_id, req["magnet"], req["title"], req["media_type"]))
     return {"success": True, "id": key}
 
 
@@ -2670,15 +2652,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
             "error": None,
             "created_at": now,
         }
-        asyncio.create_task(
-            torrent_downloader.download(
-                req.magnet_link,
-                download_id,
-                movie_id,
-                clean_movie_title,
-                media_type=req.media_type,
-            )
-        )
+        asyncio.create_task(run_download(download_id, movie_id, req.magnet_link, clean_movie_title, req.media_type))
         return {
             "success": True,
             "download_id": download_id,
@@ -2727,134 +2701,6 @@ async def get_torrent_status(download_id: str) -> Dict[str, Any]:
         legacy_movie_id = int(download_id) if numeric_id else None
         status_data = {"status": "idle", "progress": 0.0, "movie_id": legacy_movie_id}
     return status_data
-
-
-@app.post("/api/media/cleanup")
-async def cleanup_media(req: MediaCleanupRequest) -> Dict[str, Any]:
-    """Deletes the given media files/trees (guarded), removes their DB rows,
-    prunes orphaned stub items, and triggers a Jellyfin refresh.
-
-    Guardrails: every path must be absolute AND inside a configured media
-    root (media_folders). Refuses anything else — never touches other paths.
-    """
-    roots = {os.path.abspath(r) for r in (config.get("media_folders", []) or [])}
-
-    def _guarded(path: str) -> Optional[str]:
-        ap = os.path.abspath(path)
-        if any(ap == r or ap.startswith(r + os.sep) for r in roots):
-            return ap
-        return None
-
-    report: Dict[str, Any] = {"deleted_paths": [], "skipped_paths": [], "removed_sources": 0,
-                              "pruned_items": [], "jellyfin_refresh": False}
-
-    def _do_cleanup() -> Dict[str, Any]:
-        for raw_path in req.paths:
-            ap = _guarded(raw_path)
-            if ap is None:
-                report["skipped_paths"].append(f"outside media roots: {raw_path}")
-                continue
-            if os.path.isdir(ap):
-                shutil.rmtree(ap, ignore_errors=True)
-            elif os.path.isfile(ap):
-                os.remove(ap)
-            report["deleted_paths"].append(ap)
-
-        # DB rows: sources matching any deleted file (exact match per file),
-        # then items that no longer have any source / history / tmdb_id.
-        file_paths = [p for p in report["deleted_paths"] if not os.path.exists(p)]
-        report["removed_sources"] = db.remove_source_files(file_paths)
-        if req.item_ids:
-            with db.get_connection() as conn:
-                for item_id in req.item_ids:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "SELECT COUNT(*) AS n FROM watch_history WHERE media_item_id = ?;",
-                        (item_id,),
-                    )
-                    if cur.fetchone()["n"] == 0:
-                        cur.execute("DELETE FROM media_items WHERE id = ?;", (item_id,))
-                        report["pruned_items"].append(str(item_id))
-                conn.commit()
-        report["pruned_items"] += db.prune_orphan_stub_items()
-
-        # Refresh Jellyfin so deleted content disappears promptly.
-        try:
-            resp = jellyfin_service.session.post(
-                f"{jellyfin_service.base_url}/Library/Refresh", timeout=10
-            )
-            report["jellyfin_refresh"] = resp.status_code in (200, 204)
-        except Exception as e:
-            report["jellyfin_refresh_error"] = str(e)
-        return report
-
-    return await asyncio.to_thread(_do_cleanup)
-
-
-@app.get("/api/db/sources")
-async def list_db_sources() -> Dict[str, Any]:
-    """Read-only dump of media_sources rows + their parent item titles.
-
-    Diagnostic helper for spotting stale source rows pointing at deleted files.
-    """
-    def _dump() -> Dict[str, Any]:
-        with db.get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT s.id, s.file_path, s.source_type, s.file_size,
-                       s.season_number, s.episode_number,
-                       s.media_item_id, i.title, i.media_type, i.tmdb_id
-                FROM media_sources s
-                LEFT JOIN media_items i ON i.id = s.media_item_id
-                ORDER BY s.id;
-                """
-            )
-            rows = [dict(r) for r in cur.fetchall()]
-        for r in rows:
-            r["file_exists"] = os.path.isfile(r["file_path"])
-        return {"count": len(rows), "rows": rows}
-
-    return await asyncio.to_thread(_dump)
-
-
-@app.post("/api/db/sources/prune")
-async def prune_stale_db_sources() -> Dict[str, Any]:
-    """Removes media_sources rows whose file_path no longer exists on disk,
-    then prunes orphaned stub items. Never deletes files."""
-    def _prune() -> Dict[str, Any]:
-        removed: List[str] = []
-        with db.get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT id, file_path FROM media_sources;")
-            for row in cur.fetchall():
-                if not os.path.isfile(row["file_path"]):
-                    removed.append(row["file_path"])
-            if removed:
-                db.remove_source_files(removed)
-        pruned = db.prune_orphan_stub_items()
-        return {"removed_source_rows": removed, "pruned_items": pruned}
-
-    return await asyncio.to_thread(_prune)
-
-
-@app.post("/api/sync")
-async def sync_catalogue() -> Dict[str, Any]:
-    """Scans media folders and enriches new items with TMDB metadata."""
-    folders = config.get("media_folders", ["./sample_library"])
-    extensions = config.get("supported_extensions", None)
-    scanner = LocalFileScanner(folders=folders, db_manager=db, supported_extensions=extensions)
-    scan_summary = scanner.scan()
-
-    enr_summary = {"total": 0, "enriched": 0, "failed": 0}
-    if api_key:
-        enricher = TMDBEnricher(api_key=api_key, db_manager=db, region=config.get("region", "GB"))
-        enr_summary = enricher.enrich()
-
-    return {
-        "scan": scan_summary,
-        "enrich": enr_summary,
-    }
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:

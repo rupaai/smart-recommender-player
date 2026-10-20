@@ -3,7 +3,6 @@ name: CI
 on:
   pull_request:
   push:
-    # The Northern Lights branch also gets images so Deploy can put it on mars for testing.
     branches: [main, northern-lights-player-app]
 
 permissions:
@@ -53,17 +52,13 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # ARM too, so the image runs natively on Apple Silicon Macs (Homelab milestone 1).
-      # Pull requests only prove the Intel build, to keep them fast.
-      - if: github.event_name == 'push'
-        uses: docker/setup-qemu-action@v4
       # The mirror can also refuse the base image ("toomanyrequests"); then build from Docker Hub.
       - id: build_ecr
         continue-on-error: true
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          platforms: linux/amd64
           push: ${{ github.event_name == 'push' }}
           build-args: |
             GIT_SHA=${{ github.sha }}
@@ -77,7 +72,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: ${{ github.event_name == 'push' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          platforms: linux/amd64
           push: ${{ github.event_name == 'push' }}
           build-args: |
             GIT_SHA=${{ github.sha }}

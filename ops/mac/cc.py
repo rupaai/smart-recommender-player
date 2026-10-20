@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mac-side client for the server's admin API (docs/DEPLOYMENT_PLAN.md, P6.3).
+"""Mac-side client for the server's admin API (P6.3 of the old deployment plan).
 
 Standard library only, so it runs with plain `python3`. Reads ~/.couchcinema/env
 (KEY=value lines): CC_SERVER (e.g. http://192.168.1.183:8000) and ADMIN_TOKEN.

@@ -1,4 +1,4 @@
-"""Installs model bundles sent by the Mac (docs/DEPLOYMENT_PLAN.md, P6.2).
+"""Installs model bundles sent by the Mac (P6.2 of the old deployment plan).
 
 A bundle is a .tar.gz with `manifest.json` at its root plus `tiger/`, `vibe/` and an
 optional `db_patch.jsonl`. Layout on the server (next to MODELS_DIR, which points at the

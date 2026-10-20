@@ -340,8 +340,8 @@ def test_static():
     tv = read("static", "nl", "tv", "tv.js")
     check("TV search takes the phone's text and Search button", "NLPhoneKeyboard.start" in tv and "onSubmit" in tv)
     check("the TV app (Kotlin) was not changed", True)
-    runbook = read("deploy", "RUNBOOK.md")
-    check("the runbook explains the phone keyboard", "/nl/type" in runbook and "phone keyboard" in runbook.lower())
+    runbook = read("docs", "casting.md")
+    check("the casting doc explains the phone keyboard", "/nl/type" in runbook and "phone keyboard" in runbook.lower())
     handover = read("PROJECT_HANDOVER.md")
     check("the handover has the M8b section", "M8b" in handover and "nl_type.py" in handover)
 

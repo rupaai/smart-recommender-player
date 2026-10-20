@@ -912,6 +912,8 @@ class TorrentDownloader:
     - Post-completion Jellyfin library refresh.
     """
 
+    staging_prefix = ""   # set from HOMELAB_ENV in __init__
+
     def __init__(self, config: Dict[str, Any], db_manager=None):
         import libtorrent as lt
 
@@ -943,12 +945,20 @@ class TorrentDownloader:
         else:
             self.movie_target = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
         self.tv_target = os.path.abspath(lib_cfg.get("tv_dir") or self.movie_target)
-        os.makedirs(self.movie_target, exist_ok=True)
-        os.makedirs(self.tv_target, exist_ok=True)
 
-        # Staging area for in-progress downloads (separate from targets)
+        # Staging area for in-progress downloads (separate from targets). Folder names carry the Homelab
+        # environment (dev, prod) so two environments sharing one media folder never touch each other's.
         self.download_dir = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
-        os.makedirs(self.download_dir, exist_ok=True)
+        env = os.getenv("HOMELAB_ENV", "").strip()
+        self.staging_prefix = f"{re.sub(r'[^A-Za-z0-9_.-]', '', env)}-" if env else ""
+        # The media folder can be missing (Homelab gives dev none): the app still runs, without downloads.
+        self.media_available = True
+        try:
+            for folder in (self.movie_target, self.tv_target, self.download_dir):
+                os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            self.media_available = False
+            print(f"[Downloader] Media folder not available ({e}); downloads and the library are off.", flush=True)
 
         # Jellyfin library manager (create / refresh / verify)
         self.jellyfin = JellyfinService(config)
@@ -1017,9 +1027,39 @@ class TorrentDownloader:
 
     def _torrent_staging_dir(self, download_id: str) -> str:
         """Per-download staging directory; separate releases of one title never share files."""
-        path = os.path.join(self.download_dir, f"download_{download_id}")
+        path = self._staging_path(download_id)
         os.makedirs(path, exist_ok=True)
         return path
+
+    def _staging_path(self, download_id: str) -> str:
+        return os.path.join(self.download_dir, f"{self.staging_prefix}download_{download_id}")
+
+    def remove_orphan_staging(self, owned_ids: Set[str]) -> List[str]:
+        """Deletes this environment's staging folders that no stored download owns (left by a crash or a
+        restart that lost the download). Other environments' folders and the .ltresume files stay."""
+        removed: List[str] = []
+        env = os.getenv("HOMELAB_ENV", "").strip()
+        own = re.compile(rf"^{re.escape(self.staging_prefix)}download_([\w-]+)$")
+        # Older names are prod's (or an unset environment's) leftovers: no environment in the name, and
+        # before downloads had their own id, id_<n>. No stored download can own those.
+        old = [re.compile(r"^id_\d+$")] if env in ("", "prod") else []
+        if env == "prod":
+            old.append(re.compile(r"^download_([\w-]+)$"))
+        try:
+            names = os.listdir(self.download_dir)
+        except OSError:
+            return removed
+        for name in names:
+            path = os.path.join(self.download_dir, name)
+            m = own.match(name) or next((p.match(name) for p in old if p.match(name)), None)
+            if not m or not os.path.isdir(path):
+                continue
+            if m.groups() and m.group(1) in owned_ids:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            removed.append(name)
+            print(f"[Downloader] Removed orphan staging folder: {path}", flush=True)
+        return removed
 
     def _resume_file_for(self, info_hash: str) -> str:
         """Path to the persisted resume file for a torrent."""
@@ -1317,6 +1357,14 @@ class TorrentDownloader:
                 self._clear_resume_file(info_hash)
             return
 
+        if not self.media_available:
+            downloads_store[download_id] = {
+                "download_id": download_id,
+                "movie_id": movie_id,
+                "status": "error",
+                "error": "This server has no media folder, so it cannot download.",
+            }
+            return
         info_hash = ""
         try:
             if magnet_link.startswith("http"):

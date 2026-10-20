@@ -285,7 +285,14 @@ def run(tmp):
     check("the answer carries no key", SECRET not in r.text and SECRET not in str(dict(r.headers)))
     fake.stream_response = upstream()
     r = client.get(f"/nl/jf/Videos/jfA/stream?t={token}", headers={"Origin": "http://192.168.1.50:8000"})
-    check("CORS lets a receiver on another origin read it", bool(r.headers.get("access-control-allow-origin")), dict(r.headers))
+    check("CORS lets a receiver on another origin read a tokened stream", bool(r.headers.get("access-control-allow-origin")), dict(r.headers))
+    r = client.options(f"/nl/jf/Videos/jfA/stream?t={token}", headers={"Origin": "http://192.168.1.50:8000", "Access-Control-Request-Method": "GET"})
+    check("and its preflight passes", r.status_code == 204 and r.headers.get("access-control-allow-origin") == "*", (r.status_code, dict(r.headers)))
+    r = client.options("/nl/jf/Videos/jfA/stream", headers={"Origin": "http://evil.example", "Access-Control-Request-Method": "GET"})
+    check("a preflight without a token is refused", r.status_code == 404 and "access-control-allow-origin" not in r.headers, (r.status_code, dict(r.headers)))
+    fake.stream_response = upstream()
+    r = client.get("/nl/jf/Videos/jfA/stream", headers={"Origin": "http://evil.example"})
+    check("no CORS header without a token", "access-control-allow-origin" not in r.headers, dict(r.headers))
     fake.stream_response = upstream()
     r = client.get("/nl/jf/Videos/jfA/stream")
     check("without a token the proxy behaves as before (M0)", r.status_code == 200, r.status_code)
@@ -388,8 +395,8 @@ def test_static():
     check("the receiver calls none of our APIs and reads no cookies", "fetch(" not in receiver and "XMLHttpRequest" not in receiver
           and "document.cookie" not in receiver and "/api/" not in receiver)
     check("the receiver draws title, episode, backdrop and progress", all(x in receiver for x in ("nlr-title", "nlr-episode", "nlr-backdrop", "nlr-fill")))
-    runbook = read("deploy", "RUNBOOK.md")
-    check("the runbook explains HTTPS, the receiver app id, cast_base_url and NL_CAST_SECRET",
+    runbook = read("docs", "casting.md")
+    check("the casting doc explains HTTPS, the receiver app id, cast_base_url and NL_CAST_SECRET",
           all(x in runbook for x in ("cast_base_url", "NL_CAST_SECRET", "tailscale serve", "$5")))
     handover = read("PROJECT_HANDOVER.md")
     check("the handover has the casting section", "M8 Casting" in handover and "nl_cast.py" in handover)

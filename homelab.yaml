@@ -22,8 +22,8 @@ data:
 # The device's media folder (config.yaml on the device: folders: {media: ...}).
 folders:
   - {name: media, path: /media}
-# Torrent peers (prod only).
-ports: ["6881-6891:6881-6891", "6881-6891:6881-6891/udp"]
+# Prod only: 8000 is the address the TV app and the Mac already use; the rest are torrent peers.
+ports: ["8000:8000", "6881-6891:6881-6891", "6881-6891:6881-6891/udp"]
 
 env:
   CONFIG_PATH: /app/homelab/config.yaml
@@ -32,13 +32,14 @@ env:
   JELLYFIN_URL: http://jellyfin:8096
   PROWLARR_URL: http://prowlarr:9696
 
-secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY]
+# ADMIN_TOKEN is what the Mac sends (ops/mac); NL_CAST_SECRET signs cast links so they survive a restart.
+secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY, ADMIN_TOKEN, NL_CAST_SECRET]
 memory: 2g
 
 services:
   - name: jellyfin
     image: jellyfin/jellyfin:10.11.11
-    data: [{name: jellyfin-config, path: /config}]
+    data: [{name: jellyfin-config, path: /config}, {name: jellyfin-cache, path: /cache}]
     folders: [{name: media, path: /media}]
     ports: ["8096:8096"]
     gpu: true               # Intel Quick Sync
