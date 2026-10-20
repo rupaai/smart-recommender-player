@@ -62,6 +62,8 @@ hasnt "build_full_catalogue" "no catalogue refresh when skipped"
 has "bootstrap_sequences" "TIGER sequences step ran"
 has "train_tiger_predictor" "TIGER training step ran"
 has "build_vibe_index.py --out .*/work/vibe" "builds the vibe index into the work folder"
+has "uv run --with torch --with sentence-transformers --with onnx --with onnxscript python training/build_vibe_index.py" \
+  "installs the vibe-index training dependencies"
 has "build-bundle .*--gate passed" "builds a passing bundle"
 has "push-bundle" "publishes it"
 has "curl .*hc.example/ping" "pings healthchecks"
