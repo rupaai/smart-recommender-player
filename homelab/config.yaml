@@ -121,6 +121,15 @@ northern_lights:
 #    uptime_kuma: http://mars:3001
 #    dozzle: http://mars:8888
 
+# Watched cleanup (services/media_cleanup.py): once a day, delete a movie or episode that every person in
+# northern_lights.people has watched, when the last of them watched it more than days_after_watched days ago.
+# Favorites (the heart in Jellyfin, on the title or its show) are kept. dry_run only lists what would go
+# (admin page and log); set it to false to delete.
+media_cleanup:
+  enabled: true
+  days_after_watched: 7
+  dry_run: true
+
 # libtorrent configuration
 torrent:
   # Port range for incoming connections
@@ -130,8 +139,8 @@ torrent:
   # Where to save downloaded files
   download_dir: /media/downloads
   
-  # Disk guard (services/disk_guard.py): the server's media is capped at 100 GB for now.
-  max_media_gb: 100
+  # Disk guard (services/disk_guard.py): the server's media is capped at 500 GB for now.
+  max_media_gb: 500
   min_free_gb: 20
 
   # Additional libtorrent settings
