@@ -149,7 +149,8 @@ if [ -n "$DO_TRAIN" ]; then
   DATABASE_PATH="$WORK/snapshot.db" SKIP_DEPLOY=1 bash training/retrain_tiger.sh || fail "train" "TIGER training or its deployment gates failed"
   log "4. train: vibe index"
   skip_export=(); [ -f "$WORK/vibe/query_encoder.onnx" ] && skip_export=(--skip-export)
-  DATABASE_PATH="$WORK/snapshot.db" uv run python training/build_vibe_index.py --out "$WORK/vibe" ${skip_export[@]+"${skip_export[@]}"} \
+  DATABASE_PATH="$WORK/snapshot.db" uv run --with torch --with sentence-transformers --with onnx --with onnxscript \
+    python training/build_vibe_index.py --out "$WORK/vibe" ${skip_export[@]+"${skip_export[@]}"} \
     || fail "train" "building the vibe index failed"
 
   # ---- 5. evaluate ---------------------------------------------------------------
