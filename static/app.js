@@ -1934,6 +1934,10 @@ async function submitFeedback() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: state.activeSession.session_id,
+        // The legacy "I'm …" switch is this app's viewer selection. Send it
+        // explicitly so watch completion does not use a stale NL cookie or
+        // silently fall back to profile 1.
+        profile_ids: [state.activeProfileId],
         user_rating: state.selectedRating,
         notes: notes || null
       })
