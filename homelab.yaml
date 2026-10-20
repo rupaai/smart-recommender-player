@@ -1,6 +1,6 @@
-# How Homelab runs this app. See https://github.com/rupaai/homelab (docs/milestone1.md).
-id: movies
-name: Movie Night
+# How Homelab runs this app. See https://github.com/rupaai/homelab (docs/services.md).
+id: northern-lights
+name: Northern Lights
 icon: 🎬
 
 # CI pushes ghcr.io/rupaai/smart-recommender-player:sha-<commit> for every push to main.
@@ -12,17 +12,40 @@ build:
 
 port: 8000
 health: /healthz
-promotion: auto-dev        # new builds go to movies-dev on their own; prod waits for Promote
+promotion: auto-dev        # new builds go to dev on their own; prod waits for Promote
 environments: [dev, prod]
 
-# Each environment gets its own copy of this folder. Prod's is copied before every promote.
+# Each environment gets its own copy of these folders. Prod's are copied before every promote.
 data:
-  - name: data
-    path: /data
+  - {name: data, path: /data}
+  - {name: models, path: /models}
+# The device's media folder (config.yaml on the device: folders: {media: ...}).
+folders:
+  - {name: media, path: /media}
+# Torrent peers (prod only).
+ports: ["6881-6891:6881-6891", "6881-6891:6881-6891/udp"]
 
 env:
   CONFIG_PATH: /app/homelab/config.yaml
-  MODELS_DIR: /data/models/current
+  MODELS_DIR: /models/current
+  DATABASE_PATH: /data/catalogue_full.db
+  JELLYFIN_URL: http://jellyfin:8096
+  PROWLARR_URL: http://prowlarr:9696
 
-secrets: [TMDB_API_KEY]
+secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY]
 memory: 2g
+
+services:
+  - name: jellyfin
+    image: jellyfin/jellyfin:10.11.11
+    data: [{name: jellyfin-config, path: /config}]
+    folders: [{name: media, path: /media}]
+    ports: ["8096:8096"]
+    gpu: true               # Intel Quick Sync
+    memory: 4g
+  - name: prowlarr
+    image: lscr.io/linuxserver/prowlarr:version-2.6.5.5623
+    env: {PUID: "1000", PGID: "1000"}
+    data: [{name: prowlarr-config, path: /config}]
+    ports: ["9696:9696"]
+    memory: 512m

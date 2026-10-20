@@ -1,31 +1,147 @@
-# Config used when Homelab runs this app (see ../homelab.yaml). Paths are inside the
-# container: Homelab gives each environment (dev, prod) its own /data folder, so dev
-# never sees prod's catalogue or downloads.
-# Jellyfin and Prowlarr aren't part of a Homelab deploy yet; the app runs without them.
+# Config used when Homelab runs Northern Lights (see ../homelab.yaml). Paths are inside the
+# containers. Homelab gives each environment (dev, prod) its own /data and /models; /media
+# is the device's shared media folder, at the same path in the app and Jellyfin.
 
-media_folders:
-  - /data/media/Movies
-  - /data/media/Shows
+# Folders to scan for media files (can be multiple paths)
+media_folders:                      # scanner scans both roots
+  - /media/Movies
+  - /media/Shows
 
+# Jellyfin dedicated library configuration
 jellyfin_library:
-  movie_dir: /data/media/Movies
-  tv_dir: /data/media/Shows
+  movie_dir: /media/Movies
+  tv_dir: /media/Shows
   movies_library_name: Movies
   tv_library_name: TV Shows
-  realtime_monitor: false
+  realtime_monitor: true
 
+# TMDB region for release info (e.g., GB, US)
 region: GB
 
-supported_extensions: [.mkv, .mp4, .avi, .mov, .m4v, .webm]
+# Supported video file extensions
+supported_extensions:
+  - .mkv
+  - .mp4
+  - .avi
+  - .mov
+  - .m4v
+  - .webm
 
-database_path: /data/catalogue.db
+# Database file location (DATABASE_PATH env var overrides this at launch)
+database_path: /data/catalogue_full.db
 
-torrent:
-  download_dir: /data/downloads
-
+# Recommender preferences
 recommender:
   default_top_n: 5
   exclude_watched: true
   enable_tier2_profiling: true
-  shortlist_size: 1500
-  final_pool: 200
+
+  # Candidate funnel sizes (quality cut → diverse pool):
+  shortlist_size: 1500    # top-rated items kept after the Bayesian quality cut
+  final_pool: 200         # diverse pool served for pagination
+  # Taste formula: average = how much more you liked a genre than your own
+  # average, averaged over a film's genres (utils/eval_taste_formula.py checks it);
+  # sum = the old capped sum of liked-genre weights.
+  taste_formula: average
+
+  # Mood-map questions (services/mood_popup.py): score = pool score + mood_weight x
+  # sum over moods of P(mood) x fit(film, mood). Higher = answers move the order more.
+  mood_weight: 3.0
+
+  # Recommendation engine router for the TIGER generative retrieval engine
+  # (parallel engine — the legacy SQL/taste recommender is never modified):
+  #   "fallback"        generative first; legacy on missing artifacts/history
+  #   "legacy_only"     legacy engine always (kill-switch)
+  #   "generative_only" generative primary; legacy only on unexpected failure
+  engine_mode: fallback
+  generative:
+    history_threshold: 5    # cold-start gate: legacy engine until 5+ liked items, then generative
+    history_min_rating: 6.0 # only films rated >= this (or seen, unrated) feed the model's history
+    top_k: 40               # semantic ID tuples beam-decoded per request
+    max_seq_len: 10         # sequence length fed to the ONNX predictor
+    candidate_pool: 60      # trie-resolved candidates re-ranked per request
+
+  # Learned taste from verdicts, "what worked / didn't" chips and vibe-check answers
+  # (services/taste_model.py). Adds weight x facet_fit and weight x cluster_affinity
+  # (each -1..+1) to the score in both engines. Below min_verdicts nothing changes.
+  taste_model:
+    enabled: false          # off until the offline check shows it beats the current ordering
+    weights:
+      facet_fit: 1.0        # design doc 2.6
+      cluster_affinity: 0.8
+    min_verdicts: 10        # confirmed + inferred verdicts needed per profile
+    inferred_weight: 0.5    # an inferred verdict counts this much of a confirmed one
+    min_dial_evidence: 4.0  # weighted films that need a value for a dial before it counts
+    overall_k: 10.0         # thin-history damping: effect x n / (n + overall_k)
+    cluster_k: 5.0          # cluster shrink: n / (n + cluster_k)
+
+# "Best match" sort for download copies: score = quality x seeder health x size fit
+# (x scope match for TV). Every number is optional; defaults live in
+# services/torrent_ranking.py. Tweak here, restart the server.
+torrent_ranking:
+  quality_points: {2160p: 100, 1080p: 80, 720p: 55, HD: 45, 480p: 25}
+  seeders:
+    base: 5               # seeders needed to finish = base + per_gb * size_gb
+    per_gb: 2             # health = sqrt(seeders / needed), capped at 1
+  size_fit_penalty: 0.75  # x this when far smaller/bigger than normal for its quality
+  movie_size_bands_gb:    # normal [min, max] GB per film
+    2160p: [4, 30]
+    1080p: [1.4, 15]
+    720p: [0.6, 4]
+    HD: [0.6, 6]
+    480p: [0.3, 2]
+  episode_size_bands_gb:  # normal [min, max] GB per episode (packs are divided by episode count)
+    2160p: [1.5, 10]
+    1080p: [0.5, 4]
+    720p: [0.2, 1.5]
+    HD: [0.2, 2]
+    480p: [0.1, 0.8]
+  scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
+  episodes_per_season: 10         # assumed when a pack's name doesn't say
+
+# Northern Lights "Who's watching" (M4). Leave it commented and the app has one viewer
+# (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
+# fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, deploy.
+# profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
+northern_lights:
+  people:
+    - {id: labibakanij,  name: Labiba,          jellyfin_user_id: c07f6a015a284420a5931235097df58f, profile_id: 1}
+    - {id: gabstevens, name: Gabriele,    jellyfin_user_id: 89576f27230e419ead0664b1486376bd, profile_id: 2}
+#
+# Casting to a Chromecast (M8, optional): the Chromecast is not on Tailscale, so it needs the address
+# it can reach this server at on your home network. Uncomment `northern_lights:` (if the people block above
+# is not already using it) and set cast_base_url. See deploy/RUNBOOK.md "Casting".
+#  cast_base_url: http://192.168.1.50:8000     # the server's LAN address and port, no path
+#  cast_receiver_app_id: ""                    # "" = Google's Default Media Receiver; else your registered 8-character app id
+#
+# Links on the admin page (/nl/admin, M10b, optional): your Jellystat, Uptime Kuma and Dozzle addresses.
+# Only plain http or https links are used; leave one out and it has no link. (Env NL_JELLYSTAT_URL,
+# NL_UPTIME_KUMA_URL and NL_DOZZLE_URL do the same and win over this.)
+#  tools:
+#    jellystat: http://mars:3000
+#    uptime_kuma: http://mars:3001
+#    dozzle: http://mars:8888
+
+# libtorrent configuration
+torrent:
+  # Port range for incoming connections
+  min_port: 6881
+  max_port: 6891
+  
+  # Where to save downloaded files
+  download_dir: /media/downloads
+  
+  # Disk guard (services/disk_guard.py): the server's media is capped at 100 GB for now.
+  max_media_gb: 100
+  min_free_gb: 20
+
+  # Additional libtorrent settings
+  settings:
+    upload_rate_limit: 0      # 0 = unlimited
+    download_rate_limit: 0    # 0 = unlimited
+    active_downloads: 3      # Max simultaneous downloads
+    active_seeds: 3           # Max simultaneous uploads
+    enable_dht: true          # Enable distributed hash table
+    enable_lsd: true           # Enable local service discovery
+    enable_natpmp: false       # Enable NAT-PMP port mapping
+    enable_upnp: false         # Enable UPnP port mapping
