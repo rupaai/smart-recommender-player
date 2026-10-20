@@ -974,7 +974,10 @@ class TorrentDownloader:
         """Deletes this environment's staging folders that no stored download owns (left by a crash or a
         restart that lost the download). Other environments' folders and the .ltresume files stay."""
         removed: List[str] = []
-        pattern = re.compile(rf"^{re.escape(self.staging_prefix)}(\d+)$")
+        # Before the environment was in the name, prod's folders were plain id_<n>; they still count as prod's.
+        env = os.getenv("HOMELAB_ENV", "").strip()
+        prefixes = [self.staging_prefix] + (["id_"] if env == "prod" else [])
+        pattern = re.compile(rf"^(?:{'|'.join(re.escape(p) for p in prefixes)})(\d+)$")
         try:
             names = os.listdir(self.download_dir)
         except OSError:

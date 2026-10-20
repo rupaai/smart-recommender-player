@@ -83,6 +83,13 @@ def run(tmp):
     removed = dev.remove_orphan_staging(set())
     check("dev removes only its own orphans", removed == ["dev-id_1"] and os.path.isdir(os.path.join(downloads, "id_7"))
           and os.path.isdir(os.path.join(downloads, "prod-id_5")), (removed, sorted(os.listdir(downloads))))
+    os.environ["HOMELAB_ENV"] = "prod"
+    prod = TorrentDownloader(server.config, db_manager=server.db)
+    os.makedirs(os.path.join(downloads, "id_55"))
+    os.makedirs(os.path.join(downloads, "prod-id_56"))
+    removed = sorted(prod.remove_orphan_staging({7, 8}))
+    check("prod also removes its old plain id_<n> orphans", removed == ["id_55", "prod-id_5", "prod-id_56"]
+          and os.path.isdir(os.path.join(downloads, "id_7")), removed)
     os.environ.pop("HOMELAB_ENV")
 
     print("finishing one download keeps the others' resume files")

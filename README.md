@@ -322,7 +322,8 @@ The app now runs under Homelab. The old couchcinema stack, its health-check cron
 
 ```bash
 # 1. Stop and remove the old containers (they run in the deploy user's own Docker, not the system one).
-sudo -iu deploy bash -lc 'docker compose -p couchcinema -f /srv/couchcinema/compose.yaml down'
+#    Do this before promoting the version with port 8000: the old app holds port 8000 too.
+U=$(id -u deploy); sudo -u deploy XDG_RUNTIME_DIR=/run/user/$U DOCKER_HOST=unix:///run/user/$U/docker.sock docker compose -p couchcinema -f /srv/couchcinema/compose.yaml down
 
 # 2. Remove the old health-check cron file.
 sudo rm -f /etc/cron.d/couchcinema
