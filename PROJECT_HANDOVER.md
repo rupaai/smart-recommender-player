@@ -5,7 +5,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 **Keeping it current:** when you finish a feature, change its one line here (state, where it lives, what is still open) and update "Branches and open work". Do not add PR logs, dated changelogs or test-run notes; those belong in the PR. Section numbers are referenced from other docs (§10.6, §10.7, §10.8, §12, §13, §14), so keep them stable.
 
 ## Branches and open work
-- `main`: has everything since PR #67/#68 (2026-10-13) and PR #70 (2026-10-14, Discover variety, §10.11): the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
+- `main`: has everything since PR #67/#68 (2026-10-13), PR #70 (2026-10-14, Discover variety, §10.11), and PR #79 (2026-10-20, Homelab deployment): the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
@@ -59,7 +59,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Taste: `taste_formula: average` replaced the capped sum (§10.11). The `sum` path and `get_profile_taste_profile` are still used by the rating queue and the cold-start path. `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
 - Concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; genre chips widen instead of narrow; era/runtime filters silently fall back; the variety shuffle runs after MMR.
 - Origin parser leftovers: duplicate `chinese`/`portuguese` keys, Kollywood/Tollywood swapped, Nigerian = Yoruba only.
-- `finish_active_watch` in the old app writes `watch_history` without `profile_id` (Northern Lights finishes go to the right profiles).
+- The legacy `/api/watch/finish` path relies on SQLite's default `profile_id = 1`; make the single-viewer profile explicit/configurable as part of the portability work.
 - Dead ONNX branch in `recommender_service.py` (reads a nonexistent `embedding` column).
 
 ## 8. Recommender v2: decisions that still bind

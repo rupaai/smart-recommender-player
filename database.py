@@ -1819,11 +1819,31 @@ class DatabaseManager:
         """Finishes the active watch session and logs it as seen by exactly these profiles
         (who's watching), instead of the legacy row that always landed on profile 1.
         Returns the media_item_id, or None if the session is unknown."""
+        profile_ids = list(dict.fromkeys(profile_ids))
+        if not profile_ids:
+            raise ValueError("at least one profile is required")
         with self.get_connection() as conn:
-            row = conn.execute("SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (session_id,)).fetchone()
+            row = conn.execute(
+                "SELECT media_item_id FROM active_watch_sessions WHERE id = ? AND status = 'watching';",
+                (session_id,),
+            ).fetchone()
             if not row:
                 return None
-            conn.execute("UPDATE active_watch_sessions SET status = 'completed' WHERE id = ?;", (session_id,))
+            marks = ",".join("?" for _ in profile_ids)
+            found = {
+                r["id"]
+                for r in conn.execute(f"SELECT id FROM profiles WHERE id IN ({marks});", profile_ids).fetchall()
+            }
+            unknown = [pid for pid in profile_ids if pid not in found]
+            if unknown:
+                raise ValueError(f"unknown profile_id: {unknown[0]}")
+            updated = conn.execute(
+                "UPDATE active_watch_sessions SET status = 'completed' "
+                "WHERE id = ? AND status = 'watching';",
+                (session_id,),
+            )
+            if updated.rowcount != 1:
+                return None
             media_item_id = row["media_item_id"]
         for pid in profile_ids:
             if user_rating is not None:
@@ -3972,16 +3992,21 @@ class DatabaseManager:
         """Finishes an active watch session, marks it completed, and logs into watch_history."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (session_id,))
+            cursor.execute(
+                "SELECT media_item_id FROM active_watch_sessions WHERE id = ? AND status = 'watching';",
+                (session_id,),
+            )
             row = cursor.fetchone()
             if not row:
                 return None
             media_item_id = row["media_item_id"]
 
-            cursor.execute(
-                "UPDATE active_watch_sessions SET status = 'completed' WHERE id = ?;",
+            updated = cursor.execute(
+                "UPDATE active_watch_sessions SET status = 'completed' WHERE id = ? AND status = 'watching';",
                 (session_id,),
             )
+            if updated.rowcount != 1:
+                return None
             cursor.execute(
                 """
                 INSERT INTO watch_history (media_item_id, user_rating, notes)
@@ -3996,7 +4021,7 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "UPDATE active_watch_sessions SET status = 'cancelled' WHERE id = ?;",
+                "UPDATE active_watch_sessions SET status = 'cancelled' WHERE id = ? AND status = 'watching';",
                 (session_id,),
             )
 
