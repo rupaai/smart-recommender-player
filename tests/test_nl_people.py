@@ -599,11 +599,15 @@ def test_js_behaviour():
     if not node:
         print("  (node not installed: skipped)")
         return
-    out = subprocess.run([node, os.path.join(ROOT, "tests", "js", "nl_prefs_check.js")], capture_output=True, text=True, timeout=60)
-    for line in out.stdout.splitlines():
-        if line.strip().startswith("FAIL"):
-            failures.append("prefs.js: " + line.strip())
-    check("prefs.js checks pass", out.returncode == 0, (out.stdout + out.stderr)[-600:])
+    for script, label in (
+        ("nl_prefs_check.js", "prefs.js checks pass"),
+        ("legacy_watch_profile_check.js", "legacy watch completion sends its selected profile"),
+    ):
+        out = subprocess.run([node, os.path.join(ROOT, "tests", "js", script)], capture_output=True, text=True, timeout=60)
+        for line in out.stdout.splitlines():
+            if line.strip().startswith("FAIL"):
+                failures.append(f"{script}: " + line.strip())
+        check(label, out.returncode == 0, (out.stdout + out.stderr)[-600:])
 
 
 if __name__ == "__main__":
