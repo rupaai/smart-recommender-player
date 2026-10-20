@@ -42,23 +42,23 @@ def run(tmp):
 
     print("requests are stored in the database")
     reqs = server.download_requests
-    reqs.remember(7, MAGNET, "Seven", "movie")
-    reqs.remember(8, MAGNET, "Eight", "tv")
-    reqs.finished(8)
+    reqs.remember("aaa1", MAGNET, "Seven", "movie", movie_id=7)
+    reqs.remember("bbb2", MAGNET, "Eight", "tv", movie_id=8)
+    reqs.finished("bbb2")
     again = DownloadRequests(DatabaseManager(server.db.db_path))      # a new process reads the same file
-    check("a new instance still has the link", again.get(7) == {"magnet": MAGNET, "title": "Seven", "media_type": "movie"})
-    check("only unfinished downloads are listed for resume", [r["item_id"] for r in again.unfinished()] == [7], again.unfinished())
-    check("a finished one is still known (Retry)", again.get(8) is not None and 8 in again.item_ids())
+    check("a new instance still has the link", again.get("aaa1") == {"magnet": MAGNET, "title": "Seven", "media_type": "movie", "movie_id": 7})
+    check("only unfinished downloads are listed for resume", [r["download_id"] for r in again.unfinished()] == ["aaa1"], again.unfinished())
+    check("a finished one is still known (Retry)", again.get("bbb2") is not None and "bbb2" in again.download_ids())
 
     print("start-up resumes unfinished downloads and removes orphan staging folders")
     started = []
 
-    async def fake_download(magnet, movie_id, title, media_type="movie"):
-        started.append((magnet, movie_id, title, media_type))
+    async def fake_download(magnet, download_id, movie_id, title, media_type="movie"):
+        started.append((magnet, download_id, movie_id, title, media_type))
 
     dl.download = fake_download
     server.downloads_store.clear()
-    for name in ("id_7", "id_8", "id_99", "prod-id_5", "other"):
+    for name in ("download_aaa1", "download_bbb2", "download_zzz9", "id_99", "prod-download_ccc3", "other"):
         os.makedirs(os.path.join(downloads, name), exist_ok=True)
     open(os.path.join(downloads, "abc.ltresume"), "wb").close()
 
@@ -66,30 +66,29 @@ def run(tmp):
         await server.resume_downloads()
         await asyncio.sleep(0.05)
     asyncio.run(start())
-    check("the unfinished download was started again", started == [(MAGNET, 7, "Seven", "movie")], started)
-    check("it shows in the list as connecting", server.downloads_store.get(7, {}).get("status") == "connecting")
+    check("the unfinished download was started again", started == [(MAGNET, "aaa1", 7, "Seven", "movie")], started)
+    check("it shows in the list as connecting", server.downloads_store.get("aaa1", {}).get("status") == "connecting")
     check("it is marked finished once it returns", DownloadRequests(server.db).unfinished() == [])
     left = sorted(os.listdir(downloads))
-    check("the orphan folder is gone", "id_99" not in left, left)
-    check("folders of stored downloads, other names and .ltresume files stay",
-          {"id_7", "id_8", "prod-id_5", "other", "abc.ltresume"} <= set(left), left)
+    check("the orphan folders are gone", "download_zzz9" not in left and "id_99" not in left, left)
+    check("folders of stored downloads, other environments, other names and .ltresume files stay",
+          {"download_aaa1", "download_bbb2", "prod-download_ccc3", "other", "abc.ltresume"} <= set(left), left)
 
     print("staging folders carry the environment name")
     os.environ["HOMELAB_ENV"] = "dev"
     from services.torrent_service import TorrentDownloader
     dev = TorrentDownloader(server.config, db_manager=server.db)
-    check("dev folder name", os.path.basename(dev._staging_path(42)) == "dev-id_42", dev._staging_path(42))
-    os.makedirs(os.path.join(downloads, "dev-id_1"))
+    check("dev folder name", os.path.basename(dev._staging_path("x1")) == "dev-download_x1", dev._staging_path("x1"))
+    os.makedirs(os.path.join(downloads, "dev-download_orph"))
     removed = dev.remove_orphan_staging(set())
-    check("dev removes only its own orphans", removed == ["dev-id_1"] and os.path.isdir(os.path.join(downloads, "id_7"))
-          and os.path.isdir(os.path.join(downloads, "prod-id_5")), (removed, sorted(os.listdir(downloads))))
+    check("dev removes only its own orphans", removed == ["dev-download_orph"] and os.path.isdir(os.path.join(downloads, "download_aaa1"))
+          and os.path.isdir(os.path.join(downloads, "prod-download_ccc3")), (removed, sorted(os.listdir(downloads))))
     os.environ["HOMELAB_ENV"] = "prod"
     prod = TorrentDownloader(server.config, db_manager=server.db)
     os.makedirs(os.path.join(downloads, "id_55"))
-    os.makedirs(os.path.join(downloads, "prod-id_56"))
-    removed = sorted(prod.remove_orphan_staging({7, 8}))
-    check("prod also removes its old plain id_<n> orphans", removed == ["id_55", "prod-id_5", "prod-id_56"]
-          and os.path.isdir(os.path.join(downloads, "id_7")), removed)
+    removed = sorted(prod.remove_orphan_staging({"aaa1", "bbb2"}))
+    check("prod also removes its old unprefixed orphans (id_<n> and download_<id>)",
+          removed == ["id_55", "prod-download_ccc3"] and os.path.isdir(os.path.join(downloads, "download_aaa1")), removed)
     os.environ.pop("HOMELAB_ENV")
 
     print("finishing one download keeps the others' resume files")
@@ -116,8 +115,8 @@ c = TestClient(server.app)
 print("HEALTH", c.get("/healthz").status_code)
 print("HOME", c.get("/").status_code)
 asyncio.run(server.resume_downloads())
-asyncio.run(server.torrent_downloader.download("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", 5, "T"))
-print("DL", server.downloads_store[5]["status"])
+asyncio.run(server.torrent_downloader.download("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", "d5", 5, "T"))
+print("DL", server.downloads_store["d5"]["status"])
 '''
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp)
     check("healthz is 200", "HEALTH 200" in out.stdout, out.stdout + out.stderr[-800:])

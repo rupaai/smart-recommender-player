@@ -21,15 +21,17 @@ const state = {
   minRating: null,
   includeWatched: false,
   activeSession: null,
-  selectedRating: 8,
+  ratingVocab: null,
+  ratingVocabPromise: null,
+  selectedVerdict: null,
   recognition: null,
   modalRecognition: null,
   jellyfinUrl: '',
   directSort: 'best',      // 'best' | 'smallest' | 'quality'
   directLinked: null,      // {movieId, title, mediaType, query} when opened from a Discover card
   lastDirectResults: [],
-  activeDownloads: {},     // movieId -> status dict
-  pollingIntervals: {},    // movieId -> intervalId
+  activeDownloads: {},     // downloadId -> status dict (contains movieId for playback)
+  pollingIntervals: {},    // downloadId -> intervalId
   moodsData: [],           // loaded from /api/moods
   // --- Rate Together (multi-profile co-view ratings) ---
   rateProfileId: 1,
@@ -72,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkStatus();
   loadMoods();
   checkActiveWatch();
-  initStarSelector();
+  initFeedbackSelector();
   initSpeechRecognition();
   loadPartnerName();
   refreshLaterCount();
@@ -1545,9 +1547,12 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Download failed to start');
 
+    const downloadId = data.download_id;
     const movieId = data.movie_id;
+    if (!downloadId || !movieId) throw new Error('Download started without an ID');
 
-    state.activeDownloads[movieId] = {
+    state.activeDownloads[downloadId] = {
+      downloadId,
       movieId,
       title: movieTitle,
       mediaType,
@@ -1559,7 +1564,7 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
     };
 
     renderActiveDownloadsMonitor();
-    pollDownloadProgress(movieId, containerId, movieTitle, mediaType);
+    pollDownloadProgress(downloadId, containerId, movieTitle, mediaType);
 
   } catch (err) {
     console.error('Direct download start error:', err);
@@ -1580,21 +1585,21 @@ function directDownloadButton(encodedMagnet, title, containerId, mediaType, labe
 }
 
 // Cancel Download
-async function cancelDownload(movieId, containerId) {
+async function cancelDownload(downloadId, containerId) {
   try {
-    if (state.pollingIntervals[movieId]) {
-      clearInterval(state.pollingIntervals[movieId]);
-      delete state.pollingIntervals[movieId];
+    if (state.pollingIntervals[downloadId]) {
+      clearInterval(state.pollingIntervals[downloadId]);
+      delete state.pollingIntervals[downloadId];
     }
 
     await fetch('/api/torrent/cancel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movie_id: movieId })
+      body: JSON.stringify({ download_id: downloadId })
     });
 
-    const downloadInfo = state.activeDownloads[movieId];
-    delete state.activeDownloads[movieId];
+    const downloadInfo = state.activeDownloads[downloadId];
+    delete state.activeDownloads[downloadId];
     renderActiveDownloadsMonitor();
 
     const container = document.getElementById(containerId);
@@ -1602,7 +1607,7 @@ async function cancelDownload(movieId, containerId) {
       // Recommender cards re-run their own search; direct results reuse the magnet.
       container.innerHTML = downloadInfo.encodedMagnet
         ? directDownloadButton(downloadInfo.encodedMagnet, downloadInfo.title, containerId, downloadInfo.mediaType || 'movie', 'Download again', downloadInfo.linkedMovieId || 0)
-        : watchButtonHtml({ id: movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
+        : watchButtonHtml({ id: downloadInfo.movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
     }
     showToast('Download cancelled');
   } catch (err) {
@@ -1614,15 +1619,15 @@ async function cancelDownload(movieId, containerId) {
 // ---------------------------------------------------------------------------
 // 7. In-Place Download Progress Polling (1-second HTTP Polling)
 // ---------------------------------------------------------------------------
-function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'movie') {
-  // Clear any existing polling interval for this movie ID
-  if (state.pollingIntervals[movieId]) {
-    clearInterval(state.pollingIntervals[movieId]);
+function pollDownloadProgress(downloadId, containerId, movieTitle, mediaType = 'movie') {
+  // Each release has its own progress and cancellation record.
+  if (state.pollingIntervals[downloadId]) {
+    clearInterval(state.pollingIntervals[downloadId]);
   }
 
   const intervalId = setInterval(async () => {
     try {
-      const res = await fetch(`/api/torrent/status/${movieId}`);
+      const res = await fetch(`/api/torrent/status/${encodeURIComponent(downloadId)}`);
       if (!res.ok) return;
 
       const data = await res.json();
@@ -1631,8 +1636,8 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       // Handle cancel or failure
       if (data.status === 'cancelled' || data.error) {
         clearInterval(intervalId);
-        delete state.pollingIntervals[movieId];
-        delete state.activeDownloads[movieId];
+        delete state.pollingIntervals[downloadId];
+        delete state.activeDownloads[downloadId];
         renderActiveDownloadsMonitor();
 
         if (container) {
@@ -1640,7 +1645,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
           container.innerHTML = `
             <div class="progress-box ${cancelled ? 'cancelled-box' : 'error-box'}" ${cancelled ? '' : 'role="alert"'}>
               <span>${cancelled ? 'Download cancelled' : `Download failed: ${escapeHtml(data.error)}`}</span>
-              <button class="btn-retry-mini" onclick="pollDownloadProgress(${movieId}, ${jsArg(containerId)}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Check again</button>
+              <button class="btn-retry-mini" onclick="pollDownloadProgress(${jsArg(downloadId)}, ${jsArg(containerId)}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Check again</button>
             </div>
           `;
         }
@@ -1654,8 +1659,10 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       const stateStr = data.status || 'downloading';
 
       // Update in-memory tracker
-      state.activeDownloads[movieId] = {
-        ...state.activeDownloads[movieId],
+      const movieId = data.movie_id || (state.activeDownloads[downloadId] || {}).movieId;
+      state.activeDownloads[downloadId] = {
+        ...state.activeDownloads[downloadId],
+        downloadId,
         movieId,
         title: data.name || movieTitle,
         mediaType,
@@ -1672,7 +1679,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       // Check for completion
       if (pct >= 100 || stateStr === 'completed' || stateStr === 'seeding' || stateStr === 'finished') {
         clearInterval(intervalId);
-        delete state.pollingIntervals[movieId];
+        delete state.pollingIntervals[downloadId];
 
         if (container) {
           container.innerHTML = `
@@ -1712,7 +1719,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
             <div class="download-progress-bar-wrapper" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="Download progress">
               <div class="download-progress-bar-fill" style="transform: scaleX(${pct / 100});"></div>
               <div class="download-progress-bar-text">${escapeHtml(statusLabel)}</div>
-              <button class="btn-cancel-mini-bar" onclick="cancelDownload(${movieId}, ${jsArg(containerId)})" title="Cancel download" aria-label="Cancel download">${icon('x')}</button>
+              <button class="btn-cancel-mini-bar" onclick="cancelDownload(${jsArg(downloadId)}, ${jsArg(containerId)})" title="Cancel download" aria-label="Cancel download">${icon('x')}</button>
             </div>
           `;
         }
@@ -1723,7 +1730,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
     }
   }, 1000);
 
-  state.pollingIntervals[movieId] = intervalId;
+  state.pollingIntervals[downloadId] = intervalId;
 }
 
 // Updates tracker and active monitor UI
@@ -1757,7 +1764,7 @@ function renderActiveDownloadsMonitor() {
       </div>
       ${isReady
         ? `<button class="btn-ready-mini" onclick="playLocalItem(${item.movieId}, ${jsArg(item.title)})">${icon('play')}Play</button>`
-        : `<button class="btn-cancel-mini" onclick="cancelDownload(${item.movieId}, ${jsArg(item.containerId)})">Cancel</button>`
+        : `<button class="btn-cancel-mini" onclick="cancelDownload(${jsArg(item.downloadId)}, ${jsArg(item.containerId)})">Cancel</button>`
       }
     `;
     list.appendChild(row);
@@ -1765,10 +1772,11 @@ function renderActiveDownloadsMonitor() {
 }
 
 function updateActiveDownloadTracker(data) {
-  if (!data || !data.movie_id) return;
-  const existing = state.activeDownloads[data.movie_id] || {};
-  state.activeDownloads[data.movie_id] = {
+  if (!data || !data.download_id) return;
+  const existing = state.activeDownloads[data.download_id] || {};
+  state.activeDownloads[data.download_id] = {
     ...existing,
+    downloadId: data.download_id,
     movieId: data.movie_id,
     title: data.name || existing.title || 'Media',
     progress: Math.min(100, data.progress || 0),
@@ -1873,49 +1881,85 @@ async function cancelWatch() {
 // ---------------------------------------------------------------------------
 // 10. Rating & Taste Profile Feedback Modal
 // ---------------------------------------------------------------------------
-function initStarSelector() {
-  const container = document.getElementById('starSelector');
-  container.innerHTML = '';
-  for (let i = 1; i <= 10; i++) {
-    const star = document.createElement('button');
-    star.className = `star-btn ${i <= state.selectedRating ? 'active' : ''}`;
-    star.innerHTML = icon('star', 'icon star-icon');
-    star.setAttribute('role', 'radio');
-    star.setAttribute('aria-label', `${i} out of 10`);
-    star.setAttribute('aria-checked', i === state.selectedRating ? 'true' : 'false');
-    star.onclick = () => selectStarRating(i);
-    container.appendChild(star);
+async function fetchRatingVocab() {
+  if (state.ratingVocab) return state.ratingVocab;
+  if (!state.ratingVocabPromise) {
+    state.ratingVocabPromise = (async () => {
+      const res = await fetch('/api/ratings/vocab');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const vocab = await res.json();
+      if (!Array.isArray(vocab.verdicts) || !vocab.verdicts.length) {
+        throw new Error('Rating options were empty');
+      }
+      state.ratingVocab = vocab;
+      return vocab;
+    })().finally(() => { state.ratingVocabPromise = null; });
   }
-  updateStarLabel(state.selectedRating);
+  return state.ratingVocabPromise;
 }
 
-function selectStarRating(val) {
-  state.selectedRating = val;
-  // Scoped to the sheet: the old selector also hit the Rate tab's stars.
-  document.querySelectorAll('#starSelector .star-btn').forEach((s, idx) => {
-    s.classList.toggle('active', idx < val);
-    s.setAttribute('aria-checked', idx + 1 === val ? 'true' : 'false');
+function initFeedbackSelector() {
+  renderFeedbackVerdicts();
+  return loadFeedbackVerdicts();
+}
+
+function loadFeedbackVerdicts() {
+  return fetchRatingVocab().then(() => renderFeedbackVerdicts()).catch(err => {
+    console.error('Could not load rating options:', err);
+    renderFeedbackVerdicts('Could not load rating options. Close and reopen to try again.');
   });
-  updateStarLabel(val);
 }
 
-const RATING_WORDS = ['', 'Awful', 'Bad', 'Poor', 'Weak', 'Okay', 'Decent', 'Good', 'Great', 'Brilliant', 'All-time favourite'];
+function renderFeedbackVerdicts(message = '') {
+  const container = document.getElementById('feedbackVerdictSelector');
+  const label = document.getElementById('feedbackVerdictLabel');
+  const submit = document.getElementById('feedbackSubmitButton');
+  if (!container) return;
+  const verdicts = state.ratingVocab?.verdicts || [];
+  if (message || !verdicts.length) {
+    container.innerHTML = escapeHtml(message || 'Loading rating options…');
+    if (submit) submit.disabled = true;
+    if (label) label.innerText = 'Choose one category';
+    return;
+  }
+  container.innerHTML = verdicts.map((v, i) => `
+    <button class="verdict-btn verdict-${escapeHtml(v.id)} ${state.selectedVerdict === v.id ? 'active' : ''}"
+            onclick="selectFeedbackVerdict('${escapeHtml(v.id)}')" aria-pressed="${state.selectedVerdict === v.id}">
+      <kbd>${i + 1}</kbd>${escapeHtml(v.label)}
+    </button>`).join('');
+  if (label) label.innerText = state.selectedVerdict
+    ? verdicts.find(v => v.id === state.selectedVerdict)?.label || 'Choose one category'
+    : 'Choose one category';
+  if (submit) submit.disabled = !state.selectedVerdict;
+}
 
-function updateStarLabel(val) {
-  const label = document.getElementById('starLabel');
-  if (label) label.innerText = `${val}/10 · ${RATING_WORDS[val] || ''}`;
+function selectFeedbackVerdict(id) {
+  if (!(state.ratingVocab?.verdicts || []).some(v => v.id === id)) return;
+  state.selectedVerdict = id;
+  document.querySelectorAll('#feedbackVerdictSelector .verdict-btn').forEach(button => {
+    const selected = button.classList.contains(`verdict-${id}`);
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+  const label = document.getElementById('feedbackVerdictLabel');
+  if (label) label.innerText = state.ratingVocab.verdicts.find(v => v.id === id).label;
+  const submit = document.getElementById('feedbackSubmitButton');
+  if (submit) submit.disabled = false;
 }
 
 let lastFocusBeforeSheet = null;
 
 function openFeedbackModal() {
   if (!state.activeSession) return;
+  state.selectedVerdict = null;
+  renderFeedbackVerdicts();
+  if (!state.ratingVocab) loadFeedbackVerdicts();
   lastFocusBeforeSheet = document.activeElement;
   document.getElementById('modalMovieTitle').innerText = state.activeSession.title;
   document.getElementById('feedbackModal').classList.add('active');
   setTimeout(() => {
-    const current = document.querySelector('#starSelector .star-btn[aria-checked="true"]');
-    if (current) current.focus();
+    const first = document.querySelector('#feedbackVerdictSelector .verdict-btn');
+    if (first) first.focus();
   }, 50);
 }
 
@@ -1926,6 +1970,10 @@ function closeFeedbackModal() {
 
 async function submitFeedback() {
   if (!state.activeSession) return;
+  if (!state.selectedVerdict || !(state.ratingVocab?.verdicts || []).some(v => v.id === state.selectedVerdict)) {
+    showToast('Choose a rating first');
+    return;
+  }
   const notes = document.getElementById('reviewNotesInput').value.trim();
 
   try {
@@ -1934,7 +1982,11 @@ async function submitFeedback() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: state.activeSession.session_id,
-        user_rating: state.selectedRating,
+        // The legacy "I'm …" switch is this app's viewer selection. Send it
+        // explicitly so watch completion does not use a stale NL cookie or
+        // silently fall back to profile 1.
+        profile_ids: [state.activeProfileId],
+        verdict: state.selectedVerdict,
         notes: notes || null
       })
     });
@@ -2518,9 +2570,7 @@ async function loadRateVocab() {
   if (state.rateVocab || state.rateVocabLoading || state.rateVocabFailed) return;
   state.rateVocabLoading = true;
   try {
-    const res = await fetch('/api/ratings/vocab');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    state.rateVocab = await res.json();
+    state.rateVocab = await fetchRatingVocab();
   } catch (err) {
     console.error('Could not load rating options:', err);
     state.rateVocabFailed = true;

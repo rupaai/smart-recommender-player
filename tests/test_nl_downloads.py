@@ -88,6 +88,8 @@ def test_pure():
     check("ready movie: Play and details links", r["state"] == "ready" and r["play_href"] == "/nl/play/7" and r["href"] == "/nl/title/7" and r["percent"] == 100.0, r)
     r = nd.describe(8, {"status": "completed"}, {**req, "media_type": "tv"}, in_library=True)
     check("ready show: the show page, no single Play", r["href"] == "/nl/show/8" and r["play_href"] is None)
+    per_copy = nd.describe("copy-a", {"status": "completed", "movie_id": 7}, {**req, "movie_id": 7}, in_library=True)
+    check("download row has a per-copy id but plays its catalogue title", per_copy["id"] == "copy-a" and per_copy["play_href"] == "/nl/play/7")
     r = nd.describe(9, {"status": "completed"}, req, in_library=False)
     check("completed but not in the library yet is still importing, with a note", r["state"] == "importing" and r["note"] and r["href"] is None)
     check("the magnet link is never in a row", MAGNET not in str(d) and "magnet" not in str(d))
@@ -123,8 +125,8 @@ def run(tmp):
 
     started = []
 
-    async def fake_download(magnet, movie_id, title, media_type="movie"):
-        started.append((magnet, movie_id, title, media_type))
+    async def fake_download(magnet, download_id, movie_id, title, media_type="movie"):
+        started.append((magnet, download_id, movie_id, title, media_type))
 
     server.torrent_downloader.download = fake_download
 
@@ -132,25 +134,50 @@ def run(tmp):
     r = client.post("/api/torrent/download", json={
         "magnet_link": MAGNET, "movie_id": gamma, "movie_title": "Gamma.Ray.2018.1080p.WEB-DL.x264", "media_type": "movie"})
     check("the old endpoint still works", r.status_code == 200 and r.json()["success"], r.text)
-    mem = server.download_requests.get(gamma)
+    gamma_download_id = r.json()["download_id"]
+    mem = server.download_requests.get(gamma_download_id)
     check("the clean title and link are remembered", mem and mem["magnet"] == MAGNET and "1080p" not in mem["title"], mem)
+
+    print("same catalogue title, separate torrent copies")
+    other_magnet = "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&dn=Gamma.Ray.Other.Release"
+    r2 = client.post("/api/torrent/download", json={
+        "magnet_link": other_magnet, "movie_id": gamma, "movie_title": "Gamma Ray", "media_type": "movie"})
+    other_download_id = r2.json().get("download_id")
+    check("same movie id gets a distinct download id", r2.status_code == 200 and other_download_id and other_download_id != gamma_download_id
+          and store[gamma_download_id]["movie_id"] == store[other_download_id]["movie_id"] == gamma, (r2.text, store))
+    check("each release keeps its own retry magnet", server.download_requests.get(gamma_download_id)["magnet"] == MAGNET
+          and server.download_requests.get(other_download_id)["magnet"] == other_magnet)
+    cancelled = []
+
+    async def fake_cancel(download_id):
+        cancelled.append(download_id)
+        return True
+
+    server.torrent_downloader.cancel = fake_cancel
+    cancel_response = client.post("/api/torrent/cancel", json={"download_id": gamma_download_id})
+    check("cancelling one copy passes only its download id", cancel_response.json()["success"] and cancelled == [gamma_download_id])
+    status = client.get(f"/api/torrent/status/{other_download_id}").json()
+    check("the other copy still has its own status row", status.get("download_id") == other_download_id and status.get("movie_id") == gamma, status)
 
     print("the list")
     store.clear()
-    store[gamma] = {"hash": "ab", "movie_id": gamma, "name": "Gamma.Ray.2018.1080p", "media_type": "movie", "progress": 41.5, "status": "downloading",
+    gamma_key = gamma_download_id
+    sigma_key, alpha_key, missing_key = "copy-sigma", "copy-alpha", "copy-missing"
+    store[gamma_key] = {"download_id": gamma_key, "hash": "ab", "movie_id": gamma, "name": "Gamma.Ray.2018.1080p", "media_type": "movie", "progress": 41.5, "status": "downloading",
                     "download_speed": 3_000_000, "total_size": 4_000_000_000, "downloaded": 1_660_000_000, "eta_seconds": 780, "error": None}
-    store[sigma] = {"movie_id": sigma, "status": "connecting", "progress": 0.0, "name": "Sigma", "media_type": "tv"}
-    store[alpha] = {"movie_id": alpha, "status": "completed", "progress": 100.0, "name": "Alpha", "media_type": "movie"}
-    store[99999] = {"movie_id": 99999, "status": "error", "error": "Could not open '/srv/couchcinema/downloads/x/y'"}
+    store[sigma_key] = {"download_id": sigma_key, "movie_id": sigma, "status": "connecting", "progress": 0.0, "name": "Sigma", "media_type": "tv"}
+    store[alpha_key] = {"download_id": alpha_key, "movie_id": alpha, "status": "completed", "progress": 100.0, "name": "Alpha", "media_type": "movie"}
+    store[missing_key] = {"download_id": missing_key, "movie_id": 99999, "status": "error", "error": "Could not open '/srv/couchcinema/downloads/x/y'"}
+    server.download_requests.remember(gamma_key, MAGNET, "Gamma Ray", "movie", movie_id=gamma)
     r = client.get("/api/nl/downloads")
     d = r.json()
     rows = {row["id"]: row for row in d["downloads"]}
-    check("200 with a row for each", r.status_code == 200 and set(rows) == {gamma, sigma, alpha, 99999}, list(rows))
-    g = rows[gamma]
+    check("200 with a row for each", r.status_code == 200 and set(rows) == {gamma_key, sigma_key, alpha_key, missing_key}, list(rows))
+    g = rows[gamma_key]
     check("downloading: percent, speed and time left", g["state"] == "downloading" and g["percent"] == 41.5 and g["speed_bytes"] == 3_000_000 and g["eta_seconds"] == 780, g)
-    check("queued", rows[sigma]["state"] == "queued" and rows[sigma]["label"] == "Waiting to start")
-    check("ready movie links straight to Play", rows[alpha]["state"] == "ready" and rows[alpha]["play_href"] == f"/nl/play/{alpha}" and rows[alpha]["href"] == f"/nl/title/{alpha}", rows[alpha])
-    check("failed: reason without a path; no Retry (the app was restarted since)", rows[99999]["state"] == "failed" and "/srv" not in rows[99999]["error"] and not rows[99999]["can_retry"], rows[99999])
+    check("queued", rows[sigma_key]["state"] == "queued" and rows[sigma_key]["label"] == "Waiting to start")
+    check("ready movie links straight to Play", rows[alpha_key]["state"] == "ready" and rows[alpha_key]["play_href"] == f"/nl/play/{alpha}" and rows[alpha_key]["href"] == f"/nl/title/{alpha}", rows[alpha_key])
+    check("failed: reason without a path; no Retry (the app was restarted since)", rows[missing_key]["state"] == "failed" and "/srv" not in rows[missing_key]["error"] and not rows[missing_key]["can_retry"], rows[missing_key])
     check("active first: downloading, queued, then failed, then ready", [r["state"] for r in d["downloads"]] == ["downloading", "queued", "failed", "ready"], [r["state"] for r in d["downloads"]])
     check("counts", d["counts"]["active"] == 2 and d["counts"]["failed"] == 1 and d["counts"]["ready"] == 1, d["counts"])
     body = r.text
@@ -160,32 +187,32 @@ def run(tmp):
     print("ready waits for the library")
     with server.db.get_connection() as conn:
         conn.execute("DELETE FROM media_sources WHERE media_item_id = ?", (alpha,))
-    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[alpha]
+    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[alpha_key]
     check("completed but with no file yet is importing, not ready", row["state"] == "importing" and row["href"] is None and row["note"], row)
     server.db.register_source_file(nl_fake.ALPHA, "Alpha", 2020, "movie")
 
     print("retry")
-    store[gamma]["status"] = "error"
-    store[gamma]["error"] = "File size too small (fake torrent link)."
-    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[gamma]
+    store[gamma_key]["status"] = "error"
+    store[gamma_key]["error"] = "File size too small (fake torrent link)."
+    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[gamma_key]
     check("a failed download we started offers Retry with a plain reason", row["state"] == "failed" and row["can_retry"] and "too small" in row["error"], row)
-    check("retry of a running download is a 409", client.post(f"/api/nl/downloads/{sigma}/retry").status_code == 409)
+    check("retry of a running download is a 409", client.post(f"/api/nl/downloads/{sigma_key}/retry").status_code == 409)
     check("retry of an unknown id is a 404", client.post("/api/nl/downloads/424242/retry").status_code == 404)
-    r = client.post("/api/nl/downloads/99999/retry")
+    r = client.post(f"/api/nl/downloads/{missing_key}/retry")
     check("retry without a remembered link says why (404)", r.status_code == 404 and "restarted" in r.json()["detail"], r.text)
     started.clear()
-    r = client.post(f"/api/nl/downloads/{gamma}/retry")
-    check("retry starts the download again from the saved link and clean title", r.status_code == 200 and started == [(MAGNET, gamma, "Gamma Ray", "movie")], (r.text, started))
-    check("... and the row is back to queued at once", store[gamma]["status"] == "connecting" and store[gamma]["error"] is None)
-    store[gamma]["status"] = "cancelled"
-    store[gamma]["error"] = "Download cancelled by user"
-    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[gamma]
+    r = client.post(f"/api/nl/downloads/{gamma_key}/retry")
+    check("retry starts the download again from the saved link and clean title", r.status_code == 200 and started == [(MAGNET, gamma_key, gamma, "Gamma Ray", "movie")], (r.text, started))
+    check("... and the row is back to queued at once", store[gamma_key]["status"] == "connecting" and store[gamma_key]["error"] is None)
+    store[gamma_key]["status"] = "cancelled"
+    store[gamma_key]["error"] = "Download cancelled by user"
+    row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[gamma_key]
     check("a stopped download offers Retry too", row["state"] == "cancelled" and row["can_retry"] and row["error"] == "You stopped this download.", row)
 
     print("dismiss")
-    check("a running download cannot be dismissed (409)", client.delete(f"/api/nl/downloads/{sigma}").status_code == 409)
-    check("a failed one can", client.delete("/api/nl/downloads/99999").status_code == 200 and 99999 not in store)
-    check("dismissing twice is harmless", client.delete("/api/nl/downloads/99999").status_code == 200)
+    check("a running download cannot be dismissed (409)", client.delete(f"/api/nl/downloads/{sigma_key}").status_code == 409)
+    check("a failed one can", client.delete(f"/api/nl/downloads/{missing_key}").status_code == 200 and missing_key not in store)
+    check("dismissing twice is harmless", client.delete(f"/api/nl/downloads/{missing_key}").status_code == 200)
 
     print("pages")
     page = client.get("/nl/downloads")

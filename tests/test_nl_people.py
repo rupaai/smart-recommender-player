@@ -331,6 +331,19 @@ def run(tmp):
     check("watch/finish still logs the legacy row (profile 1)", r.status_code == 200 and [x["profile_id"] for x in rows] == [1], (r.text, [dict(x) for x in rows]))
     with db.get_connection() as conn:
         conn.execute("DELETE FROM watch_history WHERE media_item_id = ?", (alpha,))
+        conn.execute("DELETE FROM rating_details WHERE media_item_id = ?", (alpha,))
+    sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
+    r = client.post("/api/watch/finish", json={"session_id": sid, "verdict": "rewatch", "notes": "again"})
+    with db.get_connection() as conn:
+        wh = conn.execute("SELECT profile_id, user_rating, notes FROM watch_history WHERE media_item_id = ?", (alpha,)).fetchone()
+    details = db.get_rating_details(alpha, 1)
+    check("finish accepts a canonical verdict with the implicit profile", r.status_code == 200 and details
+          and details["verdict"] == "rewatch" and details["taste_score"] == 1.0
+          and wh and wh["profile_id"] == 1 and wh["user_rating"] == 10.0 and wh["notes"] == "again",
+          (r.text, details, dict(wh) if wh else None))
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM watch_history WHERE media_item_id = ?", (alpha,))
+        conn.execute("DELETE FROM rating_details WHERE media_item_id = ?", (alpha,))
     db.set_person_prefs("default", {"search_lang": None})
 
     # ------------------------------------------------------------------ people configured
@@ -550,6 +563,26 @@ def run(tmp):
     check("Labiba alone: profile 1", finish("labiba").status_code == 200 and profiles() == [(1, 8.0, "seen")], profiles())
     check("explicit profile_ids win over the cookie", finish("labiba", profile_ids=[2]).status_code == 200 and profiles() == [(2, 8.0, "seen")], profiles())
     check("no cookie: the legacy behaviour (profile 1)", finish(None).status_code == 200 and profiles() == [(1, 8.0, "seen")], profiles())
+    with db.get_connection() as conn:
+        conn.execute("DELETE FROM watch_history WHERE media_item_id = ?", (alpha,))
+        conn.execute("DELETE FROM rating_details WHERE media_item_id = ?", (alpha,))
+    db.rate_item(alpha, profile_id=2, status="seen", verdict="loved")
+    sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
+    r = client.post("/api/watch/finish", json={"session_id": sid, "verdict": "meh", "notes": "okay", "profile_ids": [2]}, headers=cookie("labiba"))
+    details = db.get_rating_details(alpha, 2)
+    with db.get_connection() as conn:
+        prior = conn.execute("SELECT verdict, user_rating FROM rating_history WHERE media_item_id = ? AND profile_id = 2 ORDER BY id DESC LIMIT 1", (alpha,)).fetchone()
+    check("canonical finish verdict uses the explicit profile and shared vocabulary",
+          r.status_code == 200 and details and details["verdict"] == "meh" and details["taste_score"] == -0.3
+          and profiles() == [(2, 5.0, "seen")] and prior and prior["verdict"] == "loved" and prior["user_rating"] == 9.0,
+          (r.text, details, profiles(), dict(prior) if prior else None))
+    sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
+    r = client.post("/api/watch/finish", json={"session_id": sid, "verdict": "not-a-verdict", "profile_ids": [1]})
+    with db.get_connection() as conn:
+        status = conn.execute("SELECT status FROM active_watch_sessions WHERE id = ?", (sid,)).fetchone()["status"]
+    check("an invalid verdict is rejected without consuming the session", r.status_code == 400 and status == "watching", (r.status_code, status))
+    client.post("/api/watch/cancel", json={"session_id": sid})
+    finish("labiba")
     sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
     client.post("/api/watch/finish", json={"session_id": sid}, headers=cookie("both"))
     check("watched without a rating: seen for both, an existing rating is kept", profiles() == [(1, 8.0, "seen"), (2, None, "seen")], profiles())
@@ -558,6 +591,17 @@ def run(tmp):
     r = client.post("/api/watch/start", json={"media_item_id": alpha})
     r = client.post("/api/watch/finish", json={"session_id": r.json()["session_id"], "user_rating": 5, "profile_ids": [999]})
     check("an unknown profile id is a 400", r.status_code == 400, r.text)
+    server.nl_people = np.People(np.parse_people([{"id": "solo", "name": "Solo", "jellyfin_user_id": LAB}]))
+    sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
+    r = client.post("/api/watch/finish", json={"session_id": sid, "verdict": "loved"}, headers=cookie("solo"))
+    with db.get_connection() as conn:
+        status = conn.execute("SELECT status FROM active_watch_sessions WHERE id = ?", (sid,)).fetchone()["status"]
+    check("a configured viewer without a profile is not rated under someone else's profile", r.status_code == 400 and status == "watching", (r.status_code, status))
+    client.post("/api/watch/cancel", json={"session_id": sid})
+    server.nl_people = np.People(np.parse_people([
+        {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
+        {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
+    ]))
 
     print("the proxy allowlist did not widen")
     from services.jellyfin_playback import safe_proxy_path
@@ -590,6 +634,10 @@ def test_static():
     check("the key and Jellyfin ids never appear in the new scripts", all(x not in read("static", "nl", f) for f in ("prefs.js", "me.js") for x in ("api_key", "X-Emby", "jellyfin_user_id")))
     tv = read("static", "nl", "tv", "tv.js")
     check("TV script handles the who and me pages", 'page === "who"' in tv and 'page === "me"' in tv)
+    app = read("static", "app.js")
+    modal = read("templates", "index.html")
+    check("legacy finish modal uses the shared verdict vocabulary", "fetch('/api/ratings/vocab')" in app
+          and 'id="feedbackVerdictSelector"' in modal and "user_rating: state.selectedRating" not in app)
     check("the TV app (Kotlin) was not changed for M4", True)
 
 
@@ -599,11 +647,15 @@ def test_js_behaviour():
     if not node:
         print("  (node not installed: skipped)")
         return
-    out = subprocess.run([node, os.path.join(ROOT, "tests", "js", "nl_prefs_check.js")], capture_output=True, text=True, timeout=60)
-    for line in out.stdout.splitlines():
-        if line.strip().startswith("FAIL"):
-            failures.append("prefs.js: " + line.strip())
-    check("prefs.js checks pass", out.returncode == 0, (out.stdout + out.stderr)[-600:])
+    for script, label in (
+        ("nl_prefs_check.js", "prefs.js checks pass"),
+        ("legacy_watch_profile_check.js", "legacy finish rating uses canonical verdicts and its selected profile"),
+    ):
+        out = subprocess.run([node, os.path.join(ROOT, "tests", "js", script)], capture_output=True, text=True, timeout=60)
+        for line in out.stdout.splitlines():
+            if line.strip().startswith("FAIL"):
+                failures.append(f"{script}: " + line.strip())
+        check(label, out.returncode == 0, (out.stdout + out.stderr)[-600:])
 
 
 if __name__ == "__main__":

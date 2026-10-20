@@ -841,31 +841,13 @@ button:disabled { cursor: default; }
 .player-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 12px; }
 #videoPlayer { width: 100%; border-radius: 8px; background: #000; max-height: 55vh; }
 
-/* ---------- Stars ---------- */
-.star-selector { display: flex; justify-content: center; gap: 2px; margin: 16px 0 8px; }
-
-.star-btn {
-  background: transparent; border: none;
-  font-size: 28px; line-height: 1; padding: 4px 2px; min-width: 30px;
-  display: inline-flex; align-items: center; justify-content: center;
-  color: var(--surface-3);
-  transition: color 0.12s ease, transform 0.12s ease;
-}
-
-.star-btn.active { color: var(--action); }
-.star-icon { width: 1em; height: 1em; fill: currentColor; stroke: none; }
+/* ---------- Rating modal ---------- */
 .icon.filled { fill: currentColor; stroke: none; }
 .meta-star { width: 13px; height: 13px; vertical-align: -1px; margin-right: 3px; color: var(--action); }
 .badge-icon { width: 12px; height: 12px; }
 .badge-coview-a .badge-icon { fill: currentColor; }
 
-@media (hover: hover) {
-  .star-selector:hover .star-btn { color: var(--action); }
-  .star-selector .star-btn:hover ~ .star-btn { color: var(--surface-3); }
-  .star-btn:hover { transform: scale(1.15); }
-}
-
-.star-value-label {
+.feedback-verdict-label {
   text-align: center; font-size: 15px; font-weight: 700;
   color: var(--text); margin-bottom: 16px; font-variant-numeric: tabular-nums;
 }

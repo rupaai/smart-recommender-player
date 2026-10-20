@@ -42,6 +42,7 @@
   var urlSource = Number(query.get("source")) || null;   // which episode of a show (media_sources.id)
   var urlResume = query.get("resume");                    // "1" resume, "0" start over: skip the prompt
   var localPlayer = NLPlayerCore.create(video);
+  var watchSession = NLWatchSession.create(function (url, options) { return fetch(url, options); });
   // On a TV (?tv=1, or inside the Android app) everything works with a remote; phones and laptops are untouched.
   var isNative = NLPlayerCore.isNative();          // the Android app decodes through Media3 behind this transparent page
   // Bridge v2 (pause/resume/seekTo/setSubtitle + "time" events): the web controls drive the native player.
@@ -73,7 +74,6 @@
     textIndex: null,      // text subtitle currently shown, null = none
     started: false,       // "start" sent for the current stream
     stopped: true,        // "stop" sent (or nothing started yet)
-    watchSent: false,
     scrubbing: false,
     wasVisible: true,
     errors: 0,
@@ -679,13 +679,7 @@
       S.started = true;
       S.stopped = false;
       report("start");
-      if (!S.watchSent) {
-        S.watchSent = true;
-        fetch("/api/watch/start", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ media_item_id: Number(itemId) })
-        }).catch(function () { /* recommender history is best effort */ });
-      }
+      watchSession.start(itemId);
     } else if (S.stopped) {
       S.stopped = false;
       report("start");
@@ -1259,7 +1253,7 @@
     stopReporting(false);
     S.ended = false;
     if (S.next && S.next.autoplay && !S.nextCancelled) { advanceToNext(); }
-    else if (!S.next) { askReaction(); }   // M9c: after the film, or the last episode, "How was it?"
+    else if (!S.next) { watchSession.finish(); askReaction(); }   // M9c: after the film, or the last episode, "How was it?"
   });
 
   /* --------------------------------------------- after finishing: how was it (M9c, W10) */
@@ -1316,8 +1310,9 @@
   }
   player.on("volumechange", renderVolume);
 
-  function leave() {
+  function leave(completed) {
     stopReporting(true);
+    if (completed) { watchSession.finish(); } else { watchSession.cancel(); }
     if (casting()) { castKit.cast.end(true); }   // leaving the player stops the TV too (no remote page to control it)
     // On the TV, go back through the history when we came from one of its screens, so Back
     // from the title page does not land on the player again. Otherwise replace this page.
@@ -1333,7 +1328,10 @@
     window.location.href = S.backHref;
   }
   window.addEventListener("pagehide", function () {
-    if (casting()) { if (S.started && !S.stopped) { report("progress", true); } } else { stopReporting(true); }   // the TV keeps playing
+    if (casting()) { if (S.started && !S.stopped) { report("progress", true); } } else {
+      stopReporting(true);
+      watchSession.cancel();
+    }   // the TV keeps playing
     if (isNative) { player.destroy(); }   // stop the native player when the page goes away
   });
   document.addEventListener("visibilitychange", function () {
@@ -1734,7 +1732,7 @@
     hideNextCard();
     renderCast();
     refreshPlayerUi();
-    if (finished) { leave(); return; }
+    if (finished) { leave(true); return; }
     S.retry = function () { handBack(pos); };
     handBack(pos);
   }
