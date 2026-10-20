@@ -1,7 +1,7 @@
 """Downloads in the Northern Lights app (M10a, H1 and H2).
 
 Pure helpers that turn the downloader's in-memory store (`services.torrent_service.downloads_store`, keyed by
-the media item id) into the rows the Downloads screen draws:
+download id) into the rows the Downloads screen draws:
 
     queued       connecting, checking files, fetching the torrent's details
     downloading  moving data (percent, speed, time left)
@@ -49,24 +49,36 @@ class DownloadRequests:
     Held in memory only (a restart empties it, like the downloader's own store)."""
 
     def __init__(self) -> None:
-        self._items: Dict[int, Dict[str, str]] = {}
+        self._items: Dict[Any, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
-    def remember(self, item_id: int, magnet: str, title: str, media_type: str) -> None:
+    def remember(
+        self,
+        download_id: Any,
+        magnet: str,
+        title: str,
+        media_type: str,
+        movie_id: Optional[int] = None,
+    ) -> None:
         with self._lock:
-            self._items.pop(item_id, None)
-            self._items[item_id] = {"magnet": magnet, "title": title, "media_type": media_type}
+            self._items.pop(download_id, None)
+            self._items[download_id] = {
+                "magnet": magnet,
+                "title": title,
+                "media_type": media_type,
+                "movie_id": movie_id,
+            }
             while len(self._items) > MAX_REQUESTS:
                 self._items.pop(next(iter(self._items)))
 
-    def get(self, item_id: int) -> Optional[Dict[str, str]]:
+    def get(self, download_id: Any) -> Optional[Dict[str, Any]]:
         with self._lock:
-            row = self._items.get(item_id)
+            row = self._items.get(download_id)
             return dict(row) if row else None
 
-    def forget(self, item_id: int) -> None:
+    def forget(self, download_id: Any) -> None:
         with self._lock:
-            self._items.pop(item_id, None)
+            self._items.pop(download_id, None)
 
 
 def _raw_state(entry: Dict[str, Any]) -> str:
@@ -125,15 +137,19 @@ def _num(value: Any) -> float:
 
 
 def describe(
-    item_id: int,
+    download_id: Any,
     entry: Dict[str, Any],
-    request: Optional[Dict[str, str]] = None,
+    request: Optional[Dict[str, Any]] = None,
     brief: Optional[Dict[str, Any]] = None,
     in_library: bool = False,
 ) -> Dict[str, Any]:
-    """One Downloads row. `request` is what was remembered at start (clean title, media type), `brief` the
-    catalogue's {title, media_type} for the id, `in_library` whether the title has a playable file now."""
+    """One Downloads row. The row id identifies this copy; movie_id links it to the catalogue title."""
     state = state_of(entry)
+    movie_id = entry.get("movie_id")
+    if not isinstance(movie_id, int):
+        movie_id = (request or {}).get("movie_id")
+    if not isinstance(movie_id, int) and isinstance(download_id, int):
+        movie_id = download_id  # legacy in-memory entries created before per-copy IDs
     media_type = (request or {}).get("media_type") or (brief or {}).get("media_type") or entry.get("media_type") or "movie"
     media_type = "tv" if media_type == "tv" else "movie"
     title = (request or {}).get("title") or (brief or {}).get("title") or entry.get("name") or "Download"
@@ -146,7 +162,7 @@ def describe(
         percent = 100.0
     eta = entry.get("eta_seconds")
     row: Dict[str, Any] = {
-        "id": item_id,
+        "id": download_id,
         "title": title,
         "media_type": media_type,
         "state": state,
@@ -163,12 +179,12 @@ def describe(
         "href": None,
         "play_href": None,
     }
-    if state == "ready":
+    if state == "ready" and isinstance(movie_id, int):
         if media_type == "tv":
-            row["href"] = f"/nl/show/{item_id}"
+            row["href"] = f"/nl/show/{movie_id}"
         else:
-            row["href"] = f"/nl/title/{item_id}"
-            row["play_href"] = f"/nl/play/{item_id}"
+            row["href"] = f"/nl/title/{movie_id}"
+            row["play_href"] = f"/nl/play/{movie_id}"
     return row
 
 
@@ -185,21 +201,33 @@ def counts(rows: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 def build_list(
-    store: Dict[int, Dict[str, Any]],
+    store: Dict[Any, Dict[str, Any]],
     requests: DownloadRequests,
     brief_of: Callable[[int], Optional[Dict[str, Any]]],
     in_library_of: Callable[[int], bool],
 ) -> Dict[str, Any]:
     """Every download the downloader knows, active ones first, with counts for the header status."""
-    rows: List[Dict[str, Any]] = []
-    for item_id, entry in list(store.items()):
+    sorted_rows = []
+    for index, (download_id, entry) in enumerate(list(store.items())):
         if not isinstance(entry, dict):
             continue
+        movie_id = entry.get("movie_id")
+        if not isinstance(movie_id, int) and isinstance(download_id, int):
+            movie_id = download_id
         done = state_of(entry) == "ready"
-        rows.append(describe(
-            item_id, entry, requests.get(item_id), brief_of(item_id), in_library_of(item_id) if done else False,
-        ))
-    rows.sort(key=lambda r: (_ORDER.get(r["state"], 9), -r["id"]))
+        row = describe(
+            download_id,
+            entry,
+            requests.get(download_id),
+            brief_of(movie_id) if isinstance(movie_id, int) else None,
+            in_library_of(movie_id) if done and isinstance(movie_id, int) else False,
+        )
+        created_at = entry.get("created_at")
+        if not isinstance(created_at, (int, float)):
+            created_at = download_id if isinstance(download_id, (int, float)) else index
+        sorted_rows.append((row, created_at))
+    sorted_rows.sort(key=lambda pair: (_ORDER.get(pair[0]["state"], 9), -pair[1]))
+    rows = [row for row, _created_at in sorted_rows]
     # Finished downloads stay as a record until dismissed; show only the newest few.
     ready = [r for r in rows if r["state"] == "ready"]
     for r in ready[MAX_READY_SHOWN:]:

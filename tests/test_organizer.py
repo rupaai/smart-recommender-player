@@ -98,6 +98,57 @@ def test_movie_organizer():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_same_title_copies_are_preserved():
+    print("\n[3] same title copies keep separate media files")
+    tmp = fresh_tmp("copies")
+    try:
+        movie_target = os.path.join(tmp, "Movies")
+        tv_target = os.path.join(tmp, "Shows")
+
+        class FakeDB:
+            def __init__(self):
+                self.sources = []
+
+            def register_source_file(self, **source):
+                self.sources.append(source)
+
+        db = FakeDB()
+        movie_paths = []
+        movie_subtitles = []
+        for index, suffix in enumerate(("copy-a", "copy-b")):
+            staging = os.path.join(tmp, f"movie-{index}")
+            make_file(os.path.join(staging, f"The.Film.2020.{index}.mkv"), bytes([index + 1]) * 20)
+            make_file(os.path.join(staging, f"The.Film.2020.{index}.English.srt"), bytes([index + 5]) * 10)
+            outputs = organize_media_files(
+                staging, movie_target, tv_target, "The Film", 2020,
+                db=db, copy_suffix=suffix,
+            )
+            movie_paths.extend(p for p in outputs if p.endswith(".mkv"))
+            movie_subtitles.extend(p for p in outputs if p.endswith(".srt"))
+        check("same-title movie releases have distinct paths", len(set(movie_paths)) == 2 and all(os.path.isfile(p) for p in movie_paths), movie_paths)
+        check("movie subtitles follow their own versions", len(set(movie_subtitles)) == 2 and all(os.path.isfile(p) for p in movie_subtitles), movie_subtitles)
+        check("both movie copies retain the same catalogue title", len(db.sources) == 2 and all(s["parsed_title"] == "The Film" for s in db.sources))
+        check("the second movie filename keeps a recognizable version suffix", "copy-b" in os.path.basename(movie_paths[1]), movie_paths)
+
+        episode_paths = []
+        episode_subtitles = []
+        for index, (suffix, release_tag) in enumerate((("episode-a", "WEB-DL"), ("episode-b", "1080p"))):
+            staging = os.path.join(tmp, f"episode-{index}")
+            make_file(os.path.join(staging, f"Example.Show.S01E01.{release_tag}.mkv"), bytes([index + 3]) * 20)
+            make_file(os.path.join(staging, f"Example.Show.S01E01.{release_tag}.English.srt"), bytes([index + 7]) * 10)
+            outputs = organize_media_files(
+                staging, movie_target, tv_target, "Example Show", 2020,
+                media_type="tv", copy_suffix=suffix,
+            )
+            episode_paths.extend(p for p in outputs if p.endswith(".mkv"))
+            episode_subtitles.extend(p for p in outputs if p.endswith(".srt"))
+        check("same-episode releases do not overwrite one another", len(set(episode_paths)) == 2 and all(os.path.isfile(p) for p in episode_paths), episode_paths)
+        check("episode subtitles follow their own versions", len(set(episode_subtitles)) == 2 and all(os.path.isfile(p) for p in episode_subtitles), episode_subtitles)
+        check("the episode tag remains parseable after the version suffix", all(_parse_sxxeyy(os.path.basename(p)) == (1, 1, None) for p in episode_paths), episode_paths)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_season_pack():
     print("\n[3] season pack: 3 episodes + subs + unpairable sub")
     tmp = fresh_tmp("tv")
@@ -299,6 +350,7 @@ def test_clean_release_title():
 if __name__ == "__main__":
     test_parsers()
     test_movie_organizer()
+    test_same_title_copies_are_preserved()
     test_season_pack()
     test_multi_episode()
     test_no_videos()

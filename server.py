@@ -10,6 +10,8 @@ import json
 import os
 import shutil
 import socket
+import time
+import uuid
 from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote, urlsplit
 
@@ -380,7 +382,8 @@ class TorrentDownloadRequest(BaseModel):
 
 
 class TorrentCancelRequest(BaseModel):
-    movie_id: int
+    download_id: Optional[str] = None
+    movie_id: Optional[int] = None  # legacy clients; only safe when exactly one copy is active
 
 
 class MediaCleanupRequest(BaseModel):
@@ -1776,7 +1779,12 @@ async def nl_veto_clear(item_id: int, request: Request, kind: str = Query("never
 # --- Northern Lights downloads (M10a): the same downloader and store as the old Download tab ---
 def _nl_downloads_payload() -> Dict[str, Any]:
     snapshot = dict(downloads_store)
-    briefs = db.get_download_briefs([i for i in snapshot if isinstance(i, int)])
+    movie_ids = {
+        entry.get("movie_id", download_id)
+        for download_id, entry in snapshot.items()
+        if isinstance(entry, dict) and isinstance(entry.get("movie_id", download_id), int)
+    }
+    briefs = db.get_download_briefs(list(movie_ids))
     return nl_downloads.build_list(
         snapshot,
         download_requests,
@@ -1792,38 +1800,58 @@ async def nl_downloads_list() -> Dict[str, Any]:
     return await asyncio.to_thread(_nl_downloads_payload)
 
 
-@app.post("/api/nl/downloads/{item_id}/retry")
-async def nl_downloads_retry(item_id: int) -> Dict[str, Any]:
+@app.post("/api/nl/downloads/{download_id}/retry")
+async def nl_downloads_retry(download_id: str) -> Dict[str, Any]:
     """Starts a failed or stopped download again from the link it was first started with."""
-    entry = downloads_store.get(item_id)
+    key: Any = download_id
+    numeric_id = str(download_id).isdigit()
+    if key not in downloads_store and numeric_id and int(download_id) in downloads_store:
+        key = int(download_id)  # compatibility with pre-copy-ID in-memory entries
+    entry = downloads_store.get(key)
     if entry is None:
         raise HTTPException(status_code=404, detail="That download isn't in the list any more.")
     if nl_downloads.state_of(entry) not in nl_downloads.RETRY_STATES:
         raise HTTPException(status_code=409, detail="That download is not stopped, so there is nothing to retry.")
-    req = download_requests.get(item_id)
+    req = download_requests.get(key)
     if req is None:
         raise HTTPException(
             status_code=404,
             detail="The app was restarted since this started, so it no longer has the link. Search for the title again.",
         )
-    downloads_store[item_id] = {"movie_id": item_id, "status": "connecting", "progress": 0.0, "error": None,
-                                "name": req["title"], "media_type": req["media_type"]}
+    movie_id = req.get("movie_id")
+    if not isinstance(movie_id, int):
+        movie_id = entry.get("movie_id", key)
+    downloads_store[key] = {
+        "download_id": key,
+        "movie_id": movie_id,
+        "status": "connecting",
+        "progress": 0.0,
+        "error": None,
+        "name": req["title"],
+        "media_type": req["media_type"],
+        "created_at": time.time(),
+    }
+    torrent_downloader.cancelled_tasks.discard(key)
     asyncio.create_task(
-        torrent_downloader.download(req["magnet"], item_id, req["title"], media_type=req["media_type"])
+        torrent_downloader.download(req["magnet"], str(key), movie_id, req["title"], media_type=req["media_type"])
     )
-    return {"success": True, "id": item_id}
+    return {"success": True, "id": key}
 
 
-@app.delete("/api/nl/downloads/{item_id}")
-async def nl_downloads_dismiss(item_id: int) -> Dict[str, Any]:
+@app.delete("/api/nl/downloads/{download_id}")
+async def nl_downloads_dismiss(download_id: str) -> Dict[str, Any]:
     """Clears a failed, stopped or finished download from the list (the record only; files are never touched)."""
-    entry = downloads_store.get(item_id)
+    key: Any = download_id
+    numeric_id = str(download_id).isdigit()
+    if key not in downloads_store and numeric_id and int(download_id) in downloads_store:
+        key = int(download_id)
+    entry = downloads_store.get(key)
     if entry is None:
         return {"success": True}
     if nl_downloads.state_of(entry) not in nl_downloads.DISMISS_STATES:
         raise HTTPException(status_code=409, detail="That download is still running.")
-    downloads_store.pop(item_id, None)
-    download_requests.forget(item_id)
+    downloads_store.pop(key, None)
+    download_requests.forget(key)
     return {"success": True}
 
 
@@ -2629,10 +2657,23 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
 
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
-        download_requests.remember(movie_id, req.magnet_link, clean_movie_title, req.media_type)
+        download_id = uuid.uuid4().hex
+        now = time.time()
+        download_requests.remember(download_id, req.magnet_link, clean_movie_title, req.media_type, movie_id=movie_id)
+        downloads_store[download_id] = {
+            "download_id": download_id,
+            "movie_id": movie_id,
+            "name": clean_movie_title,
+            "media_type": req.media_type,
+            "status": "connecting",
+            "progress": 0.0,
+            "error": None,
+            "created_at": now,
+        }
         asyncio.create_task(
             torrent_downloader.download(
                 req.magnet_link,
+                download_id,
                 movie_id,
                 clean_movie_title,
                 media_type=req.media_type,
@@ -2640,6 +2681,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
         )
         return {
             "success": True,
+            "download_id": download_id,
             "movie_id": movie_id,
             "clean_title": clean_movie_title,
             "message": f"Download task started for {req.media_type}.",
@@ -2651,17 +2693,39 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
 @app.post("/api/torrent/cancel")
 async def cancel_torrent(req: TorrentCancelRequest) -> Dict[str, Any]:
     """Cancels an in-progress torrent download."""
-    success = await torrent_downloader.cancel(req.movie_id)
+    download_id = req.download_id
+    if not download_id and req.movie_id is not None:
+        matches = [
+            key for key, entry in downloads_store.items()
+            if isinstance(entry, dict)
+            and entry.get("movie_id", key) == req.movie_id
+            and nl_downloads.state_of(entry) not in nl_downloads.RETRY_STATES + nl_downloads.DISMISS_STATES
+        ]
+        if len(matches) == 1:
+            download_id = str(matches[0])
+    success = await torrent_downloader.cancel(download_id) if download_id else False
     return {"success": success}
 
 
-@app.get("/api/torrent/status/{movie_id}")
-async def get_torrent_status(movie_id: int) -> Dict[str, Any]:
-    """Returns the current download progress for a given movie or TV show."""
-    status_data = downloads_store.get(
-        movie_id,
-        {"status": "idle", "progress": 0.0, "movie_id": movie_id},
-    )
+@app.get("/api/torrent/status/{download_id}")
+async def get_torrent_status(download_id: str) -> Dict[str, Any]:
+    """Returns one copy's current download progress."""
+    key: Any = download_id
+    numeric_id = str(download_id).isdigit()
+    if key not in downloads_store and numeric_id and int(download_id) in downloads_store:
+        key = int(download_id)  # compatibility for old clients/tests
+    status_data = downloads_store.get(key)
+    if status_data is None and numeric_id:
+        movie_id = int(download_id)
+        matches = [entry for entry in downloads_store.values()
+                   if isinstance(entry, dict) and entry.get("movie_id") == movie_id]
+        if len(matches) == 1:
+            status_data = matches[0]
+        elif len(matches) > 1:
+            return {"status": "ambiguous", "progress": 0.0, "movie_id": movie_id}
+    if status_data is None:
+        legacy_movie_id = int(download_id) if numeric_id else None
+        status_data = {"status": "idle", "progress": 0.0, "movie_id": legacy_movie_id}
     return status_data
 
 
