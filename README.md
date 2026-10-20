@@ -277,7 +277,7 @@ cp model.onnx ../models/model.onnx
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/` | Serves the mobile PWA frontend |
-| `GET` | `/api/status` | Jellyfin online status, LAN IP & catalogue stats |
+| `GET` | `/api/status` | Jellyfin online status, Jellyfin address & catalogue stats |
 | `GET` | `/api/jellyfin/status` | Jellyfin diagnostics: server online, libraries (types + locations), env config |
 | `GET` | `/api/moods` | Returns 8 mood mappings and sub-moods |
 | `POST` | `/api/recommend` | Runs mood filtering + taste scoring + rating rules |
@@ -285,7 +285,6 @@ cp model.onnx ../models/model.onnx
 | `POST` | `/api/torrent/download` | Body: `{ magnet_link, movie_id, movie_title, media_type }`. Starts non-blocking download |
 | `GET` | `/api/torrent/status/{movie_id}` | Live progress polled every 1s (percentage, speed, bytes) |
 | `POST` | `/api/torrent/cancel` | Body: `{ movie_id }`. Cancels the download and purges partial staging files |
-| `POST` | `/api/sync` | Scans media folders and enriches new titles via TMDB |
 | `GET` | `/api/stream/{item_id}` | Returns Jellyfin streaming details |
 | `GET` | `/api/watch/current` | Active watching session status |
 | `POST` | `/api/watch/start` | Starts an active watch session |
@@ -302,7 +301,7 @@ cp model.onnx ../models/model.onnx
 3. **That's it — libraries are auto-created.** On server startup the app idempotently ensures two dedicated typed libraries exist ("Movies" at `jellyfin_library.movie_dir`, "TV Shows" at `jellyfin_library.tv_dir`) with realtime monitoring enabled. Setup is strictly additive: nothing is ever deleted or renamed. If Jellyfin is offline, startup simply skips it and the server boots normally.
 4. Check `GET /api/jellyfin/status` anytime for diagnostics: server online state, every library with its type + folder locations, and `.env` config presence.
 5. When downloads complete, files are formatted into Jellyfin's standard structure — Movies: `Movies/Movie Title (Year)/Movie Title (Year).ext` with `Movie Title (Year).en.srt` subtitles beside it; TV Shows: `Shows/Show Title (Year)/Season XX/Show Title - SXXEYY.ext` (season packs: **every** episode organized; multi-episode files become `SXXEYY-EZZ`). The app then refreshes the library and **polls until the title is actually visible** (`✅ '<title>' is now visible in Jellyfin`), logging a diagnostic hint if it isn't.
-6. **Who's watching (Northern Lights):** optionally create a second Jellyfin user and list both under `northern_lights.people` in `config.yaml` (see the commented block in it and `deploy/RUNBOOK.md` step 6b). The player then opens on "Who's watching? Labiba · <partner> · Both of us" (the choice is a plain cookie, no passwords): each person has their own Continue Watching and Resume, their own audio/subtitle language and subtitle look (`/nl/me`), and "Both of us" reports progress to both users and resumes from the further place. Without the config nothing changes.
+6. **Who's watching (Northern Lights):** optionally create a second Jellyfin user and list both under `northern_lights.people` in `config.yaml` (see the commented block in it). The player then opens on "Who's watching? Labiba · <partner> · Both of us" (the choice is a plain cookie, no passwords): each person has their own Continue Watching and Resume, their own audio/subtitle language and subtitle look (`/nl/me`), and "Both of us" reports progress to both users and resumes from the further place. Without the config nothing changes.
 7. **Picks for two (Northern Lights):** the home page has a "For both of us" row ("Picks for you" with one person) built by the existing recommender in co-view mode from what is in the library, with a one-line reason under each pick and the chips "Under 90 min" / "Under 2 h". Press the round **+** on any card, search result or details page to put a title on the shared **Watchlist** (`/nl/watchlist`, `/nl/tv/watchlist`); "Just me" keeps it private to one person. Each person answers Yes / Maybe / Pass per title; titles you both said yes to come first and lift similar picks. If the recommender's ML packages are not installed the row still works from ratings and your answers. Nothing to configure.
 8. **Subtitles tip:** install the OpenSubtitles plugin (Dashboard → Plugins) and sign in to an opensubtitles.com account, so Jellyfin can auto-download missing `.srt` files **and so the Northern Lights player's "Find subtitles" works** (Subtitles menu in the player, or the button on a movie's page, web and TV: search by language, exact matches first, download, and the new track is selected; plus subtitle size/background/position, and on the web a +/- 0.25 s delay); local subtitles named `Title (Year).en.forced.srt` / `Title (Year).en.sdh.srt` are honored automatically.
 9. **One-time manual migration** (existing show folders downloaded to the old single root):
@@ -316,6 +315,28 @@ cp model.onnx ../models/model.onnx
 > **Known limitations:** the "add path to existing library" API shape varies across Jellyfin versions — on mismatch the app logs a clear warning and continues (never destructive); playback of 4K/HEVC releases depends on your TV client / Jellyfin transcoding settings (a hint is logged by the organizer).
 
 ---
+
+## Removing the old setup on mars
+
+The app now runs under Homelab. The old couchcinema stack, its health-check cron file and its GitHub runner may still be on `mars`. They hold the Jellyfin and Prowlarr ports, so remove them. Run these on `mars`, in this order (they are safe to run twice; "not found" messages are fine):
+
+```bash
+# 1. Stop and remove the old containers (they run in the deploy user's own Docker, not the system one).
+sudo -iu deploy bash -lc 'docker compose -p couchcinema -f /srv/couchcinema/compose.yaml down'
+
+# 2. Remove the old health-check cron file.
+sudo rm -f /etc/cron.d/couchcinema
+
+# 3. Stop and remove the old GitHub runner service.
+sudo systemctl disable --now actions.runner.rupaai-smart-recommender-player.mars
+sudo rm -f /etc/systemd/system/actions.runner.rupaai-smart-recommender-player.mars.service
+sudo systemctl daemon-reload
+
+# 4. Check that ports 8096 and 9696 are free for Homelab's Jellyfin and Prowlarr.
+sudo ss -ltnp 'sport = :8096 or sport = :9696'
+```
+
+To also remove the runner from GitHub, delete it under the repository's Settings, Actions, Runners. `/srv/couchcinema` still holds the old data; keep it until you have checked that the move worked.
 
 ## 📄 License
 

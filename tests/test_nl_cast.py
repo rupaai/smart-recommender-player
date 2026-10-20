@@ -395,8 +395,8 @@ def test_static():
     check("the receiver calls none of our APIs and reads no cookies", "fetch(" not in receiver and "XMLHttpRequest" not in receiver
           and "document.cookie" not in receiver and "/api/" not in receiver)
     check("the receiver draws title, episode, backdrop and progress", all(x in receiver for x in ("nlr-title", "nlr-episode", "nlr-backdrop", "nlr-fill")))
-    runbook = read("deploy", "RUNBOOK.md")
-    check("the runbook explains HTTPS, the receiver app id, cast_base_url and NL_CAST_SECRET",
+    runbook = read("docs", "casting.md")
+    check("the casting doc explains HTTPS, the receiver app id, cast_base_url and NL_CAST_SECRET",
           all(x in runbook for x in ("cast_base_url", "NL_CAST_SECRET", "tailscale serve", "$5")))
     handover = read("PROJECT_HANDOVER.md")
     check("the handover has the casting section", "M8 Casting" in handover and "nl_cast.py" in handover)

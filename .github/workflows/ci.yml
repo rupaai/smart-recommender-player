@@ -3,7 +3,6 @@ name: CI
 on:
   pull_request:
   push:
-    # The Northern Lights branch also gets images so Deploy can put it on mars for testing.
     branches: [main, northern-lights-player-app]
 
 permissions:
