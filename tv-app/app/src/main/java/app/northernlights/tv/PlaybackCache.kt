@@ -2,10 +2,10 @@ package app.northernlights.tv
 
 import android.content.Context
 import androidx.media3.database.StandaloneDatabaseProvider
-import androidx.media3.datasource.CacheDataSource
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
