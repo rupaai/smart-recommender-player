@@ -60,21 +60,22 @@ check("slot ids are taken from the info hash", before[0].slot === "direct-dl-aaa
 check("each file keeps its slot after a re-sort", after[0].slot === before[1].slot && after[1].slot === before[0].slot, after.map((c) => c.slot));
 check("every Download button starts its own card's file", after.every((c) => c.magnet === null || c.magnet === (c.name === NEW.name ? NEW.magnet : OLD.magnet)), after.map((c) => [c.name, c.magnet]));
 
-// 2. Start the 4K copy, then re-sort: the progress stays on the 4K card, and the 720p card still offers its own download.
-state.activeDownloads[7] = { movieId: 7, title: "Dune", progress: 40, status: "downloading", containerId: ctx.downloadSlotId(NEW.magnet) };
+// 2. Two releases can share a catalogue movie id and still keep separate progress slots.
+state.activeDownloads["copy-720"] = { downloadId: "copy-720", movieId: 7, title: "Dune", progress: 20, status: "downloading", containerId: ctx.downloadSlotId(OLD.magnet) };
+state.activeDownloads["copy-4k"] = { downloadId: "copy-4k", movieId: 7, title: "Dune", progress: 40, status: "downloading", containerId: ctx.downloadSlotId(NEW.magnet) };
 ctx.renderDirectResults([OLD, NEW], "Dune");
 let drawn = cards();
-check("the running download shows on the copy that was picked", drawn[1].name === NEW.name && drawn[1].html.includes("Downloading") && drawn[1].magnet === null, drawn[1]);
-check("the copy now in its old position still offers its own download", drawn[0].name === OLD.name && drawn[0].magnet === OLD.magnet && !drawn[0].html.includes("Downloading"), drawn[0]);
+check("both releases with the same movie id show their own active download", drawn[0].html.includes("Downloading") && drawn[1].html.includes("Downloading") && drawn.every((c) => c.magnet === null), drawn.map((c) => c.html));
 
-// 3. Once finished, Play stays on the finished file.
-state.activeDownloads[7].progress = 100;
+// 3. Finishing one release does not mark the other release ready.
+state.activeDownloads["copy-4k"].progress = 100;
 ctx.renderDirectResults([NEW, OLD], "Dune");
 drawn = cards();
-check("Ready to play stays on the finished copy", drawn[0].name === NEW.name && drawn[0].html.includes("Ready") && !drawn[1].html.includes("Ready"), drawn.map((c) => c.name));
+check("Ready stays on the finished copy while the other still downloads", drawn[0].name === NEW.name && drawn[0].html.includes("Ready") && drawn[1].html.includes("Downloading"), drawn.map((c) => c.html));
 
 // 4. The same torrent listed twice gives one card, and magnets without an info hash still get a stable slot.
-delete state.activeDownloads[7];
+delete state.activeDownloads["copy-720"];
+delete state.activeDownloads["copy-4k"];
 ctx.renderDirectResults([OLD, { ...OLD, name: "Dune dup" }, NEW], "Dune");
 check("a torrent listed twice is drawn once", cards().length === 2, cards().map((c) => c.name));
 const odd = "https://example.org/file.torrent";

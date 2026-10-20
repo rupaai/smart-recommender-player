@@ -229,9 +229,9 @@ def _remove_dir_tree_if_empty(path: str) -> bool:
 
 # ---------------------------------------------------------------------------
 # Global in-memory download progress store
-# Keyed by movie_id → status dict polled via GET /api/torrent/status/<id>
+# Keyed by download_id → status dict. Each entry also stores its catalogue movie_id.
 # ---------------------------------------------------------------------------
-downloads_store: Dict[int, Dict[str, Any]] = {}
+downloads_store: Dict[str, Dict[str, Any]] = {}
 
 
 # ===========================================================================
@@ -657,6 +657,53 @@ class TorrentSearcher:
             return []
 
 
+def _available_copy_stem(
+    target_dir: str,
+    stem: str,
+    copy_suffix: Optional[str],
+    extensions: Set[str],
+) -> str:
+    """Keep an existing movie/episode version when another copy is organized."""
+    def exists(candidate: str) -> bool:
+        return any(os.path.exists(os.path.join(target_dir, candidate + ext)) for ext in extensions)
+
+    if not exists(stem):
+        return stem
+
+    suffix = re.sub(r"[^A-Za-z0-9_-]+", "", copy_suffix or "")[:12] or "copy"
+    candidate = f"{stem} - {suffix}"
+    number = 2
+    while exists(candidate):
+        candidate = f"{stem} - {suffix}-{number}"
+        number += 1
+    return candidate
+
+
+def _subtitle_destination(
+    target_dir: str,
+    media_stem: str,
+    language: str,
+    flags: List[str],
+    extension: str,
+    copy_suffix: Optional[str],
+) -> str:
+    """Name a subtitle beside its version without replacing an existing subtitle."""
+    def destination(stem: str) -> str:
+        return os.path.join(target_dir, ".".join([stem, language] + flags) + extension)
+
+    path = destination(media_stem)
+    if not os.path.exists(path):
+        return path
+
+    suffix = re.sub(r"[^A-Za-z0-9_-]+", "", copy_suffix or "")[:12] or "copy"
+    candidate = f"{media_stem} - {suffix}"
+    number = 2
+    while os.path.exists(destination(candidate)):
+        candidate = f"{media_stem} - {suffix}-{number}"
+        number += 1
+    return destination(candidate)
+
+
 def organize_media_files(
     staging_dir: str,
     movie_target: str,
@@ -666,6 +713,7 @@ def organize_media_files(
     media_type: str = "movie",
     db: Any = None,
     issues: Optional[List[str]] = None,
+    copy_suffix: Optional[str] = None,
 ) -> List[str]:
     """Pure filesystem organizer for the Jellyfin directory layout.
 
@@ -721,7 +769,8 @@ def organize_media_files(
         ext = os.path.splitext(main_video)[1].lower()
         target_dir = os.path.join(movie_target, folder_name)
         os.makedirs(target_dir, exist_ok=True)
-        dest = os.path.join(target_dir, f"{folder_name}{ext}")
+        video_stem = _available_copy_stem(target_dir, folder_name, copy_suffix, VIDEO_EXTENSIONS)
+        dest = os.path.join(target_dir, f"{video_stem}{ext}")
         shutil.move(main_video, dest)
         organized.append(dest)
         print(f"[Organizer] Movie: {dest}", flush=True)
@@ -740,8 +789,9 @@ def organize_media_files(
         # Copy every subtitle beside the movie with proper naming
         for sub in subtitles:
             lang, flags = _parse_subtitle_tags(os.path.basename(sub))
-            parts = [folder_name, lang] + flags
-            sub_dest = os.path.join(target_dir, ".".join(parts) + os.path.splitext(sub)[1])
+            sub_dest = _subtitle_destination(
+                target_dir, video_stem, lang, flags, os.path.splitext(sub)[1], copy_suffix,
+            )
             if os.path.abspath(sub) == os.path.abspath(sub_dest):
                 continue  # already correctly named
             shutil.copy2(sub, sub_dest)
@@ -767,6 +817,7 @@ def organize_media_files(
             lang, flags = _parse_subtitle_tags(os.path.basename(sub))
             sub_entries.append((parsed, sub, lang, flags))
 
+        episode_stems: Dict[Tuple[int, int, Optional[int]], str] = {}
         for video in videos:
             parsed = _parse_sxxeyy(os.path.basename(video))
             if parsed is None:
@@ -789,7 +840,10 @@ def organize_media_files(
             season_dir = os.path.join(show_dir, f"Season {s:02d}")
             os.makedirs(season_dir, exist_ok=True)
             ep_tag = f"S{s:02d}E{e:02d}" + (f"-E{e2:02d}" if e2 else "")
-            dest = os.path.join(season_dir, f"{clean_title} - {ep_tag}{ext}")
+            base_stem = f"{clean_title} - {ep_tag}"
+            video_stem = _available_copy_stem(season_dir, base_stem, copy_suffix, VIDEO_EXTENSIONS)
+            episode_stems.setdefault((s, e, e2), video_stem)
+            dest = os.path.join(season_dir, f"{video_stem}{ext}")
             shutil.move(video, dest)
             organized.append(dest)
             print(f"[Organizer] Episode: {dest}", flush=True)
@@ -813,8 +867,15 @@ def organize_media_files(
             season_dir = os.path.join(show_dir, f"Season {s:02d}")
             os.makedirs(season_dir, exist_ok=True)
             ep_tag = f"S{s:02d}E{e:02d}" + (f"-E{e2:02d}" if e2 else "")
-            parts = [f"{clean_title} - {ep_tag}", lang] + flags
-            sub_dest = os.path.join(season_dir, ".".join(parts) + os.path.splitext(sub)[1])
+            base_stem = episode_stems.get((s, e, e2), f"{clean_title} - {ep_tag}")
+            sub_dest = _subtitle_destination(
+                season_dir,
+                base_stem,
+                lang,
+                flags,
+                os.path.splitext(sub)[1],
+                copy_suffix,
+            )
             if os.path.abspath(sub) == os.path.abspath(sub_dest):
                 organized.append(sub_dest)
                 continue  # already correctly named
@@ -917,7 +978,7 @@ class TorrentDownloader:
         if hasattr(self.session, "start_dht"):
             self.session.start_dht()
         self.torrent_handles: Dict[str, Any] = {}
-        self.cancelled_tasks: Set[int] = set()
+        self.cancelled_tasks: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Cancellation & Cleanup
@@ -932,7 +993,7 @@ class TorrentDownloader:
         except Exception as e:
             print(f"[Downloader] Cleanup error: {e}", flush=True)
 
-    async def _cancel_cleanup(self, info_hash: str, movie_id: int) -> None:
+    async def _cancel_cleanup(self, info_hash: str, download_id: str) -> None:
         """Removes a cancelled torrent (with partial files) and finalizes status."""
         # Remove the torrent from the session, deleting partial data
         hash_str = str(info_hash).lower()
@@ -944,18 +1005,19 @@ class TorrentDownloader:
             except Exception:
                 pass
         await self.cleanup(info_hash)
-        self._purge_partial_files(movie_id)
+        self._purge_partial_files(download_id)
+        self._clear_resume_file(info_hash)
 
-        if movie_id in downloads_store:
-            downloads_store[movie_id]["status"] = "cancelled"
-            downloads_store[movie_id]["error"] = "Download cancelled by user"
-            downloads_store[movie_id]["progress"] = 0.0
-        self.cancelled_tasks.discard(movie_id)
-        print(f"[Downloader] Cancelled & cleaned up: ID {movie_id}", flush=True)
+        if download_id in downloads_store:
+            downloads_store[download_id]["status"] = "cancelled"
+            downloads_store[download_id]["error"] = "Download cancelled by user"
+            downloads_store[download_id]["progress"] = 0.0
+        self.cancelled_tasks.discard(download_id)
+        print(f"[Downloader] Cancelled & cleaned up: download {download_id}", flush=True)
 
-    def _torrent_staging_dir(self, movie_id: int) -> str:
-        """Per-torrent staging subdir — one torrent NEVER sees another's files."""
-        path = os.path.join(self.download_dir, f"id_{movie_id}")
+    def _torrent_staging_dir(self, download_id: str) -> str:
+        """Per-download staging directory; separate releases of one title never share files."""
+        path = os.path.join(self.download_dir, f"download_{download_id}")
         os.makedirs(path, exist_ok=True)
         return path
 
@@ -1080,23 +1142,19 @@ class TorrentDownloader:
             print(f"[Downloader] Could not persist resume data: {e}", flush=True)
             return False
 
-    def _clear_resume_file(self, movie_id: int) -> None:
-        """Delete a movie's .ltresume once its content is fully organized."""
+    def _clear_resume_file(self, info_hash: str) -> None:
+        """Delete only this torrent's resume data after it completes or is cancelled."""
         try:
-            staging = os.path.join(self.download_dir, f"id_{movie_id}")
-            if os.path.isdir(staging):
-                for name in os.listdir(self.resume_dir):
-                    if name.endswith(".ltresume"):
-                        try:
-                            os.remove(os.path.join(self.resume_dir, name))
-                        except OSError:
-                            pass
-        except Exception:
+            if info_hash:
+                os.remove(self._resume_file_for(info_hash))
+        except FileNotFoundError:
             pass
+        except OSError as e:
+            print(f"[Downloader] Could not clear resume data for {info_hash}: {e}", flush=True)
 
-    def _has_partial_data(self, movie_id: int) -> float:
+    def _has_partial_data(self, download_id: str) -> float:
         """Bytes already present in this torrent's staging dir (for reporting)."""
-        staging = self._torrent_staging_dir(movie_id)
+        staging = self._torrent_staging_dir(download_id)
         total = 0
         for root, _dirs, files in os.walk(staging):
             for name in files:
@@ -1106,9 +1164,9 @@ class TorrentDownloader:
                     pass
         return total
 
-    def _purge_partial_files(self, movie_id: int) -> None:
+    def _purge_partial_files(self, download_id: str) -> None:
         """Removes the per-torrent staging directory (partial files + leftovers)."""
-        staging = os.path.join(self.download_dir, f"id_{movie_id}")
+        staging = self._torrent_staging_dir(download_id)
         try:
             if os.path.isdir(staging):
                 shutil.rmtree(staging, ignore_errors=True)
@@ -1116,29 +1174,29 @@ class TorrentDownloader:
         except Exception as e:
             print(f"[Downloader] Partial-file purge error: {e}", flush=True)
 
-    async def cancel(self, movie_id: int) -> bool:
-        """Cancels an active download task for a given movie/show ID."""
-        print(f"[Downloader] Cancellation requested for ID: {movie_id}", flush=True)
-        self.cancelled_tasks.add(movie_id)
-
-        status_info = downloads_store.get(movie_id)
+    async def cancel(self, download_id: str) -> bool:
+        """Cancels one download copy without affecting another copy of the same title."""
+        print(f"[Downloader] Cancellation requested for download: {download_id}", flush=True)
+        status_info = downloads_store.get(download_id)
         if not status_info:
+            return False
+        if status_info.get("status") in ("error", "completed", "cancelled"):
             return False
 
         # Flag cancellation immediately for instant UI feedback.
         # The download loop performs the torrent cleanup and partial-file
         # purge itself, so we never race handle.status() on a removed torrent.
-        downloads_store[movie_id]["status"] = "cancelled"
-        downloads_store[movie_id]["error"] = "Download cancelled by user"
+        self.cancelled_tasks.add(download_id)
+        status_info["status"] = "cancelled"
+        status_info["error"] = "Download cancelled by user"
         return True
-
-        return False
 
     # ------------------------------------------------------------------
     # Automated File Organization (Jellyfin Specification)
     # ------------------------------------------------------------------
     def _organize_for_jellyfin(
         self,
+        download_id: str,
         movie_id: int,
         title: str,
         media_type: str = "movie",
@@ -1164,7 +1222,7 @@ class TorrentDownloader:
 
         issues: List[str] = []
         organized = organize_media_files(
-            staging_dir=self._torrent_staging_dir(movie_id),
+            staging_dir=self._torrent_staging_dir(download_id),
             movie_target=self.movie_target,
             tv_target=self.tv_target,
             clean_title=clean_title,
@@ -1172,11 +1230,12 @@ class TorrentDownloader:
             media_type=media_type,
             db=self.db,
             issues=issues,
+            copy_suffix=download_id[:8],
         )
 
         # Surface mislabeled-torrent warnings to the UI status store.
-        if issues and movie_id in downloads_store:
-            downloads_store[movie_id]["mislabeled_hint"] = " ".join(issues)
+        if issues and download_id in downloads_store:
+            downloads_store[download_id]["mislabeled_hint"] = " ".join(issues)
 
         if not organized:
             print(f"[Downloader] No video file found to organize for '{title}'.", flush=True)
@@ -1185,17 +1244,18 @@ class TorrentDownloader:
         # Kick off the async Jellyfin refresh + visibility verification poller
         try:
             asyncio.get_running_loop().create_task(
-                self._verify_in_jellyfin(movie_id, title, media_type)
+                self._verify_in_jellyfin(download_id, movie_id, title, media_type)
             )
         except RuntimeError:
             # No running event loop (e.g. manual invocation): verify inline.
             result = self.jellyfin.refresh_and_verify(title, media_type)
-            if movie_id in downloads_store:
-                downloads_store[movie_id]["jellyfin_visible"] = bool(result.get("visible"))
+            if download_id in downloads_store:
+                downloads_store[download_id]["jellyfin_visible"] = bool(result.get("visible"))
         return organized
 
     async def _verify_in_jellyfin(
         self,
+        download_id: str,
         movie_id: int,
         title: str,
         media_type: str,
@@ -1215,10 +1275,10 @@ class TorrentDownloader:
             return
 
         visible = bool(result.get("visible"))
-        if movie_id in downloads_store:
-            downloads_store[movie_id]["jellyfin_visible"] = visible
+        if download_id in downloads_store:
+            downloads_store[download_id]["jellyfin_visible"] = visible
             if result.get("hint"):
-                downloads_store[movie_id]["jellyfin_hint"] = result["hint"]
+                downloads_store[download_id]["jellyfin_hint"] = result["hint"]
 
         if visible:
             print(f"✅ '{title}' is now visible in Jellyfin", flush=True)
@@ -1235,25 +1295,37 @@ class TorrentDownloader:
     async def download(
         self,
         magnet_link: str,
+        download_id: str,
         movie_id: int,
         movie_title: str,
         media_type: str = "movie",
     ) -> None:
         """Non-blocking download task. Updates downloads_store every second."""
         lt = self.lt
-        print(f"\n[Downloader] Starting: '{movie_title}' [ID: {movie_id}, {media_type.upper()}]", flush=True)
+        print(
+            f"\n[Downloader] Starting: '{movie_title}' [download {download_id}, item {movie_id}, {media_type.upper()}]",
+            flush=True,
+        )
 
-        # Reset cancellation flag
-        if movie_id in self.cancelled_tasks:
-            self.cancelled_tasks.remove(movie_id)
+        # A cancel can arrive after the route registers this entry but before
+        # the background coroutine gets its first turn.
+        if download_id in self.cancelled_tasks:
+            self.cancelled_tasks.discard(download_id)
+            self._purge_partial_files(download_id)
+            info_hash = self._info_hash_from_magnet(magnet_link)
+            if info_hash:
+                self._clear_resume_file(info_hash)
+            return
 
+        info_hash = ""
         try:
             if magnet_link.startswith("http"):
                 # Prowlarr proxied grab link: convert .torrent → magnet on demand
                 print("[Downloader] Converting Prowlarr grab link to magnet...", flush=True)
                 converted = torrent_url_to_magnet(magnet_link)
                 if not converted:
-                    downloads_store[movie_id] = {
+                    downloads_store[download_id] = {
+                        "download_id": download_id,
                         "movie_id": movie_id,
                         "status": "error",
                         "error": "Could not convert Prowlarr grab link to a magnet link.",
@@ -1264,7 +1336,7 @@ class TorrentDownloader:
             # Per-torrent staging dir: the organizer only ever sweeps THIS
             # torrent's files — concurrent downloads can never contaminate
             # each other's show folders (the bug that mixed GoT into New Girl).
-            staging_dir = self._torrent_staging_dir(movie_id)
+            staging_dir = self._torrent_staging_dir(download_id)
             params.save_path = staging_dir
 
             # Resume from a previous run if this torrent has saved state and its
@@ -1276,7 +1348,7 @@ class TorrentDownloader:
             if resumed_from is not None:
                 resumed_from.save_path = staging_dir
                 params = resumed_from
-                partial_bytes = self._has_partial_data(movie_id)
+                partial_bytes = self._has_partial_data(download_id)
                 resumed = partial_bytes > 0
                 if resumed:
                     print(
@@ -1293,8 +1365,9 @@ class TorrentDownloader:
             info_hash = str(handle.info_hash()).lower()
             self.torrent_handles[info_hash] = handle
 
-            downloads_store[movie_id] = {
+            downloads_store[download_id] = {
                 "hash": info_hash,
+                "download_id": download_id,
                 "movie_id": movie_id,
                 "name": movie_title,
                 "media_type": media_type,
@@ -1318,9 +1391,9 @@ class TorrentDownloader:
                 await asyncio.sleep(1)
 
                 # Check if cancelled by user (loop owns cleanup to avoid races)
-                if movie_id in self.cancelled_tasks:
+                if download_id in self.cancelled_tasks:
                     print(f"[Downloader] Aborting cancelled task: '{movie_title}'", flush=True)
-                    await self._cancel_cleanup(info_hash, movie_id)
+                    await self._cancel_cleanup(info_hash, download_id)
                     return
 
                 # Poll torrent status safely — a removed/invalid handle must
@@ -1330,8 +1403,8 @@ class TorrentDownloader:
                     has_meta = handle.has_metadata()
                     state_str = str(status.state)
                 except Exception:
-                    if movie_id in self.cancelled_tasks:
-                        await self._cancel_cleanup(info_hash, movie_id)
+                    if download_id in self.cancelled_tasks:
+                        await self._cancel_cleanup(info_hash, download_id)
                         return
                     raise
 
@@ -1358,21 +1431,24 @@ class TorrentDownloader:
                 if has_meta and total_wanted > 0 and not disk_checked:
                     disk_checked = True
                     refusal = check_download(
-                        self.config, total_wanted, downloads_store, exclude_id=movie_id
+                        self.config, total_wanted, downloads_store, exclude_id=download_id
                     )
                     if refusal:
-                        downloads_store[movie_id] = {
+                        downloads_store[download_id] = {
+                            "download_id": download_id,
                             "movie_id": movie_id,
                             "status": "error",
                             "error": refusal,
                         }
                         await self.cleanup(info_hash)
-                        self._purge_partial_files(movie_id)
+                        self._purge_partial_files(download_id)
+                        self._clear_resume_file(info_hash)
                         return
 
                 # Abort fake / shortcut torrents
                 if has_meta and total_wanted < min_threshold:
-                    downloads_store[movie_id] = {
+                    downloads_store[download_id] = {
+                        "download_id": download_id,
                         "movie_id": movie_id,
                         "status": "error",
                         "error": "File size too small (fake torrent link).",
@@ -1381,12 +1457,13 @@ class TorrentDownloader:
                     return
 
                 # Bail out before clobbering a just-issued cancel request
-                if movie_id in self.cancelled_tasks:
-                    await self._cancel_cleanup(info_hash, movie_id)
+                if download_id in self.cancelled_tasks:
+                    await self._cancel_cleanup(info_hash, download_id)
                     return
 
-                downloads_store[movie_id] = {
+                downloads_store[download_id] = {
                     "hash": info_hash,
+                    "download_id": download_id,
                     "movie_id": movie_id,
                     "name": torrent_name,
                     "media_type": media_type,
@@ -1418,27 +1495,28 @@ class TorrentDownloader:
                 )
 
                 if is_complete:
-                    downloads_store[movie_id]["progress"] = 100.0
-                    downloads_store[movie_id]["status"] = "organizing"
-                    downloads_store[movie_id]["eta_seconds"] = 0
+                    downloads_store[download_id]["progress"] = 100.0
+                    downloads_store[download_id]["status"] = "organizing"
+                    downloads_store[download_id]["eta_seconds"] = 0
 
-                    self._organize_for_jellyfin(movie_id, movie_title, media_type)
+                    self._organize_for_jellyfin(download_id, movie_id, movie_title, media_type)
 
-                    downloads_store[movie_id]["status"] = "completed"
+                    downloads_store[download_id]["status"] = "completed"
                     # The file is now in the Jellyfin library, so the resume
                     # file is stale — drop it or a future re-add would try to
                     # resume an already-finished torrent.
-                    self._clear_resume_file(movie_id)
+                    self._clear_resume_file(info_hash)
                     await self.cleanup(info_hash)
                     return
 
         except Exception as e:
-            if movie_id in self.cancelled_tasks:
+            if download_id in self.cancelled_tasks and info_hash:
                 # Cancelled downloads must not surface as errors
-                await self._cancel_cleanup(info_hash, movie_id)
+                await self._cancel_cleanup(info_hash, download_id)
                 return
             print(f"[Downloader] Error: {e}", flush=True)
-            downloads_store[movie_id] = {
+            downloads_store[download_id] = {
+                "download_id": download_id,
                 "movie_id": movie_id,
                 "status": "error",
                 "error": str(e),

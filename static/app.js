@@ -30,8 +30,8 @@ const state = {
   directSort: 'best',      // 'best' | 'smallest' | 'quality'
   directLinked: null,      // {movieId, title, mediaType, query} when opened from a Discover card
   lastDirectResults: [],
-  activeDownloads: {},     // movieId -> status dict
-  pollingIntervals: {},    // movieId -> intervalId
+  activeDownloads: {},     // downloadId -> status dict (contains movieId for playback)
+  pollingIntervals: {},    // downloadId -> intervalId
   moodsData: [],           // loaded from /api/moods
   // --- Rate Together (multi-profile co-view ratings) ---
   rateProfileId: 1,
@@ -1547,9 +1547,12 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Download failed to start');
 
+    const downloadId = data.download_id;
     const movieId = data.movie_id;
+    if (!downloadId || !movieId) throw new Error('Download started without an ID');
 
-    state.activeDownloads[movieId] = {
+    state.activeDownloads[downloadId] = {
+      downloadId,
       movieId,
       title: movieTitle,
       mediaType,
@@ -1561,7 +1564,7 @@ async function startDirectDownload(encodedMagnet, movieTitle, containerId, media
     };
 
     renderActiveDownloadsMonitor();
-    pollDownloadProgress(movieId, containerId, movieTitle, mediaType);
+    pollDownloadProgress(downloadId, containerId, movieTitle, mediaType);
 
   } catch (err) {
     console.error('Direct download start error:', err);
@@ -1582,21 +1585,21 @@ function directDownloadButton(encodedMagnet, title, containerId, mediaType, labe
 }
 
 // Cancel Download
-async function cancelDownload(movieId, containerId) {
+async function cancelDownload(downloadId, containerId) {
   try {
-    if (state.pollingIntervals[movieId]) {
-      clearInterval(state.pollingIntervals[movieId]);
-      delete state.pollingIntervals[movieId];
+    if (state.pollingIntervals[downloadId]) {
+      clearInterval(state.pollingIntervals[downloadId]);
+      delete state.pollingIntervals[downloadId];
     }
 
     await fetch('/api/torrent/cancel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ movie_id: movieId })
+      body: JSON.stringify({ download_id: downloadId })
     });
 
-    const downloadInfo = state.activeDownloads[movieId];
-    delete state.activeDownloads[movieId];
+    const downloadInfo = state.activeDownloads[downloadId];
+    delete state.activeDownloads[downloadId];
     renderActiveDownloadsMonitor();
 
     const container = document.getElementById(containerId);
@@ -1604,7 +1607,7 @@ async function cancelDownload(movieId, containerId) {
       // Recommender cards re-run their own search; direct results reuse the magnet.
       container.innerHTML = downloadInfo.encodedMagnet
         ? directDownloadButton(downloadInfo.encodedMagnet, downloadInfo.title, containerId, downloadInfo.mediaType || 'movie', 'Download again', downloadInfo.linkedMovieId || 0)
-        : watchButtonHtml({ id: movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
+        : watchButtonHtml({ id: downloadInfo.movieId, title: downloadInfo.title, media_type: downloadInfo.mediaType });
     }
     showToast('Download cancelled');
   } catch (err) {
@@ -1616,15 +1619,15 @@ async function cancelDownload(movieId, containerId) {
 // ---------------------------------------------------------------------------
 // 7. In-Place Download Progress Polling (1-second HTTP Polling)
 // ---------------------------------------------------------------------------
-function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'movie') {
-  // Clear any existing polling interval for this movie ID
-  if (state.pollingIntervals[movieId]) {
-    clearInterval(state.pollingIntervals[movieId]);
+function pollDownloadProgress(downloadId, containerId, movieTitle, mediaType = 'movie') {
+  // Each release has its own progress and cancellation record.
+  if (state.pollingIntervals[downloadId]) {
+    clearInterval(state.pollingIntervals[downloadId]);
   }
 
   const intervalId = setInterval(async () => {
     try {
-      const res = await fetch(`/api/torrent/status/${movieId}`);
+      const res = await fetch(`/api/torrent/status/${encodeURIComponent(downloadId)}`);
       if (!res.ok) return;
 
       const data = await res.json();
@@ -1633,8 +1636,8 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       // Handle cancel or failure
       if (data.status === 'cancelled' || data.error) {
         clearInterval(intervalId);
-        delete state.pollingIntervals[movieId];
-        delete state.activeDownloads[movieId];
+        delete state.pollingIntervals[downloadId];
+        delete state.activeDownloads[downloadId];
         renderActiveDownloadsMonitor();
 
         if (container) {
@@ -1642,7 +1645,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
           container.innerHTML = `
             <div class="progress-box ${cancelled ? 'cancelled-box' : 'error-box'}" ${cancelled ? '' : 'role="alert"'}>
               <span>${cancelled ? 'Download cancelled' : `Download failed: ${escapeHtml(data.error)}`}</span>
-              <button class="btn-retry-mini" onclick="pollDownloadProgress(${movieId}, ${jsArg(containerId)}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Check again</button>
+              <button class="btn-retry-mini" onclick="pollDownloadProgress(${jsArg(downloadId)}, ${jsArg(containerId)}, ${jsArg(movieTitle)}, ${jsArg(mediaType)})">${icon('refresh')}Check again</button>
             </div>
           `;
         }
@@ -1656,8 +1659,10 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       const stateStr = data.status || 'downloading';
 
       // Update in-memory tracker
-      state.activeDownloads[movieId] = {
-        ...state.activeDownloads[movieId],
+      const movieId = data.movie_id || (state.activeDownloads[downloadId] || {}).movieId;
+      state.activeDownloads[downloadId] = {
+        ...state.activeDownloads[downloadId],
+        downloadId,
         movieId,
         title: data.name || movieTitle,
         mediaType,
@@ -1674,7 +1679,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
       // Check for completion
       if (pct >= 100 || stateStr === 'completed' || stateStr === 'seeding' || stateStr === 'finished') {
         clearInterval(intervalId);
-        delete state.pollingIntervals[movieId];
+        delete state.pollingIntervals[downloadId];
 
         if (container) {
           container.innerHTML = `
@@ -1714,7 +1719,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
             <div class="download-progress-bar-wrapper" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct.toFixed(0)}" aria-label="Download progress">
               <div class="download-progress-bar-fill" style="transform: scaleX(${pct / 100});"></div>
               <div class="download-progress-bar-text">${escapeHtml(statusLabel)}</div>
-              <button class="btn-cancel-mini-bar" onclick="cancelDownload(${movieId}, ${jsArg(containerId)})" title="Cancel download" aria-label="Cancel download">${icon('x')}</button>
+              <button class="btn-cancel-mini-bar" onclick="cancelDownload(${jsArg(downloadId)}, ${jsArg(containerId)})" title="Cancel download" aria-label="Cancel download">${icon('x')}</button>
             </div>
           `;
         }
@@ -1725,7 +1730,7 @@ function pollDownloadProgress(movieId, containerId, movieTitle, mediaType = 'mov
     }
   }, 1000);
 
-  state.pollingIntervals[movieId] = intervalId;
+  state.pollingIntervals[downloadId] = intervalId;
 }
 
 // Updates tracker and active monitor UI
@@ -1759,7 +1764,7 @@ function renderActiveDownloadsMonitor() {
       </div>
       ${isReady
         ? `<button class="btn-ready-mini" onclick="playLocalItem(${item.movieId}, ${jsArg(item.title)})">${icon('play')}Play</button>`
-        : `<button class="btn-cancel-mini" onclick="cancelDownload(${item.movieId}, ${jsArg(item.containerId)})">Cancel</button>`
+        : `<button class="btn-cancel-mini" onclick="cancelDownload(${jsArg(item.downloadId)}, ${jsArg(item.containerId)})">Cancel</button>`
       }
     `;
     list.appendChild(row);
@@ -1767,10 +1772,11 @@ function renderActiveDownloadsMonitor() {
 }
 
 function updateActiveDownloadTracker(data) {
-  if (!data || !data.movie_id) return;
-  const existing = state.activeDownloads[data.movie_id] || {};
-  state.activeDownloads[data.movie_id] = {
+  if (!data || !data.download_id) return;
+  const existing = state.activeDownloads[data.download_id] || {};
+  state.activeDownloads[data.download_id] = {
     ...existing,
+    downloadId: data.download_id,
     movieId: data.movie_id,
     title: data.name || existing.title || 'Media',
     progress: Math.min(100, data.progress || 0),
