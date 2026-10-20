@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The training run on the Mac (docs/DEPLOYMENT_PLAN.md, P7.1). Nothing schedules it: the Train
+# The training run on the Mac (P7.1 of the old deployment plan). Nothing schedules it: the Train
 # button (ops/mac/train-now.sh, "Train CouchCinema" in ~/Applications) runs it when you choose.
 #
 #   nightly.sh [--skip-backup] [--skip-catalogue] [--catalogue] [--skip-train] [--skip-publish]

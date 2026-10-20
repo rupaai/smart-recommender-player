@@ -1,4 +1,4 @@
-"""Applies a catalogue patch sent by the Mac (docs/DEPLOYMENT_PLAN.md, P6.1).
+"""Applies a catalogue patch sent by the Mac (P6.1 of the old deployment plan).
 
 The server alone assigns `media_items.id` and never deletes items (plan section 3), so
 a patch is keyed by `(media_type, tmdb_id)`, never by id. One JSON object per line:
