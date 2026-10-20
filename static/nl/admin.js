@@ -55,6 +55,28 @@
     else if (!(info.libraries || []).length) { note.textContent = "Jellyfin has no libraries yet."; }
     else { note.textContent = ""; }
 
+    var c = data.cleanup || {};
+    var cnote = document.getElementById("nl-adm-clean-note");
+    var clist = document.getElementById("nl-adm-clean-list");
+    clist.textContent = "";
+    if (!c.enabled) {
+      cnote.textContent = "Off. Watched movies and episodes are kept.";
+    } else {
+      var rule = "Deletes what everyone watched more than " + c.days + " days ago. Favorites are kept.";
+      var last = c.last;
+      if (!last) {
+        cnote.textContent = rule + " First check runs 10 minutes after the app starts.";
+      } else {
+        var when = new Date(last.ran_at).toLocaleString();
+        var head = last.dry_run ? "Trial run (nothing is deleted yet). Last check " + when + ", would delete:" : "Last check " + when + ", deleted:";
+        cnote.textContent = rule + " " + head + (last.items.length ? "" : " nothing.") + (last.error ? " Problem: " + last.error : "");
+        last.items.forEach(function (it) {
+          var text = it.name + " · watched " + new Date(it.last_watched).toLocaleDateString() + (it.error ? " · could not delete (" + it.error + ")" : "");
+          clist.appendChild(el("li", "nl-admin-lib", text));
+        });
+      }
+    }
+
     var tools = data.tools || { links: [], ignored: [] };
     var list = document.getElementById("nl-adm-tool-list");
     list.textContent = "";

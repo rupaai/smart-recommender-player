@@ -60,6 +60,7 @@ from services import nl_health
 from services import nl_reactions
 from services import nl_settings
 from services import nl_together
+from services.media_cleanup import FIRST_RUN_DELAY, RUN_EVERY, MediaCleanup
 from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
     BOTH,
@@ -202,6 +203,17 @@ def _nl_tmdb(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dic
 
 nl_extras = NLExtras(db, nl_browse, _nl_tmdb, lambda: recommender_service.vibe_index)
 
+
+def _jellyfin_rescan() -> None:
+    jellyfin_service.session.post(f"{jellyfin_service.base_url}/Library/Refresh", timeout=10)
+
+
+# Watched cleanup: deletes what everyone watched more than `media_cleanup.days_after_watched` days ago.
+media_cleanup = MediaCleanup(
+    config, jellyfin_playback, lambda: [p.jellyfin_user_id for p in nl_people.people], db,
+    [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
+)
+
 app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
 # Mac -> server admin routes (export, catalogue patch, model bundles); 404 unless ADMIN_TOKEN is set.
@@ -226,6 +238,21 @@ async def resume_downloads() -> None:
             print(f"[Downloader] Resuming {len(pending)} download(s) from before the restart.", flush=True)
     except Exception as e:
         print(f"[Downloader] Could not resume downloads ({e}); server continues.", flush=True)
+
+
+@app.on_event("startup")
+async def start_media_cleanup() -> None:
+    """Once a day (the first time 10 minutes after start), when media_cleanup.enabled is on."""
+    if not media_cleanup.public()["enabled"]:
+        return
+
+    async def loop() -> None:
+        await asyncio.sleep(FIRST_RUN_DELAY)
+        while True:
+            await asyncio.to_thread(media_cleanup.run_once)
+            await asyncio.sleep(RUN_EVERY)
+
+    asyncio.create_task(loop())
 
 
 @app.on_event("startup")
@@ -1869,6 +1896,7 @@ def _nl_admin_payload() -> Dict[str, Any]:
         },
         "disk": disk,
         "tools": nl_health.tool_links(config),
+        "cleanup": media_cleanup.public(),
     }
 
 
