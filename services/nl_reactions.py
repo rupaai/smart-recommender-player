@@ -1,5 +1,5 @@
 """
-Northern Lights reactions (M9c, W10): after finishing, "Loved it / Liked it / Fine / Not for us".
+Northern Lights reactions (M9c, W10): after finishing, the same five verdicts as the Rate page.
 
 There is no rating system of its own here. Each answer is one of the existing verdicts (services/verdicts.py,
 handover section 10.7) and is written with `db.rate_item(verdict=...)` for the profile(s) of whoever is at the
@@ -10,19 +10,23 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-# Order is the order of the buttons. `verdict` is a key of verdicts.VERDICTS.
+# One vocabulary and order for the Rate page, legacy finish modal, and player.
+# The old player reaction IDs remain accepted below for already-open clients.
+from services.verdicts import VERDICTS
+
 REACTIONS: List[Dict[str, str]] = [
-    {"id": "loved", "label": "Loved it", "verdict": "loved"},
-    {"id": "liked", "label": "Liked it", "verdict": "liked"},
-    {"id": "fine", "label": "Fine", "verdict": "meh"},
-    {"id": "not_for_us", "label": "Not for us", "verdict": "not_for_me"},
+    {"id": verdict, "label": data["label"], "verdict": verdict}
+    for verdict, data in VERDICTS.items()
 ]
 _BY_ID = {r["id"]: r for r in REACTIONS}
+_LEGACY_IDS = {"fine": "meh", "not_for_us": "not_for_me"}
 
 
 def verdict_for(reaction: Any) -> Optional[str]:
     """The verdict an answer stands for, or None for anything unknown."""
-    r = _BY_ID.get(str(reaction or "").strip().lower())
+    reaction_id = str(reaction or "").strip().lower()
+    reaction_id = _LEGACY_IDS.get(reaction_id, reaction_id)
+    r = _BY_ID.get(reaction_id)
     return r["verdict"] if r else None
 
 

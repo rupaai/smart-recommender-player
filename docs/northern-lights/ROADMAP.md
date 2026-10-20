@@ -84,7 +84,7 @@ Each feature has an ID (P3, T2, and so on), so the milestones can refer to them.
 | W7 | Mood and day-of-week suggestions | recommender |
 | W8 | Temporary veto vs hide forever; "not tonight" | our code |
 | W9 | Rotating chooser / random pick from mutual yeses | our code |
-| W10 | Quick reactions: loved / liked / fine / not for us | our code + recommender |
+| W10 | Quick reactions using the shared five rating verdicts | our code + recommender |
 | W11 | Hide spoilers in descriptions and images | our code |
 | W12 | Runtime filter ("we have 90 minutes") | our code |
 

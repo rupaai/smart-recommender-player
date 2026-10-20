@@ -415,8 +415,8 @@
         <p class="modal-subtitle">How was it?</p>
       </div>
 
-      <div id="starSelector" class="star-selector" role="radiogroup" aria-label="Your rating out of 10"></div>
-      <div id="starLabel" class="star-value-label">Select your rating</div>
+      <div id="feedbackVerdictSelector" class="verdict-row" role="group" aria-label="Your rating"></div>
+      <div id="feedbackVerdictLabel" class="feedback-verdict-label" role="status">Choose one category</div>
 
       <div class="review-input-wrapper">
         <label for="reviewNotesInput" class="visually-hidden">Notes</label>
@@ -426,7 +426,7 @@
         </button>
       </div>
 
-      <button class="btn-submit-review" onclick="submitFeedback()">Save rating</button>
+      <button id="feedbackSubmitButton" class="btn-submit-review" onclick="submitFeedback()" disabled>Save rating</button>
     </div>
   </div>
 

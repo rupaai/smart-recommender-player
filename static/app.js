@@ -21,7 +21,9 @@ const state = {
   minRating: null,
   includeWatched: false,
   activeSession: null,
-  selectedRating: 8,
+  ratingVocab: null,
+  ratingVocabPromise: null,
+  selectedVerdict: null,
   recognition: null,
   modalRecognition: null,
   jellyfinUrl: '',
@@ -72,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkStatus();
   loadMoods();
   checkActiveWatch();
-  initStarSelector();
+  initFeedbackSelector();
   initSpeechRecognition();
   loadPartnerName();
   refreshLaterCount();
@@ -1873,49 +1875,85 @@ async function cancelWatch() {
 // ---------------------------------------------------------------------------
 // 10. Rating & Taste Profile Feedback Modal
 // ---------------------------------------------------------------------------
-function initStarSelector() {
-  const container = document.getElementById('starSelector');
-  container.innerHTML = '';
-  for (let i = 1; i <= 10; i++) {
-    const star = document.createElement('button');
-    star.className = `star-btn ${i <= state.selectedRating ? 'active' : ''}`;
-    star.innerHTML = icon('star', 'icon star-icon');
-    star.setAttribute('role', 'radio');
-    star.setAttribute('aria-label', `${i} out of 10`);
-    star.setAttribute('aria-checked', i === state.selectedRating ? 'true' : 'false');
-    star.onclick = () => selectStarRating(i);
-    container.appendChild(star);
+async function fetchRatingVocab() {
+  if (state.ratingVocab) return state.ratingVocab;
+  if (!state.ratingVocabPromise) {
+    state.ratingVocabPromise = (async () => {
+      const res = await fetch('/api/ratings/vocab');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const vocab = await res.json();
+      if (!Array.isArray(vocab.verdicts) || !vocab.verdicts.length) {
+        throw new Error('Rating options were empty');
+      }
+      state.ratingVocab = vocab;
+      return vocab;
+    })().finally(() => { state.ratingVocabPromise = null; });
   }
-  updateStarLabel(state.selectedRating);
+  return state.ratingVocabPromise;
 }
 
-function selectStarRating(val) {
-  state.selectedRating = val;
-  // Scoped to the sheet: the old selector also hit the Rate tab's stars.
-  document.querySelectorAll('#starSelector .star-btn').forEach((s, idx) => {
-    s.classList.toggle('active', idx < val);
-    s.setAttribute('aria-checked', idx + 1 === val ? 'true' : 'false');
+function initFeedbackSelector() {
+  renderFeedbackVerdicts();
+  return loadFeedbackVerdicts();
+}
+
+function loadFeedbackVerdicts() {
+  return fetchRatingVocab().then(() => renderFeedbackVerdicts()).catch(err => {
+    console.error('Could not load rating options:', err);
+    renderFeedbackVerdicts('Could not load rating options. Close and reopen to try again.');
   });
-  updateStarLabel(val);
 }
 
-const RATING_WORDS = ['', 'Awful', 'Bad', 'Poor', 'Weak', 'Okay', 'Decent', 'Good', 'Great', 'Brilliant', 'All-time favourite'];
+function renderFeedbackVerdicts(message = '') {
+  const container = document.getElementById('feedbackVerdictSelector');
+  const label = document.getElementById('feedbackVerdictLabel');
+  const submit = document.getElementById('feedbackSubmitButton');
+  if (!container) return;
+  const verdicts = state.ratingVocab?.verdicts || [];
+  if (message || !verdicts.length) {
+    container.innerHTML = escapeHtml(message || 'Loading rating options…');
+    if (submit) submit.disabled = true;
+    if (label) label.innerText = 'Choose one category';
+    return;
+  }
+  container.innerHTML = verdicts.map((v, i) => `
+    <button class="verdict-btn verdict-${escapeHtml(v.id)} ${state.selectedVerdict === v.id ? 'active' : ''}"
+            onclick="selectFeedbackVerdict('${escapeHtml(v.id)}')" aria-pressed="${state.selectedVerdict === v.id}">
+      <kbd>${i + 1}</kbd>${escapeHtml(v.label)}
+    </button>`).join('');
+  if (label) label.innerText = state.selectedVerdict
+    ? verdicts.find(v => v.id === state.selectedVerdict)?.label || 'Choose one category'
+    : 'Choose one category';
+  if (submit) submit.disabled = !state.selectedVerdict;
+}
 
-function updateStarLabel(val) {
-  const label = document.getElementById('starLabel');
-  if (label) label.innerText = `${val}/10 · ${RATING_WORDS[val] || ''}`;
+function selectFeedbackVerdict(id) {
+  if (!(state.ratingVocab?.verdicts || []).some(v => v.id === id)) return;
+  state.selectedVerdict = id;
+  document.querySelectorAll('#feedbackVerdictSelector .verdict-btn').forEach(button => {
+    const selected = button.classList.contains(`verdict-${id}`);
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+  });
+  const label = document.getElementById('feedbackVerdictLabel');
+  if (label) label.innerText = state.ratingVocab.verdicts.find(v => v.id === id).label;
+  const submit = document.getElementById('feedbackSubmitButton');
+  if (submit) submit.disabled = false;
 }
 
 let lastFocusBeforeSheet = null;
 
 function openFeedbackModal() {
   if (!state.activeSession) return;
+  state.selectedVerdict = null;
+  renderFeedbackVerdicts();
+  if (!state.ratingVocab) loadFeedbackVerdicts();
   lastFocusBeforeSheet = document.activeElement;
   document.getElementById('modalMovieTitle').innerText = state.activeSession.title;
   document.getElementById('feedbackModal').classList.add('active');
   setTimeout(() => {
-    const current = document.querySelector('#starSelector .star-btn[aria-checked="true"]');
-    if (current) current.focus();
+    const first = document.querySelector('#feedbackVerdictSelector .verdict-btn');
+    if (first) first.focus();
   }, 50);
 }
 
@@ -1926,6 +1964,10 @@ function closeFeedbackModal() {
 
 async function submitFeedback() {
   if (!state.activeSession) return;
+  if (!state.selectedVerdict || !(state.ratingVocab?.verdicts || []).some(v => v.id === state.selectedVerdict)) {
+    showToast('Choose a rating first');
+    return;
+  }
   const notes = document.getElementById('reviewNotesInput').value.trim();
 
   try {
@@ -1938,7 +1980,7 @@ async function submitFeedback() {
         // explicitly so watch completion does not use a stale NL cookie or
         // silently fall back to profile 1.
         profile_ids: [state.activeProfileId],
-        user_rating: state.selectedRating,
+        verdict: state.selectedVerdict,
         notes: notes || null
       })
     });
@@ -2522,9 +2564,7 @@ async function loadRateVocab() {
   if (state.rateVocab || state.rateVocabLoading || state.rateVocabFailed) return;
   state.rateVocabLoading = true;
   try {
-    const res = await fetch('/api/ratings/vocab');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    state.rateVocab = await res.json();
+    state.rateVocab = await fetchRatingVocab();
   } catch (err) {
     console.error('Could not load rating options:', err);
     state.rateVocabFailed = true;
