@@ -318,6 +318,7 @@ class StartWatchRequest(BaseModel):
 class FinishWatchRequest(BaseModel):
     session_id: int
     user_rating: Optional[float] = None
+    verdict: Optional[str] = None
     notes: Optional[str] = None
     profile_ids: Optional[List[int]] = None  # who watched; default: the Northern Lights viewer (M4)
 
@@ -2102,18 +2103,29 @@ async def start_watch(req: StartWatchRequest) -> Dict[str, Any]:
 
 @app.post("/api/watch/finish")
 async def finish_watch(req: FinishWatchRequest, request: Request) -> Dict[str, Any]:
-    """Completes watch session with star rating & review notes, updating taste profile.
+    """Completes watch session with a verdict (or a legacy numeric rating) and notes.
     With who's-watching set up, the watch and rating are logged for the viewer's recommender
     profile(s) ("Both of us" = both) instead of always landing on profile 1."""
+    try:
+        verdict = vd.validate_verdict(req.verdict)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     with db.get_connection() as conn:
         row = conn.execute(
             "SELECT media_item_id FROM active_watch_sessions WHERE id = ?;", (req.session_id,)
         ).fetchone()
     viewer = _nl_viewer(request) if nl_people.configured else None
     profile_ids = req.profile_ids or (viewer.profile_ids if viewer else [])
+    if verdict is not None and not profile_ids:
+        if nl_people.configured:
+            raise HTTPException(status_code=400, detail="No profile to rate for.")
+        profile_ids = [1]
     if profile_ids:
         try:
-            done = db.mark_watch_done_for_profiles(req.session_id, profile_ids, req.user_rating, req.notes)
+            done = db.mark_watch_done_for_profiles(
+                req.session_id, profile_ids, req.user_rating, req.notes, verdict=verdict
+            )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         record_id = req.session_id if done else None
@@ -2125,8 +2137,9 @@ async def finish_watch(req: FinishWatchRequest, request: Request) -> Dict[str, A
         )
     if not record_id:
         raise HTTPException(status_code=404, detail="Active session not found.")
-    if req.user_rating and row:
-        _log_outcome(row["media_item_id"], "rated", req.user_rating)
+    logged_rating = vd.legacy_rating(verdict) if verdict is not None else req.user_rating
+    if logged_rating and row:
+        _log_outcome(row["media_item_id"], "rated", logged_rating)
     if row:
         try:
             db.mark_watch_later_done(row["media_item_id"], "watched")

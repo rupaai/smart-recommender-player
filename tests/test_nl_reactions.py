@@ -62,10 +62,11 @@ def test_pure():
     from services.verdicts import VERDICTS
 
     print("reactions map onto the existing verdicts")
-    check("four answers in order", [r["label"] for r in nr.REACTIONS] == ["Loved it", "Liked it", "Fine", "Not for us"])
-    check("loved, liked, fine, not for us", [nr.verdict_for(i) for i in ("loved", "liked", "fine", "not_for_us")] == ["loved", "liked", "meh", "not_for_me"])
+    check("five canonical answers in order", [r["label"] for r in nr.REACTIONS] == [v["label"] for v in VERDICTS.values()])
+    check("canonical IDs map to themselves", [nr.verdict_for(i) for i in VERDICTS] == list(VERDICTS))
+    check("old player IDs remain compatible", [nr.verdict_for(i) for i in ("fine", "not_for_us")] == ["meh", "not_for_me"])
     check("every answer is a real verdict", all(r["verdict"] in VERDICTS for r in nr.REACTIONS))
-    check("unknown answers map to nothing (rewatch is not offered)", nr.verdict_for("rewatch") is None and nr.verdict_for("") is None and nr.verdict_for(None) is None)
+    check("unknown answers map to nothing", nr.verdict_for("bogus") is None and nr.verdict_for("") is None and nr.verdict_for(None) is None)
     check("the question names the title", nr.question("Alpha", False) == "How was Alpha?" and nr.question("Alpha", True) == "How was Alpha for the two of you?" and nr.question("", False) == "How was it?")
     check("profiles: the people at the screen", nr.profiles_to_rate([1, 2], False) == [1, 2] and nr.profiles_to_rate([2], False) == [2])
     check("the implicit viewer is profile 1, a person without a profile gets none", nr.profiles_to_rate([], True) == [1] and nr.profiles_to_rate([None], False) == [])
@@ -111,6 +112,7 @@ def test_database(tmp):
 
 def run(tmp):
     from services import nl_people as np
+    from services.verdicts import VERDICTS
 
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
@@ -124,8 +126,8 @@ def run(tmp):
     print("W10 no people configured: the one viewer is profile 1")
     r = client.get(f"/api/nl/react/{alpha}")
     d = r.json()
-    check("the question is asked, with the four answers", r.status_code == 200 and d["ask"] is True and d["text"] == "How was Alpha?"
-          and [o["label"] for o in d["options"]] == ["Loved it", "Liked it", "Fine", "Not for us"], d)
+    check("the question is asked, with the five canonical answers", r.status_code == 200 and d["ask"] is True and d["text"] == "How was Alpha?"
+          and [o["label"] for o in d["options"]] == [v["label"] for v in VERDICTS.values()], d)
     r = client.post(f"/api/nl/react/{alpha}", json={"reaction": "loved"})
     check("an answer is saved as the 'loved' verdict", r.status_code == 200 and r.json() == {"success": True, "verdict": "loved", "profiles": 1}, r.text)
     det = db.get_rating_details(alpha, 1)
@@ -141,7 +143,7 @@ def run(tmp):
     check("Not for us is 'not_for_me'", db.get_rating_details(alpha, 1)["verdict"] == "not_for_me")
     client.post(f"/api/nl/react/{alpha}", json={"reaction": "liked"})
     check("Liked it is 'liked'", db.get_rating_details(alpha, 1)["verdict"] == "liked")
-    check("an unknown answer is a 400", client.post(f"/api/nl/react/{alpha}", json={"reaction": "rewatch"}).status_code == 400)
+    check("an unknown answer is a 400", client.post(f"/api/nl/react/{alpha}", json={"reaction": "bogus"}).status_code == 400)
     check("an unknown title is a 404 and asks nothing", client.post("/api/nl/react/99999", json={"reaction": "liked"}).status_code == 404
           and client.get("/api/nl/react/99999").json()["ask"] is False)
     check("the key is never in a reply", SECRET not in client.get(f"/api/nl/react/{beta}").text)
