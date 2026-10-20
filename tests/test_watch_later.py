@@ -255,6 +255,40 @@ def test_api(tmp):
             if i["media_item_id"] == FILM2]
     check("watch finish marks watched", r.status_code == 200 and done and done[0]["done_reason"] == "watched", r.text)
 
+    def session_status(session_id):
+        with server.db.get_connection() as conn:
+            row = conn.execute("SELECT status FROM active_watch_sessions WHERE id = ?", (session_id,)).fetchone()
+        return row["status"] if row else None
+
+    # Invalid profile input must not consume the active session, so a corrected
+    # request can still finish it.
+    sid = client.post("/api/watch/start", json={"media_item_id": FILM}).json()["session_id"]
+    r = client.post("/api/watch/finish", json={"session_id": sid, "user_rating": 7, "profile_ids": [999]})
+    check("unknown profile leaves watch active", r.status_code == 400 and session_status(sid) == "watching", (r.status_code, session_status(sid)))
+
+    # A cancelled session cannot later be recorded as watched.
+    sid = client.post("/api/watch/start", json={"media_item_id": SHOW}).json()["session_id"]
+    client.post("/api/watch/cancel", json={"session_id": sid})
+    r = client.post("/api/watch/finish", json={"session_id": sid})
+    with server.db.get_connection() as conn:
+        history_count = conn.execute("SELECT COUNT(*) FROM watch_history WHERE media_item_id = ?", (SHOW,)).fetchone()[0]
+    check("cancelled session cannot be finished", r.status_code == 404 and session_status(sid) == "cancelled" and history_count == 0,
+          (r.status_code, session_status(sid), history_count))
+
+    # Repeated finish and late cancel requests must not duplicate history or
+    # change a completed session back to cancelled.
+    sid = client.post("/api/watch/start", json={"media_item_id": FILM}).json()["session_id"]
+    first = client.post("/api/watch/finish", json={"session_id": sid})
+    second = client.post("/api/watch/finish", json={"session_id": sid})
+    client.post("/api/watch/cancel", json={"session_id": sid})
+    with server.db.get_connection() as conn:
+        history_count = conn.execute(
+            "SELECT COUNT(*) FROM watch_history WHERE media_item_id = ? AND profile_id = 1", (FILM,)
+        ).fetchone()[0]
+    check("finish is one-shot and late cancel preserves completion",
+          first.status_code == 200 and second.status_code == 404 and session_status(sid) == "completed" and history_count == 1,
+          (first.status_code, second.status_code, session_status(sid), history_count))
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="wl_test_")
