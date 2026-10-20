@@ -18,6 +18,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -61,11 +62,46 @@ class PlayerController(
         }
     }
 
-    private val seekedTick = Runnable { emit("seeked") }
+    private var pendingSeekTargetMs: Long? = null
+    private var pendingSeekPositionMs: Long? = null
+    private val seekCompletionCheck = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            if (pendingSeekTargetMs == null) return
+            val actualPosition = pendingSeekPositionMs
+            if (actualPosition == null) {
+                handler.postDelayed(this, SEEK_CHECK_MS)
+                return
+            }
+            val ready = p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_ENDED
+            val playbackCanAdvance = p.isPlaying && p.currentPosition >= actualPosition + SEEK_PROGRESS_MS
+            val playbackCannotAdvance = !p.playWhenReady || p.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
+            if (ready && (playbackCanAdvance || playbackCannotAdvance || p.playbackState == Player.STATE_ENDED)) {
+                pendingSeekTargetMs = null
+                pendingSeekPositionMs = null
+                emit("seeked")
+            } else {
+                handler.postDelayed(this, SEEK_CHECK_MS)
+            }
+        }
+    }
 
     private val listener = object : Player.Listener {
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            if (reason == Player.DISCONTINUITY_REASON_SEEK && pendingSeekTargetMs != null) {
+                pendingSeekPositionMs = newPosition.positionMs
+                checkSeekCompletion()
+            }
+        }
+
         override fun onPlaybackStateChanged(state: Int) {
             if (player == null) return
+            if (state == Player.STATE_BUFFERING && pendingSeekTargetMs != null) emit("time")
+            checkSeekCompletion()
             if (state == Player.STATE_READY && !startedSent) {
                 startedSent = true
                 emit("started")
@@ -77,10 +113,16 @@ class PlayerController(
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (!startedSent) return
+            checkSeekCompletion()
             emit(if (playWhenReady) "resumed" else "paused")
         }
 
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            checkSeekCompletion()
+        }
+
         override fun onPlayerError(error: PlaybackException) {
+            clearPendingSeek()
             val message = "${error.errorCodeName}: ${error.message ?: "playback failed"}"
             emit("error", message = message)
             handler.post { close(sendStopped = false) }
@@ -99,8 +141,12 @@ class PlayerController(
         selectedSubtitleIndex = -1
         playerView.subtitleView?.visibility = View.VISIBLE
         ticks = 0
+        clearPendingSeek()
 
+        val mediaSourceFactory = DefaultMediaSourceFactory(activity)
+            .setDataSourceFactory(PlaybackCache.dataSourceFactory(activity))
         val exo = ExoPlayer.Builder(activity)
+            .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(C.USAGE_MEDIA)
@@ -168,7 +214,7 @@ class PlayerController(
         val p = player ?: return
         if (sendStopped) emit("stopped")
         handler.removeCallbacks(timeTick)
-        handler.removeCallbacks(seekedTick)
+        clearPendingSeek()
         player = null
         playerView.keepScreenOn = false
         playerView.player = null
@@ -188,7 +234,7 @@ class PlayerController(
         player?.play()
     }
 
-    /** Page-driven seek. A debounced "seeked" event follows, like the web player's. */
+    /** Page-driven seek. "seeked" follows when playback is ready at the new position. */
     fun seekTo(seconds: Double) {
         val p = player ?: return
         if (seconds.isNaN() || seconds.isInfinite()) return
@@ -196,9 +242,11 @@ class PlayerController(
         if (target < 0) target = 0
         val dur = p.duration
         if (dur != C.TIME_UNSET && dur > 0 && target > dur) target = dur
+        pendingSeekTargetMs = target
+        pendingSeekPositionMs = null
+        handler.removeCallbacks(seekCompletionCheck)
         p.seekTo(target)
-        handler.removeCallbacks(seekedTick)
-        handler.postDelayed(seekedTick, SEEKED_DEBOUNCE_MS)
+        checkSeekCompletion()
     }
 
     /** Bridge v4: playback speed (0.75x .. 2x from the page's menu). Also applies to the streams that follow. */
@@ -294,6 +342,18 @@ class PlayerController(
         sendEvent(o)
     }
 
+    private fun checkSeekCompletion() {
+        if (pendingSeekTargetMs == null) return
+        handler.removeCallbacks(seekCompletionCheck)
+        seekCompletionCheck.run()
+    }
+
+    private fun clearPendingSeek() {
+        handler.removeCallbacks(seekCompletionCheck)
+        pendingSeekTargetMs = null
+        pendingSeekPositionMs = null
+    }
+
     // ---- local text-track switching ---------------------------------------------------
 
     private fun setSubtitlesOff(target: ExoPlayer? = player) {
@@ -328,7 +388,8 @@ class PlayerController(
     companion object {
         private const val TIME_MS = 500L
         private const val PROGRESS_EVERY_TICKS = 20 // 20 x 500 ms = 10 s
-        private const val SEEKED_DEBOUNCE_MS = 700L
+        private const val SEEK_CHECK_MS = 50L
+        private const val SEEK_PROGRESS_MS = 200L
         private const val SUB_ID_PREFIX = "nlsub"
         private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
