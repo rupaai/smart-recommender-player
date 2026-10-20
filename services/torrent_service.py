@@ -882,12 +882,20 @@ class TorrentDownloader:
         else:
             self.movie_target = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
         self.tv_target = os.path.abspath(lib_cfg.get("tv_dir") or self.movie_target)
-        os.makedirs(self.movie_target, exist_ok=True)
-        os.makedirs(self.tv_target, exist_ok=True)
 
-        # Staging area for in-progress downloads (separate from targets)
+        # Staging area for in-progress downloads (separate from targets). Folder names carry the Homelab
+        # environment (dev, prod) so two environments sharing one media folder never touch each other's.
         self.download_dir = os.path.abspath(torrent_cfg.get("download_dir", "./downloads"))
-        os.makedirs(self.download_dir, exist_ok=True)
+        env = os.getenv("HOMELAB_ENV", "").strip()
+        self.staging_prefix = f"{re.sub(r'[^A-Za-z0-9_.-]', '', env)}-id_" if env else "id_"
+        # The media folder can be missing (Homelab gives dev none): the app still runs, without downloads.
+        self.media_available = True
+        try:
+            for folder in (self.movie_target, self.tv_target, self.download_dir):
+                os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            self.media_available = False
+            print(f"[Downloader] Media folder not available ({e}); downloads and the library are off.", flush=True)
 
         # Jellyfin library manager (create / refresh / verify)
         self.jellyfin = JellyfinService(config)
@@ -955,9 +963,30 @@ class TorrentDownloader:
 
     def _torrent_staging_dir(self, movie_id: int) -> str:
         """Per-torrent staging subdir — one torrent NEVER sees another's files."""
-        path = os.path.join(self.download_dir, f"id_{movie_id}")
+        path = self._staging_path(movie_id)
         os.makedirs(path, exist_ok=True)
         return path
+
+    def _staging_path(self, movie_id: int) -> str:
+        return os.path.join(self.download_dir, f"{self.staging_prefix}{movie_id}")
+
+    def remove_orphan_staging(self, owned_ids: Set[int]) -> List[str]:
+        """Deletes this environment's staging folders that no stored download owns (left by a crash or a
+        restart that lost the download). Other environments' folders and the .ltresume files stay."""
+        removed: List[str] = []
+        pattern = re.compile(rf"^{re.escape(self.staging_prefix)}(\d+)$")
+        try:
+            names = os.listdir(self.download_dir)
+        except OSError:
+            return removed
+        for name in names:
+            m = pattern.match(name)
+            path = os.path.join(self.download_dir, name)
+            if m and int(m.group(1)) not in owned_ids and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+                removed.append(name)
+                print(f"[Downloader] Removed orphan staging folder: {path}", flush=True)
+        return removed
 
     def _resume_file_for(self, info_hash: str) -> str:
         """Path to the persisted resume file for a torrent."""
@@ -1080,18 +1109,11 @@ class TorrentDownloader:
             print(f"[Downloader] Could not persist resume data: {e}", flush=True)
             return False
 
-    def _clear_resume_file(self, movie_id: int) -> None:
-        """Delete a movie's .ltresume once its content is fully organized."""
+    def _clear_resume_file(self, info_hash: str) -> None:
+        """Delete one torrent's .ltresume once its content is fully organized."""
         try:
-            staging = os.path.join(self.download_dir, f"id_{movie_id}")
-            if os.path.isdir(staging):
-                for name in os.listdir(self.resume_dir):
-                    if name.endswith(".ltresume"):
-                        try:
-                            os.remove(os.path.join(self.resume_dir, name))
-                        except OSError:
-                            pass
-        except Exception:
+            os.remove(self._resume_file_for(info_hash))
+        except OSError:
             pass
 
     def _has_partial_data(self, movie_id: int) -> float:
@@ -1108,7 +1130,7 @@ class TorrentDownloader:
 
     def _purge_partial_files(self, movie_id: int) -> None:
         """Removes the per-torrent staging directory (partial files + leftovers)."""
-        staging = os.path.join(self.download_dir, f"id_{movie_id}")
+        staging = self._staging_path(movie_id)
         try:
             if os.path.isdir(staging):
                 shutil.rmtree(staging, ignore_errors=True)
@@ -1247,6 +1269,13 @@ class TorrentDownloader:
         if movie_id in self.cancelled_tasks:
             self.cancelled_tasks.remove(movie_id)
 
+        if not self.media_available:
+            downloads_store[movie_id] = {
+                "movie_id": movie_id,
+                "status": "error",
+                "error": "This server has no media folder, so it cannot download.",
+            }
+            return
         try:
             if magnet_link.startswith("http"):
                 # Prowlarr proxied grab link: convert .torrent → magnet on demand
@@ -1428,7 +1457,7 @@ class TorrentDownloader:
                     # The file is now in the Jellyfin library, so the resume
                     # file is stale — drop it or a future re-add would try to
                     # resume an already-finished torrent.
-                    self._clear_resume_file(movie_id)
+                    self._clear_resume_file(info_hash)
                     await self.cleanup(info_hash)
                     return
 

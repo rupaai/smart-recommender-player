@@ -149,6 +149,7 @@ class DatabaseManager:
             self._migrate_v18_nl_choosing(cursor)
             self._migrate_v19_nl_spoilers(cursor)
             self._migrate_v20_nl_settings(cursor)
+            self._migrate_v21_download_requests(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -939,6 +940,26 @@ class DatabaseManager:
         if version < 20:
             cursor.execute("PRAGMA user_version = 20;")
             print("[Database] Migration v20 applied: nl_person_prefs.skip_seconds/autoplay/quality_kbps/picture_fit added.")
+
+    def _migrate_v21_download_requests(self, cursor: sqlite3.Cursor) -> None:
+        """Downloads that were started, so a restart can carry on with the unfinished ones (active = 1) and
+        Retry still has the link. Additive only."""
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS download_requests (
+                item_id INTEGER PRIMARY KEY,
+                magnet TEXT NOT NULL,
+                title TEXT NOT NULL,
+                media_type TEXT NOT NULL,
+                active INTEGER NOT NULL DEFAULT 1,
+                started_at REAL NOT NULL
+            );
+            """
+        )
+        if version < 21:
+            cursor.execute("PRAGMA user_version = 21;")
+            print("[Database] Migration v21 applied: download_requests added.")
 
     def register_source_file(
         self,

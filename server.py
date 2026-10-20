@@ -146,7 +146,14 @@ def reload_models() -> None:
 # Create torrent services
 torrent_searcher = TorrentSearcher(config)
 torrent_downloader = TorrentDownloader(config, db_manager=db)
-download_requests = nl_downloads.DownloadRequests()   # M10a: what Retry needs; the magnet link never leaves the server
+download_requests = nl_downloads.DownloadRequests(db)   # what Retry and a restart need; the magnet link never leaves the server
+
+
+async def run_download(item_id: int, magnet: str, title: str, media_type: str) -> None:
+    """Runs one download. Only when it ends (any way but the app stopping) is it marked finished, so a
+    restart carries on with the unfinished ones (resume_downloads)."""
+    await torrent_downloader.download(magnet, item_id, title, media_type=media_type)
+    await asyncio.to_thread(download_requests.finished, item_id)
 
 # Jellyfin library manager (idempotent library setup, refresh + verification)
 jellyfin_service = JellyfinService(config)
@@ -197,6 +204,24 @@ app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
 
 # Mac -> server admin routes (export, catalogue patch, model bundles); 404 unless ADMIN_TOKEN is set.
 app.include_router(build_admin_router(lambda: db.db_path, reload_models))
+
+
+@app.on_event("startup")
+async def resume_downloads() -> None:
+    """Starts again the downloads that were running when the app stopped, and removes staging folders
+    that no stored download owns."""
+    try:
+        pending = await asyncio.to_thread(download_requests.unfinished)
+        owned = await asyncio.to_thread(download_requests.item_ids)
+        await asyncio.to_thread(torrent_downloader.remove_orphan_staging, owned)
+        for r in pending:
+            downloads_store[r["item_id"]] = {"movie_id": r["item_id"], "status": "connecting", "progress": 0.0,
+                                             "error": None, "name": r["title"], "media_type": r["media_type"]}
+            asyncio.create_task(run_download(r["item_id"], r["magnet"], r["title"], r["media_type"]))
+        if pending:
+            print(f"[Downloader] Resuming {len(pending)} download(s) from before the restart.", flush=True)
+    except Exception as e:
+        print(f"[Downloader] Could not resume downloads ({e}); server continues.", flush=True)
 
 
 @app.on_event("startup")
@@ -1093,6 +1118,24 @@ async def nl_subtitle_download(
     return {"success": True}
 
 
+# A Chromecast receiver page on another origin reads the cast stream. Only requests that carry a valid cast
+# token get CORS headers (no cookies are involved), so no other page can read the proxy.
+_CAST_CORS = {"Access-Control-Allow-Origin": "*"}
+
+
+@app.options("/nl/jf/{path:path}")
+async def nl_jellyfin_proxy_preflight(path: str, request: Request) -> Response:
+    clean = safe_proxy_path(path)
+    tokens = token_values(request.url.query)
+    if clean is None or len(tokens) != 1 or not nl_cast_tokens.check(tokens[0], "GET", clean)[0]:
+        raise HTTPException(status_code=404, detail="Not found.")
+    return Response(status_code=204, headers={
+        **_CAST_CORS,
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": request.headers.get("access-control-request-headers", "*"),
+    })
+
+
 @app.get("/nl/jf/{path:path}")
 async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
     """Streams Jellyfin video, HLS and artwork (Items/<id>/Images/...) through our app. GET only,
@@ -1146,10 +1189,12 @@ async def nl_jellyfin_proxy(path: str, request: Request) -> Response:
             content=text,
             status_code=upstream.status_code,
             media_type="application/vnd.apple.mpegurl",
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": "no-store", **(_CAST_CORS if cast_token else {})},
         )
 
     out_headers = {k: v for k, v in upstream.headers.items() if k.lower() in _PROXY_RESPONSE_HEADERS}
+    if cast_token:
+        out_headers.update(_CAST_CORS)
     if is_image_path(clean) and upstream.status_code == 200:
         out_headers["Cache-Control"] = "private, max-age=86400"
 
@@ -1743,9 +1788,8 @@ async def nl_downloads_retry(item_id: int) -> Dict[str, Any]:
         )
     downloads_store[item_id] = {"movie_id": item_id, "status": "connecting", "progress": 0.0, "error": None,
                                 "name": req["title"], "media_type": req["media_type"]}
-    asyncio.create_task(
-        torrent_downloader.download(req["magnet"], item_id, req["title"], media_type=req["media_type"])
-    )
+    download_requests.remember(item_id, req["magnet"], req["title"], req["media_type"])
+    asyncio.create_task(run_download(item_id, req["magnet"], req["title"], req["media_type"]))
     return {"success": True, "id": item_id}
 
 
@@ -2553,14 +2597,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
         download_requests.remember(movie_id, req.magnet_link, clean_movie_title, req.media_type)
-        asyncio.create_task(
-            torrent_downloader.download(
-                req.magnet_link,
-                movie_id,
-                clean_movie_title,
-                media_type=req.media_type,
-            )
-        )
+        asyncio.create_task(run_download(movie_id, req.magnet_link, clean_movie_title, req.media_type))
         return {
             "success": True,
             "movie_id": movie_id,

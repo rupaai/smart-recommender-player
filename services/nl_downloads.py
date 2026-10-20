@@ -17,7 +17,7 @@ Nothing here talks to Jellyfin or the network. The magnet link of a download is 
 from __future__ import annotations
 
 import re
-import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 MAX_REQUESTS = 200          # remembered magnet links; the oldest are dropped
@@ -45,28 +45,54 @@ _IMPORTING_RAW = {"organizing", "seeding", "finished"}
 
 
 class DownloadRequests:
-    """The magnet link, clean title and kind of each download that was started, so Retry can run it again.
-    Held in memory only (a restart empties it, like the downloader's own store)."""
+    """The magnet link, clean title and kind of each download that was started, so Retry can run it again
+    and a restart can carry on with the unfinished ones. Kept in the database (table download_requests).
+    `active` is 1 from the start until the download ends (done, failed or stopped)."""
 
-    def __init__(self) -> None:
-        self._items: Dict[int, Dict[str, str]] = {}
-        self._lock = threading.Lock()
+    def __init__(self, db) -> None:
+        self._db = db
 
     def remember(self, item_id: int, magnet: str, title: str, media_type: str) -> None:
-        with self._lock:
-            self._items.pop(item_id, None)
-            self._items[item_id] = {"magnet": magnet, "title": title, "media_type": media_type}
-            while len(self._items) > MAX_REQUESTS:
-                self._items.pop(next(iter(self._items)))
+        with self._db.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO download_requests (item_id, magnet, title, media_type, active, started_at) "
+                "VALUES (?, ?, ?, ?, 1, ?);",
+                (item_id, magnet, title, media_type, time.time()),
+            )
+            conn.execute(
+                "DELETE FROM download_requests WHERE item_id NOT IN "
+                "(SELECT item_id FROM download_requests ORDER BY started_at DESC LIMIT ?);",
+                (MAX_REQUESTS,),
+            )
 
     def get(self, item_id: int) -> Optional[Dict[str, str]]:
-        with self._lock:
-            row = self._items.get(item_id)
-            return dict(row) if row else None
+        with self._db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT magnet, title, media_type FROM download_requests WHERE item_id = ?;", (item_id,)
+            ).fetchone()
+        return dict(row) if row else None
 
     def forget(self, item_id: int) -> None:
-        with self._lock:
-            self._items.pop(item_id, None)
+        with self._db.get_connection() as conn:
+            conn.execute("DELETE FROM download_requests WHERE item_id = ?;", (item_id,))
+
+    def finished(self, item_id: int) -> None:
+        """The download ended one way or another; a restart must not start it again."""
+        with self._db.get_connection() as conn:
+            conn.execute("UPDATE download_requests SET active = 0 WHERE item_id = ?;", (item_id,))
+
+    def unfinished(self) -> List[Dict[str, Any]]:
+        """Downloads that were running when the app last stopped."""
+        with self._db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT item_id, magnet, title, media_type FROM download_requests WHERE active = 1 "
+                "ORDER BY started_at;"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def item_ids(self) -> set:
+        with self._db.get_connection() as conn:
+            return {r["item_id"] for r in conn.execute("SELECT item_id FROM download_requests;").fetchall()}
 
 
 def _raw_state(entry: Dict[str, Any]) -> str:
