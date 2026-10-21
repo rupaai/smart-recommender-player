@@ -1961,8 +1961,12 @@ class DatabaseManager:
         concept_terms: Optional[List[str]] = None,
         limit: int = 250,
         only_ids: Optional[List[int]] = None,
+        foreign_gate: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Quality-cut candidate funnel for the recommender (large catalogues).
+
+        foreign_gate {home_languages, min_rating, min_votes}: a title in another
+        original language is kept only when it is top tier (see recommender_rules.yaml).
 
         Funnel 1: hard filters — media type, era, runtime, watch status, rating floor.
         Funnel 2: Bayesian audience-weighted rating ordering computed *in SQL* using
@@ -2087,6 +2091,16 @@ class DatabaseManager:
                         params.append(code)
                 if lang_clauses:
                     query += " AND (" + " OR ".join(lang_clauses) + ")"
+
+            if foreign_gate and foreign_gate.get("home_languages"):
+                home = [str(x).lower() for x in foreign_gate["home_languages"]]
+                query += (
+                    " AND (LOWER(COALESCE(mi.original_language, '')) IN ('', "
+                    + ", ".join("?" * len(home))
+                    + ") OR (COALESCE(mi.rating, 0) >= ? AND COALESCE(mi.vote_count, 0) >= ?))"
+                )
+                params.extend(home)
+                params.extend([float(foreign_gate.get("min_rating") or 0.0), int(foreign_gate.get("min_votes") or 0)])
 
             # Vibe search: the same hard filters, applied to the titles whose
             # vibe vectors are closest to the request.

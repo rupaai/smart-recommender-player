@@ -8,6 +8,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - `main`: has everything since PR #67/#68 (2026-10-13), PR #70 (2026-10-14, Discover variety, §10.11), and PR #79 (2026-10-20, Homelab deployment): the original app, the mood-based questions pop-up (§10.10) and the Northern Lights player and TV app M0-M10c (§14). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
+- `claude/recommender-cleanup-44uxk8`: recommender cleanup (2026-10-21): every word list, mood card, place and weight moved to `recommender_rules.yaml`; typed genres filter; foreign titles gated; typed requests never go to TIGER. Open PR, waiting for Labiba.
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
 ## 1. What this is
@@ -32,7 +33,8 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 
 ## 4. Core subsystems
 - **A. Search and download** (`torrent_service.py`): providers Prowlarr (optional, `PROWLARR_URL`/`PROWLARR_API_KEY`) then YTS then Apibay. Downloads run as asyncio tasks tracked in the in-memory `downloads_store`; finished files are organised into Jellyfin's layout (`Movie (Year)/…`, `Show (Year)/Season XX/Show - SxxEyy`) and registered in `media_sources`. Healthy Prowlarr indexers: YTS, ThePirateBay, NyaaSi, Knaben (EZTV unreachable; 1337x and friends need FlareSolverr, left out). Disk guard: `torrent.max_media_gb`, `torrent.min_free_gb`.
-- **B. Recommender** (`recommender_service.py`): SQL hard filters, a Bayesian quality cut to 250, personal taste scoring, vibe-search boost, MMR to 50. `route_recommend()` chooses legacy or TIGER (`recommender.engine_mode`: fallback / legacy_only / generative_only; generative after 5 rated items). Profile modes me / partner / together; co-view tiers A/B/C.
+- **B. Recommender** (`recommender_service.py`): SQL hard filters, a Bayesian quality cut (`shortlist_size`), personal taste scoring, the request's genres and words, vibe-search boost, MMR (`final_pool`). `route_recommend()` chooses legacy or TIGER (`recommender.engine_mode`: fallback / legacy_only / generative_only; generative after 5 rated items, and only for requests with no typed words). Profile modes me / partner / together; co-view tiers A/B/C.
+- **B1. Recommender rules** (`recommender_rules.yaml`, loaded by `services/recommender_rules.py`, `RECOMMENDER_RULES_PATH` overrides): the only place for word lists and personal choices. Genre names typed ("comedy") are a hard filter, "no X" a hard exclusion; genre hints ("laugh", "scary") pull hard (+2) and add that genre's best titles to the shortlist; tones ("relaxing", "cozy") pull softly and exclude what nothing else asks for; "less X" pushes down. Typed genres beat the mood card, whose genres then only pull. Foreign gate: a non-English title (`home_languages: [en]`) shows only at TMDB 7.8+ with 2,000+ votes (shows 500+), unless the request names a place or language, says "foreign", or ranks the library (`only_ids`). Also holds concept themes, mood cards, places, Choose-for-us defaults, profile mix, tiers, memory, taste and spread numbers. Funnel sizes, engine mode and the taste-model switch stay in `config.yaml`.
 - **C. Training** (`training/`): TIGER pipeline (`training/README.md` steps A-H, `retrain_tiger.sh`) and the vibe index (`build_vibe_index.py`). Needs torch: Mac only.
 - **D. Jellyfin** (`jellyfin_service.py`): creates and repairs the Movies and Shows libraries, refreshes and checks visibility, diagnostics. The server boots fine when Jellyfin is down.
 - **E. TIGER** (`generative_retriever.py`): semantic-ID generative retrieval, artifacts in `models/tiger/` (must be built from the same catalogue). The deployed model is still the old synthetic one until the Mac retrain runs.
@@ -55,12 +57,12 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 ## 7. Recommender: known open problems
 - Variety (§10.11) only remembers Discover's own impressions. Rows like "For both of us" don't log impressions, so memory doesn't rotate them.
 - Genre spread shelves are fixed in `SPREAD_GENRES`. Animation and Family are exempt only when the request or mood answers ask for them.
-- Generative engine ignores query exclusions, rating floor and diversity; the genre filter needs 20+ matches. Queries with a typed "no <genre>" are routed to legacy.
-- Taste: `taste_formula: average` replaced the capped sum (§10.11). The `sum` path and `get_profile_taste_profile` are still used by the rating queue and the cold-start path. `rank_candidates_profile_aware` overwrites `relevance_boost` when content words exist.
-- Concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; genre chips widen instead of narrow; era/runtime filters silently fall back; the variety shuffle runs after MMR.
-- Origin parser leftovers: duplicate `chinese`/`portuguese` keys, Kollywood/Tollywood swapped, Nigerian = Yoruba only.
+- Generative engine ignores rating floor and diversity; the genre filter needs 20+ matches. Every typed request is routed to legacy (it can't read words), so TIGER only serves no-words requests (plus the foreign gate).
+- Taste: `taste_formula: average` replaced the capped sum (§10.11). The `sum` path and `get_profile_taste_profile` are still used by the rating queue and the cold-start path. The taste model (§10.8) is still off; turning it on is the next step for "driven by our taste" once more verdicts exist.
+- SQL concept boost is unbounded per generic term; `exclude_ids` filters only the current page; Tier A/B boosts are unreachable in Discover; era/runtime filters silently fall back; the variety shuffle runs after MMR.
+- `shortlist_size` went from 1,500 to 500 on 2026-10-20; with no genre in the request the quality cut holds few of any one genre. Hinted genres now add their own shortlist, but a vague request still sees mostly the top-rated 500.
+- The hint and tone word lists are first guesses; extend them in `recommender_rules.yaml` when a word does nothing.
 - The legacy `/api/watch/finish` path relies on SQLite's default `profile_id = 1`; make the single-viewer profile explicit/configurable as part of the portability work.
-- Dead ONNX branch in `recommender_service.py` (reads a nonexistent `embedding` column).
 
 ## 8. Recommender v2: decisions that still bind
 Train on the Mac, serve on `mars`. Vibe search = embeddings + clusters. LLM mood tags with Claude Haiku via the Batch API, 200-title pilot first, then ask before the full run. Questions are about mood, never "pick a film"; soft scores (deprioritise, never remove).

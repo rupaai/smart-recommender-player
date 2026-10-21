@@ -40,12 +40,12 @@ import numpy as np
 from services.paths import models_dir
 
 from database import DatabaseManager
+from services.recommender_rules import RULES, foreign_gate, passes_foreign_gate
 from services.recommender_service import (  # noqa: E402  (shared scoring helpers)
     _split_lower,
     apply_series_order,
     calculate_weighted_rating,
     parse_origin_intent,
-    parse_query_intent,
     TV_GENRE_ALIASES,
 )
 
@@ -585,6 +585,10 @@ class GenerativeRetriever:
             elif duration_preference == "epic":
                 ranked_items = [it for it in ranked_items if (it.get("runtime") or 0) > 140] or ranked_items
 
+        # Foreign-language titles only when top tier (recommender_rules.yaml).
+        gate = foreign_gate(RULES, media_type)
+        ranked_items = [it for it in ranked_items if passes_foreign_gate(it, media_type, gate)]
+
         # Series order: swap sequels for the earliest unseen entry, one per series.
         ranked_items = apply_series_order(ranked_items, self.db)
 
@@ -648,31 +652,15 @@ def route_recommend(
         result["origin_routed_to"] = "legacy"
         return result
 
-    # Same reasoning for a request about a film's IDEAS. The predictor knows
-    # nothing of concept, theme or subtext — it ranks by similarity to your
-    # watch history — so "something like They Live, chill but with a deep
-    # concept" returned a Mario cartoon and a Taylor Swift concert film. Any
-    # request that names a concept the legacy theme layer can evaluate goes to
-    # legacy, which matches the actual premise of each film.
-    if parse_query_intent(kwargs.get("query")).get("concept_requested"):
+    # Any typed request goes to legacy. The predictor only knows watch history:
+    # it can't read "comedy", "make me laugh", "no animation" or "a great
+    # concept", and with no vibe index it answered "laugh, comedy" with whatever
+    # the history suggested. The legacy engine reads the request's genres,
+    # exclusions, themes and vibe; this engine serves the no-words requests.
+    query = kwargs.get("query")
+    if query and query.strip():
         result = _legacy()
-        result["concept_routed_to"] = "legacy"
-        return result
-
-    # "No animation" and other genres typed with a negation are hard exclusions,
-    # and the generative engine applies none of the query's exclusions.
-    if parse_query_intent(kwargs.get("query")).get("named_exclude_genres"):
-        result = _legacy()
-        result["exclusion_routed_to"] = "legacy"
-        return result
-
-    # A typed request is about how the film should FEEL; the predictor only
-    # knows your watch history. When the vibe index is built, the legacy engine
-    # answers it with text-to-film similarity.
-    vibe_ready = getattr(legacy_recommender, "vibe_ready", None)
-    if vibe_ready and vibe_ready(kwargs.get("query")):
-        result = _legacy()
-        result["vibe_routed_to"] = "legacy"
+        result["query_routed_to"] = "legacy"
         return result
 
     if mode == "fallback" and not generative_retriever.is_ready():

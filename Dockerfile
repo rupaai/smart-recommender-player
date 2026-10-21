@@ -16,7 +16,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --frozen --no-dev --no-install-project
 
-COPY server.py database.py scanner.py enricher.py ./
+COPY server.py database.py scanner.py enricher.py recommender_rules.yaml ./
 COPY services ./services
 COPY templates ./templates
 COPY static ./static
