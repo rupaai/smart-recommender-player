@@ -131,8 +131,8 @@ _RELEASE_NOISE_TOKENS = {
     "webdl-480p", "h264", "h265", "x264", "x265", "hevc", "aac", "aac2",
     "bluray", "blu-ray", "brrip", "bdrip", "dvdrip", "hdr", "hdr10", "dv",
     "proper", "repack", "amzn", "nf", "netflix", "hdtv", "dsnp", "atvp",
-    "remux", "truehd", "atmos", "ddp", "dd5", "ac3", "dts", "5", "1", "2",
-    "0", "multi", "subs", "rarbg", "yts", "yify", "ettv", "eztv", "tgx",
+    "remux", "truehd", "atmos", "ddp", "dd5", "ac3", "dts", "multi", "subs",
+    "rarbg", "yts", "yify", "ettv", "eztv", "tgx",
     "mp4", "mkv", "avi", "1080i", "2160i", "pal", "ntsc", "complete",
     "season", "s", "part", "pt",
 }
@@ -199,7 +199,17 @@ def _clean_release_title(name: str) -> str:
     words: List[str] = []
     for tok in stem.split():
         low = tok.lower().strip("-")
-        if low in _RELEASE_NOISE_TOKENS or re.fullmatch(r"\d{4}", low) or not re.match(r"^[a-zA-Z]", tok):
+        # Short numeric suffixes can be part of a title (for example, "Sample Film 2").
+        # Codec channel suffixes such as DDP5.1 are release metadata, so stop
+        # before the codec token rather than treating its trailing digits as a title.
+        if re.fullmatch(r"(?:ddp|dd|eac|aac|ac3|dts)\d*", low):
+            break
+        if low in _RELEASE_NOISE_TOKENS or re.fullmatch(r"\d{4}", low):
+            break
+        if re.fullmatch(r"\d{1,2}", low):
+            words.append(tok)
+            continue
+        if not re.match(r"^[a-zA-Z]", tok):
             break
         words.append(tok)
     cleaned = " ".join(words).strip(" -")
@@ -1250,15 +1260,18 @@ class TorrentDownloader:
         Afterwards a non-blocking async poller refreshes Jellyfin and verifies
         the title actually became visible (updates jellyfin_visible).
         """
-        clean_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()
-
         year = None
         if self.db:
             item = self.db.get_item_by_id(movie_id)
             if item:
+                canonical_title = (item.get("title") or "").strip()
+                if canonical_title:
+                    title = canonical_title
                 year = item.get("release_year")
                 if item.get("media_type"):
                     media_type = item["media_type"]
+
+        clean_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()
 
         issues: List[str] = []
         organized = organize_media_files(
@@ -1284,11 +1297,11 @@ class TorrentDownloader:
         # Kick off the async Jellyfin refresh + visibility verification poller
         try:
             asyncio.get_running_loop().create_task(
-                self._verify_in_jellyfin(download_id, movie_id, title, media_type)
+                self._verify_in_jellyfin(download_id, movie_id, clean_title, media_type)
             )
         except RuntimeError:
             # No running event loop (e.g. manual invocation): verify inline.
-            result = self.jellyfin.refresh_and_verify(title, media_type)
+            result = self.jellyfin.refresh_and_verify(clean_title, media_type)
             if download_id in downloads_store:
                 downloads_store[download_id]["jellyfin_visible"] = bool(result.get("visible"))
         return organized

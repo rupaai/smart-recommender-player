@@ -338,6 +338,14 @@ def test_clean_release_title():
         _clean_release_title("Big.Buck.Bunny.2010.1080p.BluRay") == "Big Buck Bunny",
     )
     check(
+        "numeric sequel suffix remains part of the title",
+        _clean_release_title("Sample.Film.2.2025.1080p.WEB-DL.DDP5.1-GROUP") == "Sample Film 2",
+    )
+    check(
+        "audio codec tags still stop title parsing",
+        _clean_release_title("A Movie DDP5.1-GROUP") == "A Movie",
+    )
+    check(
         "never empty (fallback)",
         _clean_release_title("1080p.x264") == "1080p.x264",
     )
@@ -345,6 +353,23 @@ def test_clean_release_title():
         "1x02 style",
         _clean_release_title("Fargo 2x01 720p") == "Fargo",
     )
+
+
+def test_numbered_title_organizes_under_its_own_title():
+    print("\n[9] numbered title download and library folder")
+    tmp = fresh_tmp("numbered_title")
+    try:
+        staging = os.path.join(tmp, "staging")
+        movie_target = os.path.join(tmp, "Movies")
+        title = _clean_release_title("Sample.Film.2.2025.1080p.WEB-DL.DDP5.1-GROUP")
+        make_file(os.path.join(staging, "Sample.Film.2.2025.1080p.WEB-DL.mkv"), FAKE_VIDEO_BYTES)
+        outputs = organize_media_files(
+            staging, movie_target, os.path.join(tmp, "Shows"), title, 2025,
+        )
+        expected = os.path.join(movie_target, "Sample Film 2 (2025)", "Sample Film 2 (2025).mkv")
+        check("the numeric sequel suffix is preserved in the folder and filename", title == "Sample Film 2" and expected in outputs and os.path.isfile(expected), outputs)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":
@@ -357,6 +382,7 @@ if __name__ == "__main__":
     test_two_shows_no_cross_contamination()
     test_mislabeled_warning()
     test_clean_release_title()
+    test_numbered_title_organizes_under_its_own_title()
     print()
     if failures:
         print(f"❌ {len(failures)} check(s) failed: {failures}")

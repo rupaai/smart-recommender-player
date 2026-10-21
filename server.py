@@ -2655,38 +2655,42 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
     """Launches torrent download as a background task and returns immediately."""
     try:
         movie_id = req.movie_id
-        # Torrent release names must never become catalogue titles or folder
-        # names ("New Girl S05E12 D-Day 1080p DSNP WEB-DL...") — clean once,
-        # here, so the DB item AND the organizer both use the real title.
+        catalogue_item = db.get_item_by_id(movie_id) if movie_id and movie_id > 0 else None
+        # A linked download already has a canonical catalogue title and type.
+        # Torrent names are only a fallback for unlinked downloads and new stubs.
         clean_movie_title = _clean_release_title(req.movie_title)
+        media_type = req.media_type
+        if catalogue_item:
+            clean_movie_title = (catalogue_item.get("title") or clean_movie_title).strip()
+            media_type = catalogue_item.get("media_type") or media_type
         if not movie_id or movie_id <= 0:
             movie_id = db.get_or_create_media_item(
                 title=clean_movie_title,
-                media_type=req.media_type,
+                media_type=media_type,
             )
 
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
         download_id = uuid.uuid4().hex
         now = time.time()
-        download_requests.remember(download_id, req.magnet_link, clean_movie_title, req.media_type, movie_id=movie_id)
+        download_requests.remember(download_id, req.magnet_link, clean_movie_title, media_type, movie_id=movie_id)
         downloads_store[download_id] = {
             "download_id": download_id,
             "movie_id": movie_id,
             "name": clean_movie_title,
-            "media_type": req.media_type,
+            "media_type": media_type,
             "status": "connecting",
             "progress": 0.0,
             "error": None,
             "created_at": now,
         }
-        asyncio.create_task(run_download(download_id, movie_id, req.magnet_link, clean_movie_title, req.media_type))
+        asyncio.create_task(run_download(download_id, movie_id, req.magnet_link, clean_movie_title, media_type))
         return {
             "success": True,
             "download_id": download_id,
             "movie_id": movie_id,
             "clean_title": clean_movie_title,
-            "message": f"Download task started for {req.media_type}.",
+            "message": f"Download task started for {media_type}.",
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
