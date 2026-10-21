@@ -14,6 +14,11 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote, urlsplit
 
+# Secrets from Homelab (/run/secrets) go into the environment before anything reads it.
+from services import homelab_secrets
+
+homelab_secrets.load()
+
 import requests
 import uvicorn
 import yaml
