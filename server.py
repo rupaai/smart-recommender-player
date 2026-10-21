@@ -174,12 +174,12 @@ if nl_people.configured and not jellyfin_service.user_id:
     jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
 
 # Northern Lights casting (M8): where the Chromecast reaches this app and the signed stream tokens.
-# NL_CAST_SECRET signs the tokens; without it a random secret lives in memory only (tokens die on restart).
+# NL_CAST_SECRET (if set) signs the tokens; otherwise a secret kept in a file next to the database does.
 try:
     nl_cast = CastConfig.from_config(config)
 except CastConfigError as _e:
     raise SystemExit(f"[Northern Lights] bad cast configuration: {_e}")
-nl_cast_tokens = CastTokens(secret_from_env())
+nl_cast_tokens = CastTokens(secret_from_env(), data_dir=os.path.dirname(os.path.abspath(db_path)))
 
 # Northern Lights phone keyboard for TV search (M8b): short-lived codes held in memory only.
 nl_type = TypeChannels()

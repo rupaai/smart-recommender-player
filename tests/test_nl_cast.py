@@ -8,6 +8,7 @@ the cast profile, /api/nl/cast/*, the proxy's ?t= handling and the receiver page
 
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -134,6 +135,17 @@ def test_tokens():
     short = CastTokens("tooshort", clock=lambda: 5.0)
     check("a too-short secret is ignored", not short.from_env)
     check("an empty secret is ignored", not CastTokens("  ").from_env)
+    with tempfile.TemporaryDirectory() as d:
+        first = CastTokens(None, clock=lambda: 5.0, data_dir=d)
+        again = CastTokens(None, clock=lambda: 5.0, data_dir=d)
+        secret_file = os.path.join(d, "nl_cast_secret")
+        check("no env secret: the secret is kept in the data folder and survives a restart",
+              first.mint("x1") == again.mint("x1") and not first.from_env)
+        check("the secret file is private (0600)", stat.S_IMODE(os.stat(secret_file).st_mode) == 0o600)
+        check("the env secret wins over the file",
+              CastTokens(CAST_SECRET, clock=lambda: 5.0, data_dir=d).mint("x1") == CastTokens(CAST_SECRET, clock=lambda: 5.0).mint("x1"))
+    check("an unwritable data folder falls back to a memory secret",
+          CastTokens(None, data_dir="/nonexistent/nl-dir").mint("x1") != CastTokens(None, data_dir="/nonexistent/nl-dir").mint("x1"))
     check("decode_path settles double encoding", decode_path("a%252fb") == "a/b")
     check("path_allowed rejects a bad id", not path_allowed("../x", "Videos/x/stream"))
 

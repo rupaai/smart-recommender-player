@@ -26,7 +26,7 @@ bash ops/mac/install.sh
 It asks for the server address, the admin token and the ntfy topic, checks it can reach the server, puts the Train button in `~/Applications`, and removes the old 03:30 schedule if it is there.
 
 - **Server address:** `http://192.168.1.183:8000` (mars). Homelab keeps port 8000 open for the app on prod, so the address from before the move still works.
-- **Admin token:** in the Homelab companion, open the app (Northern Lights), then **Secrets**, and copy `ADMIN_TOKEN`. If it is empty, set one there and promote the app so prod picks it up. Without it the server answers 404 on `/admin`.
+- **Admin token:** Homelab makes it for you. In the Homelab companion go to Apps -> Northern Lights -> Secrets -> prod -> ADMIN_TOKEN -> Copy. Without it the server answers 404 on `/admin`.
 
 ## Every day use
 

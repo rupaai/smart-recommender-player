@@ -6,7 +6,7 @@
 #   bash ops/mac/install.sh --uninstall  remove the button (and the old schedule)
 #
 # It asks for three things (or reads CC_SERVER, ADMIN_TOKEN, NTFY_TOPIC from the environment):
-# the server address, the admin token from the server setup, and your ntfy topic.
+# the server address, the admin token (copy it from the Homelab companion: Apps -> Northern Lights -> Secrets -> prod -> ADMIN_TOKEN -> Copy), and your ntfy topic.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -49,7 +49,7 @@ if [ -f "$ENV_FILE" ] && [ -n "$(get ADMIN_TOKEN)" ]; then
 else
   server="${CC_SERVER:-}"; token="${ADMIN_TOKEN:-}"; topic="${NTFY_TOPIC:-}"
   if [ -z "$server" ]; then read -r -p "Server address [http://192.168.1.183:8000]: " server; server="${server:-http://192.168.1.183:8000}"; fi
-  if [ -z "$token" ]; then read -r -s -p "Admin token (printed at the end of the server setup): " token; echo; fi
+  if [ -z "$token" ]; then read -r -s -p "Admin token (Homelab companion: Apps -> Northern Lights -> Secrets -> prod -> ADMIN_TOKEN -> Copy): " token; echo; fi
   if [ -z "$topic" ]; then read -r -p "ntfy topic (printed at the end of the server setup): " topic; fi
   [ -n "$token" ] || die "the admin token is needed"
   umask 077
