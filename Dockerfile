@@ -18,6 +18,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY server.py database.py scanner.py enricher.py recommender_rules.yaml ./
 COPY services ./services
+COPY packages ./packages
 COPY templates ./templates
 COPY static ./static
 # Config for when Homelab runs the app (homelab.yaml points CONFIG_PATH here).
