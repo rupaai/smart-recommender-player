@@ -104,8 +104,8 @@ torrent_ranking:
 # profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
 northern_lights:
   people:
-    - {id: labibakanij,  name: Labiba,          jellyfin_user_id: c07f6a015a284420a5931235097df58f, profile_id: 1}
-    - {id: gabstevens, name: Gabriele,    jellyfin_user_id: 89576f27230e419ead0664b1486376bd, profile_id: 2}
+    - {id: labibakanij,  name: Labiba,          jellyfin_user_id: rupaai, profile_id: 1}
+    - {id: gabstevens, name: Gabriele,    jellyfin_user_id: gabstevens, profile_id: 2}
 #
 # Casting to a Chromecast (M8, optional): the Chromecast is not on Tailscale, so it needs the address
 # it can reach this server at on your home network. Uncomment `northern_lights:` (if the people block above
