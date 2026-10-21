@@ -140,9 +140,14 @@ def _file_secret(data_dir: str) -> Optional[bytes]:
         if not os.path.exists(path):
             tmp = f"{path}.{os.getpid()}.tmp"
             fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w") as f:
-                f.write(secrets.token_urlsafe(32))
-            os.replace(tmp, path)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(secrets.token_urlsafe(32))
+                os.link(tmp, path)      # fails if another process made the file first; its value stands
+            except FileExistsError:
+                pass
+            finally:
+                os.unlink(tmp)
         with open(path, encoding="utf-8") as f:
             value = f.read().strip()
         return value.encode("utf-8") if len(value) >= MIN_SECRET_LENGTH else None

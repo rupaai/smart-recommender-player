@@ -144,6 +144,22 @@ def test_tokens():
         check("the secret file is private (0600)", stat.S_IMODE(os.stat(secret_file).st_mode) == 0o600)
         check("the env secret wins over the file",
               CastTokens(CAST_SECRET, clock=lambda: 5.0, data_dir=d).mint("x1") == CastTokens(CAST_SECRET, clock=lambda: 5.0).mint("x1"))
+    with tempfile.TemporaryDirectory() as d:
+        import services.nl_cast as nc
+        real_link = os.link
+
+        def racing_link(src, dst):      # another process wins just before our link
+            with open(dst, "w") as f:
+                f.write("winner-secret-0123456789")
+            return real_link(src, dst)
+        nc.os.link = racing_link
+        try:
+            got = nc._file_secret(d)
+        finally:
+            nc.os.link = real_link
+        check("two starters at once: the first one's file wins and nobody keeps another value",
+              got == b"winner-secret-0123456789" and open(os.path.join(d, "nl_cast_secret")).read() == "winner-secret-0123456789"
+              and os.listdir(d) == ["nl_cast_secret"])
     check("an unwritable data folder falls back to a memory secret",
           CastTokens(None, data_dir="/nonexistent/nl-dir").mint("x1") != CastTokens(None, data_dir="/nonexistent/nl-dir").mint("x1"))
     check("decode_path settles double encoding", decode_path("a%252fb") == "a/b")
