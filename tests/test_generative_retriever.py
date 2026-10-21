@@ -181,7 +181,7 @@ check("runtime failure -> legacy fallback",
 legacy4 = MockLegacy()
 r = route_recommend(legacy4, MockGenReady(), "generative_only", mood_id=8, query="funny, no animation")
 check("a typed 'no animation' goes to legacy (generative ignores exclusions)",
-      r["engine"] == "legacy" and legacy4.calls == 1 and r.get("exclusion_routed_to") == "legacy")
+      r["engine"] == "legacy" and legacy4.calls == 1 and r.get("query_routed_to") == "legacy")
 
 # kwargs forwarding through the router
 r = route_recommend(MockLegacy(), MockGenReady(), "fallback", mood_id=8, page=2, page_size=5)

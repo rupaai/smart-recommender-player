@@ -22,10 +22,11 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from services.nl_browse import play_href
 from services.nl_people import Person, Viewer
+from services.recommender_rules import RULES
 from services.nl_picks import (
     FALLBACK_MIN_RATING,
     POOL_SIZE,
@@ -110,30 +111,37 @@ def daypart(hour: int) -> str:
     return "night"
 
 
-def context_for(local: datetime, moods: Dict[int, Dict[str, Any]]) -> Dict[str, Any]:
+_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _default_for(anchor_day: int, part: str, rules: Sequence[Dict[str, Any]]) -> Tuple[int, Optional[str]]:
+    """The first `choose_defaults` rule (recommender_rules.yaml) matching the day and part of day.
+    `when: daytime` = morning or afternoon; `days` lists mon..sun. No match: Surprise Me, any length."""
+    for rule in rules or []:
+        when = rule.get("when")
+        if when == "daytime" and part not in ("morning", "afternoon"):
+            continue
+        if when and when != "daytime" and when != part:
+            continue
+        days = [str(d).lower()[:3] for d in rule.get("days") or []]
+        if days and _DAYS[anchor_day] not in days:
+            continue
+        return int(rule.get("mood", 8)), rule.get("duration")
+    return 8, None
+
+
+def context_for(local: datetime, moods: Dict[int, Dict[str, Any]],
+                rules: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """What the weekday and the time of day suggest, as part of the recommender request (W7):
     a default mood id (one of the recommender's own, /api/moods) and a length preference
     ("short" = under 105 min) used only when the people did not pick a mood or a time.
-
-      daytime, any day ........................ Happy / Feel-Good
-      Friday and Saturday evening and night ... Surprise Me (anything goes, long films welcome)
-      Sunday evening and night ................ Relaxing, short (work tomorrow)
-      Monday to Thursday evening .............. Surprise Me, short
-      Monday to Thursday night ................ Relaxing, short
+    The rules are `choose_defaults` in recommender_rules.yaml.
     """
     weekday = local.weekday()          # 0 Monday
     part = daypart(local.hour)
     # After midnight still belongs to the evening before.
     anchor_day = (weekday - 1) % 7 if (part == "night" and local.hour < 5) else weekday
-    duration: Optional[str] = None
-    if part in ("morning", "afternoon"):
-        mood = 1
-    elif anchor_day in (4, 5):                         # Friday, Saturday
-        mood = 8
-    elif anchor_day == 6:                              # Sunday
-        mood, duration = 7, "short"
-    else:                                              # Monday to Thursday
-        mood, duration = (8 if part == "evening" else 7), "short"
+    mood, duration = _default_for(anchor_day, part, RULES["choose_defaults"] if rules is None else rules)
     info = moods.get(mood) or moods.get(8) or {}
     return {
         "weekday": WEEKDAYS[weekday],

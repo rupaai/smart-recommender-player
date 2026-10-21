@@ -4,6 +4,8 @@ How a "what should we watch?" request turns into a list of films, as the code be
 
 > **One-line summary:** there are two engines. A rules-and-scores engine ("legacy") and a small sequence model ("generative" / TIGER). A router chooses one per request. Right now the generative engine answers almost every request. It has been running on a very weak signal (see [What "learning" means today](#what-learning-means-today)).
 
+> **Update 2026-10-21:** every word list, mood card, place and weight now lives in `recommender_rules.yaml` (see PROJECT_HANDOVER.md §4 B1). Any request with typed words goes to the legacy engine; the generative engine only serves requests with no words. Where this doc names a constant in `recommender_service.py`, the value now comes from that file.
+
 ---
 
 ## 1. The big picture

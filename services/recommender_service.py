@@ -1,12 +1,12 @@
 """
 Recommender Service (services/recommender_service.py)
-Production-grade multi-stage candidate scoring, vector similarity, 
-Bayesian rating weighting, MMR diversity pruning, and pagination.
+Multi-stage candidate scoring: SQL hard filters and a Bayesian quality cut,
+personal taste, the request's genres and words, vibe similarity, MMR
+diversity and pagination. Word lists and weights: recommender_rules.yaml.
 """
 
 from __future__ import annotations
 
-import os
 import random
 import re
 import math
@@ -14,9 +14,8 @@ import time
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 import requests
-import numpy as np
 
-from services.paths import models_dir
+from services.recommender_rules import RULES, foreign_gate, passes_foreign_gate, word_index
 from database import DatabaseManager
 
 
@@ -28,17 +27,6 @@ def _split_lower(csv: Optional[str]) -> List[str]:
     if not csv:
         return []
     return [t.strip().lower() for t in str(csv).split(",") if t.strip()]
-
-
-def cosine_similarity(a: List[float], b: List[float]) -> float:
-    """Calculates cosine similarity between two float vectors."""
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    va, vb = np.array(a), np.array(b)
-    norm_a, norm_b = np.linalg.norm(va), np.linalg.norm(vb)
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return float(np.dot(va, vb) / (norm_a * norm_b))
 
 
 def jaccard_similarity(set_a: Set[str], set_b: Set[str]) -> float:
@@ -65,308 +53,67 @@ def calculate_weighted_rating(
 
 
 # ===========================================================================
-# Mood ↔ Genre Mapping & Config
+# Rules (recommender_rules.yaml)
 # ===========================================================================
+# Every word list, mood card, place name and tuning number lives in
+# recommender_rules.yaml (services/recommender_rules.py loads it). The names
+# below are views of that file so the rest of the code reads like before.
+_W = RULES["weights"]
+_CONCEPT = RULES["concept_request"]
+
 MOOD_MAPPINGS: Dict[int, Dict[str, Any]] = {
-    1: {"name": "😊 Happy / Feel-Good", "vibe": "light, funny, uplifting", "genres": ["Comedy", "Family", "Animation", "Music"]},
-    2: {"name": "😢 Sad / Emotional", "vibe": "moving, heartfelt, tearjerker", "genres": ["Drama", "Romance"]},
-    3: {"name": "😱 Thrilling / On the Edge", "vibe": "intense, gripping, high-stakes", "genres": ["Action", "Thriller", "Adventure"]},
-    4: {"name": "👻 Scary / Spooky", "vibe": "dark, tense, hair-raising", "genres": ["Horror", "Mystery"]},
-    5: {"name": "❤️ Romantic", "vibe": "warm, swoony, tender", "genres": ["Romance"]},
-    6: {"name": "🤯 Mind-Bending / Thoughtful", "vibe": "clever, cerebral, twisty", "genres": ["Science Fiction", "Sci-Fi", "Mystery"]},
-    # "Relaxing" previously mapped to Documentary/Animation/Family only, which
-    # returned preschool animation and nature docs — and, once the user added
-    # their own genre chips, films like Silence of the Lambs leaked in anyway
-    # because the mood contributed nothing to the actual filter. Relaxing is
-    # better expressed as a *tone* (gentle pacing, no violence) than as a
-    # genre, so these are deliberately the warm/low-stakes genres.
-    7: {"name": "😌 Relaxing / Chill", "vibe": "gentle, cozy, low-stakes", "genres": ["Animation", "Family", "Comedy", "Romance", "Music"]},
-    8: {"name": "🎲 Surprise Me!", "vibe": "anything goes", "genres": []},
+    int(k): {"name": str(v.get("name", "")), "vibe": str(v.get("vibe", "")),
+             "genres": list(v.get("genres") or [])}
+    for k, v in (RULES["moods"] or {}).items()
 }
+MOOD_MAPPINGS.setdefault(8, {"name": "Surprise Me!", "vibe": "anything goes", "genres": []})
 
-# Natural-language intent the free-text query is actually asking for. The old
-# scoring substring-matched raw query words against overviews, so a prompt like
-# "relaxing but not too complicated, a bit funny" scored every film whose
-# blurb happened to contain "funny" — noise, not intent. These are weighted,
-# genre-mapped signals so the query steers the *filter*, not just the ranking.
-# "South Asian", "Korean", "Nigerian" are PLACES, not genres. The recommender
-# had no country signal at all, so asking for South Asian films returned
-# Hollywood every time — genre filters could never match a place. Each entry
-# maps a phrase to the region and to the audio languages that actually
-# identify that region's cinema.
-#
-# Language is the primary signal, not country: TMDB mislabels origin for
-# co-productions and outright wrong entries (it files Point Break as `IN`), but
-# a film's original_language is reliable. Both are required — the region must
-# match AND the language must belong to it.
-ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {
-    # Regional groupings first. Matched longest-phrase-first, so "south asian"
-    # and "south korean" resolve before the bare country names below.
-    "south asian": {
-        # Every South Asian country, not just India. Bangladeshi titles are a
-        # large, distinct cinema (the Apu Trilogy, Tareque Masud, by-pass
-        # road films) and were being excluded whenever "Indian" was the only
-        # country checked. Bangladesh, Pakistan, Sri Lanka and Nepal are
-        # first-class members of this group.
-        "countries": ["IN", "BD", "PK", "LK", "NP"],
-        "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu", "ur", "si", "ne"],
-        "label": "South Asian",
-    },
-    "bangladeshi": {"countries": ["BD"],
-                    "languages": ["bn"], "label": "Bangladeshi"},
-    "bangladesh": {"countries": ["BD"],
-                   "languages": ["bn"], "label": "Bangladeshi"},
-    "bengali": {"countries": ["BD", "IN"],
-                "languages": ["bn"], "label": "Bengali (Bangladesh/India)"},
-    "deshi": {"countries": ["BD"], "languages": ["bn"], "label": "Bangladeshi (deshi)"},
-    "pakistani": {"countries": ["PK"], "languages": ["ur", "pa"], "label": "Pakistani"},
-    "sri lankan": {"countries": ["LK"], "languages": ["si"], "label": "Sri Lankan"},
-    "nepali": {"countries": ["NP"], "languages": ["ne"], "label": "Nepali"},
-    # Single-country entries are generated so every chip the UI can emit has a
-    # matching intent. Hand-maintaining two lists (labels in server.py, intents
-    # here) let 15 chips ship with no parser entry and silently do nothing.
-    "thai": {"countries": ["TH"], "languages": ["th"], "label": "Thai"},
-    "indonesian": {"countries": ["ID"], "languages": ["id"], "label": "Indonesian"},
-    "filipino": {"countries": ["PH"], "languages": ["tl"], "label": "Filipino"},
-    "vietnamese": {"countries": ["VN"], "languages": ["vi"], "label": "Vietnamese"},
-    "greek": {"countries": ["GR"], "languages": ["el"], "label": "Greek"},
-    "swedish": {"countries": ["SE"], "languages": ["sv"], "label": "Swedish"},
-    "danish": {"countries": ["DK"], "languages": ["da"], "label": "Danish"},
-    "norwegian": {"countries": ["NO"], "languages": ["no", "nb"], "label": "Norwegian"},
-    "finnish": {"countries": ["FI"], "languages": ["fi"], "label": "Finnish"},
-    "dutch": {"countries": ["NL"], "languages": ["nl"], "label": "Dutch"},
-    "polish": {"countries": ["PL"], "languages": ["pl"], "label": "Polish"},
-    "ukrainian": {"countries": ["UA"], "languages": ["uk"], "label": "Ukrainian"},
-    # Latin American countries, reachable individually. Without these,
-    # "mexican movies" parsed as no origin intent at all and silently returned
-    # unfiltered Hollywood — the exact failure this whole feature exists to
-    # prevent, resurfacing for any country name missing from the table.
-    "mexican": {"countries": ["MX"], "languages": ["es"], "label": "Mexican"},
-    "peruvian": {"countries": ["PE"], "languages": ["es"], "label": "Peruvian"},
-    "argentine": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
-    "argentinian": {"countries": ["AR"], "languages": ["es"], "label": "Argentine"},
-    "colombian": {"countries": ["CO"], "languages": ["es"], "label": "Colombian"},
-    "chilean": {"countries": ["CL"], "languages": ["es"], "label": "Chilean"},
-    "east asian": {
-        "countries": ["JP", "CN", "HK", "TW", "KR"],
-        "languages": ["ja", "zh", "ko"],
-        "label": "East Asian",
-    },
-    "latin american": {
-        "countries": ["BR", "MX", "AR", "CO", "CL"],
-        "languages": ["pt", "es"],
-        "label": "Latin American",
-    },
-    "chinese": {
-        "countries": ["CN", "HK", "TW"],
-        # A country of origin rather than an ethnicity: HK and TW films are
-        # overwhelmingly Mandarin and are routinely excluded by a CN-only
-        # filter. Language is what the user actually sees, so it drives both.
-        "languages": ["zh", "yue"],
-        "label": "Chinese-language",
-    },
-    "portuguese": {"countries": ["BR", "PT"], "languages": ["pt"], "label": "Portuguese"},
-    "arabic": {
-        "countries": ["EG", "SA", "AE", "JO", "LB", "IQ"],
-        "languages": ["ar"], "label": "Arabic",
-    },
-    "south korean": {"countries": ["KR"], "languages": ["ko"], "label": "South Korean"},
-    "north korean": {"countries": ["KP"], "languages": ["ko"], "label": "North Korean"},
-    "indian": {
-        # `bn` stays here as well as on Bangladesh: much of Indian Bengali
-        # cinema predates the 1947 partition (the Apu Trilogy is Bengali
-        # language, Indian origin). Dropping it would lose those classics.
-        "countries": ["IN"],
-        "languages": ["hi", "ta", "te", "ml", "kn", "bn", "pa", "mr", "gu"],
-        "label": "Indian",
-    },
-    "bollywood": {"countries": ["IN"], "languages": ["hi"],
-                  "label": "Bollywood (Hindi)"},
-    "kollywood": {"countries": ["IN"], "languages": ["te"], "label": "Telugu"},
-    "tollywood": {"countries": ["IN"], "languages": ["ta", "te"], "label": "Tamil/Telugu"},
-    "malayalam": {"countries": ["IN"], "languages": ["ml"], "label": "Malayalam"},
-    "korean": {"countries": ["KR"], "languages": ["ko"], "label": "Korean"},
-    "k-drama": {"countries": ["KR"], "languages": ["ko"], "label": "Korean"},
-    "japanese": {"countries": ["JP"], "languages": ["ja"], "label": "Japanese"},
-    "anime": {"countries": ["JP"], "languages": ["ja"], "label": "Japanese (anime)"},
-    "chinese": {"countries": ["CN", "HK", "TW"], "languages": ["zh", "cn"],
-                "label": "Chinese"},
-    "nigerian": {"countries": ["NG"], "languages": ["yo"], "label": "Nigerian"},
-    "spanish": {"countries": ["ES", "MX", "AR", "CO", "CL"], "languages": ["es"],
-                "label": "Spanish-language"},
-    "french": {"countries": ["FR"], "languages": ["fr"], "label": "French"},
-    "german": {"countries": ["DE"], "languages": ["de"], "label": "German"},
-    "italian": {"countries": ["IT"], "languages": ["it"], "label": "Italian"},
-    "portuguese": {"countries": ["BR", "PT"], "languages": ["pt"], "label": "Portuguese"},
-    "russian": {"countries": ["RU"], "languages": ["ru"], "label": "Russian"},
-    "turkish": {"countries": ["TR"], "languages": ["tr"], "label": "Turkish"},
-    "iranian": {"countries": ["IR"], "languages": ["fa"], "label": "Iranian"},
-    "egyptian": {"countries": ["EG"], "languages": ["ar"], "label": "Egyptian/Arabic"},
-    "nordic": {"countries": ["SE", "NO", "DK", "FI", "IS"], "languages": ["sv", "no", "da", "fi"],
-               "label": "Nordic"},
-}
+# Places and languages ("south asian", "korean", "in hindi"). Language is the
+# reliable signal (TMDB mislabels co-production countries), so both must match.
+ORIGIN_INTENT: Dict[str, Dict[str, Any]] = {str(k).lower(): v for k, v in (RULES["origins"] or {}).items()}
 
-QUERY_INTENT: Dict[str, Dict[str, Any]] = {
-    "relaxing": {"genres": ["Comedy", "Drama", "Romance", "Science Fiction"],
-                 "exclude_genres": ["Horror", "War"],
-                 "weight": 0.25},
-    # "Chill" is a TONE, not a genre. Mapping it to Animation/Family/Music made
-    # every chill request a children's-film request — which is how a request
-    # for a satirical sci-fi about covert alien control (They Live) returned a
-    # Mario cartoon. Low weight on purpose: it nudges, and only when no
-    # stronger genre signal is present.
-    "chill": {"genres": ["Comedy", "Drama", "Science Fiction", "Romance"],
-              "exclude_genres": ["Horror", "War"],
-              "weight": 0.2},
-    "cozy": {"genres": ["Family", "Animation", "Romance", "Comedy"],
-             "exclude_genres": ["Horror", "Thriller", "Crime"], "weight": 0.3},
-    "funny": {"genres": ["Comedy"], "weight": 0.3},
-    "complicated": {"exclude_genres": ["Horror", "Thriller", "Crime", "War"], "weight": 0.25},
-    "simple": {"exclude_genres": ["Horror", "Thriller", "Crime", "War"], "weight": 0.25},
-    "dark": {"genres": ["Horror", "Thriller", "Crime"], "weight": 0.3},
-    "scary": {"genres": ["Horror"], "weight": 0.3},
-    "thoughtful": {"genres": ["Drama", "Science Fiction"], "weight": 0.3},
-    "smart": {"genres": ["Science Fiction", "Mystery"], "weight": 0.25},
-}
+# word -> [genres]. Names are hard filters ("comedy"); hints are a strong pull ("laugh").
+GENRE_NAMES: Dict[str, List[str]] = word_index(RULES["genre_names"])
+GENRE_HINTS: Dict[str, List[str]] = word_index(RULES["genre_hints"])
+TONES: Dict[str, Dict[str, Any]] = {str(k).lower(): v or {} for k, v in (RULES["tones"] or {}).items()}
 
-# ===========================================================================
-# THEMATIC CONCEPTS
-# ===========================================================================
-# Genres describe WHAT a film is; the thing this recommender was missing is
-# what a film is ABOUT. "We liked that it had a great concept to interpret"
-# carries no genre at all, so it matched nothing and the request fell back to
-# whatever the nearest mood chip allowed — which is how a request for a
-# satirical sci-fi about hidden puppetmasters returned a Mario cartoon.
-#
-# Each theme lists the concrete nouns that signal it in a plot synopsis.
-# Matching is deliberately factual (a disguised alien, a hidden master mind),
-# not vibes: a theme must be earned by the film's actual subject matter.
 THEMES: Dict[str, Dict[str, Any]] = {
-    "hidden_puppeteer": {
-        "label": "hidden controllers among us",
-        # The They Live premise: an unseen force covertly directing people.
-        # "alien" alone is too broad to carry meaning, so it is paired with the
-        # masquerade that makes the premise work.
-        "terms": ["aliens are", "alien disguised", "shape-shifting",
-                  "shapeshifting", "infiltrat", "masquerading as",
-                  "masquerade", "lulling the public", "secret society",
-                  "illuminati", "shadow government", "mind control",
-                  "brainwash", "hypnot", "puppeteer", "covertly control",
-                  "secretly control", "among us"],
-        "genres": ["Science Fiction", "Thriller"],
-    },
-    "exploitation": {
-        "label": "people used by others",
-        # Deliberately narrow. Bare "control" and "corporate" match almost any
-        # synopsis — a car commercial and a superhero film both contain them —
-        # which is how Spider-Man and Ford v Ferrari scored as "people used by
-        # others". These are phrases where exploitation is the actual subject.
-        "terms": ["exploit", "manipulat", "puppet master", "puppeteer",
-                  "brainwash", "mind control", "used by", "enslave",
-                  "exploitation", "parasite", "feeds on", "predatory",
-                  "coerc", "blackmail", "pulling their strings",
-                  "who pull the strings", "on the payroll",
-                  "clandestine", "black ops", "corporate espionage"],
-        "genres": ["Science Fiction", "Thriller", "Drama"],
-    },
-    "identity": {
-        "label": "questions of identity and self",
-        "terms": ["identity", "who am i", "imposter", "clone", "cloning",
-                  "double", "look-alike", "replica", "android", "cyborg",
-                  "memory", "remember", "simulate", "virtual reality"],
-        "genres": ["Science Fiction", "Drama"],
-    },
-    "surveillance": {
-        "label": "watched and watched back",
-        "terms": ["surveill", "watched", "monitor", "big brother",
-                  "camera", "tracking", "spied", "observed", "pods"],
-        "genres": ["Science Fiction", "Thriller"],
-    },
-    "satire": {
-        "label": "satire of everyday life",
-        "terms": ["satir", "lampoon", "mock", "parody", "ridicule",
-                  "consumerism", "conformity", "middle class",
-                  "bureaucracy", "corporate"],
-        "genres": ["Comedy", "Science Fiction"],
-    },
-    "philosophical": {
-        "label": "big ideas, open to interpretation",
-        "terms": ["meaning", "existence", "reality", "question",
-                  "dilemma", "philosoph", "meaning of", "identity of",
-                  "mortality", "free will", "consciousness", "paradox"],
-        "genres": ["Science Fiction", "Drama"],
-    },
+    name: {"label": spec.get("label", name), "terms": [str(t).lower() for t in spec.get("terms") or []]}
+    for name, spec in (_CONCEPT.get("themes") or {}).items()
 }
+CONCEPT_REQUEST_TERMS = frozenset(str(w).lower() for w in _CONCEPT.get("words") or [])
+# Compared with a film's lower-cased genres.
+CONCEPT_INCOMPATIBLE_GENRES = frozenset(str(g).lower() for g in _CONCEPT.get("penalty_genres") or [])
 
-# Phrases in a request that mean "I want a concept worth thinking about".
-# Kept separate from QUERY_INTENT because these carry no genre of their own —
-# they are a QUALITY bar, applied across whatever genres survive the rest of
-# the request. This is what "great concept up to interpret" matched on.
-CONCEPT_REQUEST_TERMS = frozenset({
-    "concept", "concepts", "conceptual", "interpret", "interpretation",
-    "interpretable", "intellectual", "thoughtprovoking", "smart",
-    "clever", "subtext", "metaphor", "metaphorical", "symbolic",
-    "mindbending", "philosophical", "meaningful", "bigidea", "ideas",
-    "premise", "satire", "satirical", "allegory", "allegorical",
-})
-
-# Genres a concept-driven request is allowed to draw from. Deliberately wide:
-# when the user is asking for an idea rather than a genre, restricting to
-# whatever adjectives happened to appear in the sentence loses the answer.
-THEMES_GENRES_FOR_CONCEPT = frozenset({
-    "Science Fiction", "Thriller", "Drama", "Comedy", "Mystery", "Action",
-    "Horror", "Crime",
-})
-
-# Genres that are structurally incompatible with "a concept worth
-# interpreting". Not a quality judgement on the film — a mismatch with the
-# request. A Mario cartoon cannot satisfy a request for a satirical concept,
-# however good it is.
-CONCEPT_INCOMPATIBLE_GENRES = frozenset({
-    "Family", "Animation", "Music", "Musical",
-})
+GUILTY_PLEASURE_KEYWORDS = frozenset(str(w).lower() for w in RULES["guilty_pleasure"] or [])
+ANY_LANGUAGE_WORDS = frozenset(str(w).lower() for w in (RULES["foreign_titles"] or {}).get("any_language_words") or [])
+TV_GENRE_ALIASES: Dict[str, List[str]] = {str(k).lower(): list(v or []) for k, v in (RULES["tv_genre_aliases"] or {}).items()}
 
 # Words too generic to carry signal — dropped before any matching so they
-# don't produce spurious overview hits.
+# don't produce spurious overview hits. (Grammar, not taste: kept in code.)
 QUERY_STOPWORDS = frozenset({
-    "would", "like", "want", "wantto", "wantto", "movie", "film", "watch",
+    "would", "like", "want", "wantto", "movie", "film", "watch", "movies", "films",
     "something", "high", "quality", "good", "great", "best", "really",
     "should", "have", "that", "this", "with", "but", "not", "too", "very",
-    "complicated", "some", "kind", "sort", "bit", "which", "there", "here",
+    "some", "kind", "sort", "bit", "which", "there", "here",
     "about", "more", "less", "also", "then", "than", "them", "they", "been",
     "were", "was", "you", "your", "our", "we", "us", "me", "my", "and", "for",
     "from", "one", "two", "all", "can", "will", "just", "get", "got", "see",
+    "tonight", "show", "shows", "series", "make", "makes", "please", "anything",
 })
 
-# Tokens that must never be treated as a genre request on their own.
+# Tokens that must never be treated as a content word on their own.
 QUERY_NON_GENRE = frozenset({"scifi", "concept", "concepts", "idea", "ideas"})
 
-# Genre names typed into a request. Only NEGATED mentions act on these ("no
-# animation", "nothing animated or scary"): they become hard exclusions. Before
-# they existed, "funny, no animation" matched no intent word at all, so
-# "animation" was kept as a content word and BOOSTED every film whose synopsis
-# or keywords said animation. "Drama" is left out on purpose: "no drama" usually
-# means low conflict, and excluding Drama would empty most of the catalogue.
-GENRE_WORDS: Dict[str, str] = {
-    "animation": "Animation", "animated": "Animation", "animations": "Animation",
-    "cartoon": "Animation", "cartoons": "Animation",
-    "horror": "Horror", "comedy": "Comedy", "comedies": "Comedy",
-    "romance": "Romance", "romantic": "Romance", "romcom": "Romance", "romcoms": "Romance",
-    "documentary": "Documentary", "documentaries": "Documentary",
-    "musical": "Music", "musicals": "Music",
-    "war": "War", "western": "Western", "westerns": "Western",
-    "thriller": "Thriller", "thrillers": "Thriller", "crime": "Crime",
-    "mystery": "Mystery", "fantasy": "Fantasy", "action": "Action",
-    "adventure": "Adventure", "superhero": "Action", "superheroes": "Action",
-    "history": "History", "historical": "History",
-    "scifi": "Science Fiction", "sci": "Science Fiction",
-    "family": "Family", "kids": "Family",
-}
 # Words a negation reaches through when it lists genres: "no animation or
 # musicals", "nothing animated, scary or kids stuff".
 GENRE_LIST_FILLERS = {"or", "and", "nor", "any", "more", "movies", "movie", "films",
-                      "film", "stuff", "please", "fi", "too", "much", "a", "an"}
+                      "film", "stuff", "please", "fi", "too", "much", "a", "an", "really"}
 GENRE_NEGATION_REACH = 6
+
+
+def _is_genre_word(word: str) -> bool:
+    return word in GENRE_NAMES or word in GENRE_HINTS
 
 
 def _genre_negated(tokens: List[str], i: int) -> bool:
@@ -375,58 +122,21 @@ def _genre_negated(tokens: List[str], i: int) -> bool:
         # "less animation" is a softer wish than "no animation": not an exclusion.
         if tokens[j] in NEGATORS and tokens[j] != "less":
             return True
-        if tokens[j] in GENRE_WORDS or tokens[j] in GENRE_LIST_FILLERS or tokens[j] in QUERY_INTENT:
+        if _is_genre_word(tokens[j]) or tokens[j] in GENRE_LIST_FILLERS or tokens[j] in TONES:
             continue
         return False
     return False
 
 
-GUILTY_PLEASURE_KEYWORDS = frozenset({
-    "guilty pleasure", "so bad it's good", "so bad its good",
-    "cringe", "b-movie", "b movie", "trash", "campy", "cheesy"
-})
-
-TV_GENRE_ALIASES: Dict[str, List[str]] = {
-    "action": ["Action & Adventure", "Action"],
-    "adventure": ["Action & Adventure", "Adventure"],
-    "science fiction": ["Sci-Fi & Fantasy", "Science Fiction"],
-    "sci-fi": ["Sci-Fi & Fantasy", "Sci-Fi"],
-    "fantasy": ["Sci-Fi & Fantasy", "Fantasy"],
-    "family": ["Family", "Kids"],
-}
-
-
-# ===========================================================================
-# Vector Embedding Adaptor
-# ===========================================================================
-def get_vector_embeddings(text: str) -> Optional[List[float]]:
-    """Encodes text using ONNX Runtime if available."""
-    model_path = os.path.join(models_dir(), "model.onnx")
-    if not os.path.exists(model_path) or not text.strip():
-        return None
-
-    try:
-        import onnxruntime as ort
-        from transformers import AutoTokenizer
-
-        tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
-        encoded = tokenizer(
-            text, padding="max_length", truncation=True, max_length=128, return_tensors="np"
-        )
-        session = ort.InferenceSession(model_path)
-        inputs = {
-            "input_ids": encoded["input_ids"],
-            "attention_mask": encoded["attention_mask"],
-            "token_type_ids": encoded.get("token_type_ids", encoded["input_ids"] * 0),
-        }
-        output = session.run(None, inputs)
-        hidden = output[0]
-        mask = encoded["attention_mask"]
-        pooled = (hidden * mask[:, :, None]).sum(axis=1) / mask.sum(axis=1, keepdims=True)
-        return pooled[0].tolist()
-    except Exception as e:
-        print(f"[Recommender] Vector embedding error: {e}", flush=True)
-        return None
+def _genre_lessened(tokens: List[str], i: int) -> bool:
+    """"less animation", "less scary stuff": a soft push down, not an exclusion."""
+    for j in range(i - 1, max(i - 1 - GENRE_NEGATION_REACH, -1), -1):
+        if tokens[j] == "less":
+            return True
+        if _is_genre_word(tokens[j]) or tokens[j] in GENRE_LIST_FILLERS:
+            continue
+        return False
+    return False
 
 
 # ===========================================================================
@@ -434,46 +144,36 @@ def get_vector_embeddings(text: str) -> Optional[List[float]]:
 # ===========================================================================
 PROFILE_MIX: Dict[str, Tuple[float, float]] = {
     # (own weight, other weight), where "own" ALWAYS means the viewer the
-    # result is for, never profile 1. Asymmetric on purpose: this is one
-    # person's evening informed by the other's taste, not a committee.
-    # Averaging 50/50 would recommend the compromise, which neither of them
-    # asked for.
-    #
-    # `me` and `partner` deliberately share the same weights. The id swap in
-    # rank_candidates_profile_aware already re-points "own" at the right
-    # profile, so encoding a lower own-weight here would have inverted the
-    # intent — "his picks" once weighted HIS taste at 0.25 and ranked the
-    # viewer's own films first.
-    "together": (0.6, 0.4),
-    "me": (0.75, 0.25),
-    "partner": (0.75, 0.25),
+    # result is for, never profile 1. `me` and `partner` share weights: the id
+    # swap in rank_candidates_profile_aware re-points "own" at the right person.
+    str(k): (float(v[0]), float(v[1])) for k, v in (RULES["profile_mix"] or {}).items()
 }
+PROFILE_MIX.setdefault("together", (0.6, 0.4))
+PROFILE_MIX.setdefault("me", (0.75, 0.25))
+PROFILE_MIX.setdefault("partner", PROFILE_MIX["me"])
 
-# Vibe search (design doc §2.6): weight of the text-to-film similarity, and
-# how many nearest titles join the SQL shortlist.
 # Memory of what Discover already showed (see RecommenderService._apply_memory).
 # A title shown and not opened loses MEMORY_IGNORED points per showing, fading to
 # nothing over MEMORY_IGNORED_DAYS; "Not this one" removes it for MEMORY_DISMISSED_DAYS.
-MEMORY_IGNORED = 1.0
-MEMORY_IGNORED_CAP = 3.0
-MEMORY_IGNORED_DAYS = 14
-MEMORY_DISMISSED = 5.0
-MEMORY_DISMISSED_DAYS = 30
+_MEM = RULES["memory"]
+MEMORY_IGNORED = float(_MEM["ignored"])
+MEMORY_IGNORED_CAP = float(_MEM["ignored_cap"])
+MEMORY_IGNORED_DAYS = float(_MEM["ignored_days"])
+MEMORY_DISMISSED = float(_MEM["dismissed"])
+MEMORY_DISMISSED_DAYS = int(_MEM["dismissed_days"])
 
-# Averaged taste (recommender.taste_formula: average). The old formula ADDED a
-# weight per liked genre, so the more films of a genre you rated the bigger its
-# bonus, a film with five genres beat one with two, and with ~85 ratings every
-# film hit the +2.0 cap and taste stopped ranking anything. Here a genre's
-# affinity is how much more (or less) you liked its films than your own average,
-# shrunk towards 0 for genres with few ratings; a film gets the MEAN over its
-# genres, so neither rating lots of one genre nor carrying many genres inflates it.
-TASTE_GENRE_SHRINK = 3.0
-TASTE_MEAN_SHRINK = 5.0
-TASTE_KEYWORD_SHRINK = 2.0
-TASTE_KEYWORD_MIN = 1         # a keyword needs this many rated films to count
-TASTE_GENRE_SCALE = 4.0
-TASTE_KEYWORD_SCALE = 3.0
-TASTE_KEYWORD_FULL = 3        # keyword evidence counts fully from this many matches
+# Averaged taste (recommender.taste_formula: average). A genre's affinity is how
+# much more (or less) you liked its films than your own average, shrunk towards 0
+# for genres with few ratings; a film gets the MEAN over its genres, so neither
+# rating lots of one genre nor carrying many genres inflates it.
+_TASTE = RULES["taste"]
+TASTE_GENRE_SHRINK = float(_TASTE["genre_shrink"])
+TASTE_MEAN_SHRINK = float(_TASTE["mean_shrink"])
+TASTE_KEYWORD_SHRINK = float(_TASTE["keyword_shrink"])
+TASTE_KEYWORD_MIN = int(_TASTE["keyword_min"])        # a keyword needs this many rated films to count
+TASTE_GENRE_SCALE = float(_TASTE["genre_scale"])
+TASTE_KEYWORD_SCALE = float(_TASTE["keyword_scale"])
+TASTE_KEYWORD_FULL = int(_TASTE["keyword_full"])      # keyword evidence counts fully from this many matches
 
 
 def build_taste_affinity(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -517,9 +217,9 @@ def averaged_taste(item_genres: Set[str], item_keywords: Set[str], affinity: Dic
 
 # Genre spread: "shelves" a page should not fill up with unless asked. At most
 # SPREAD_MAX titles from one shelf in any SPREAD_WINDOW consecutive picks.
-SPREAD_GENRES = frozenset({"animation", "horror", "documentary", "music", "war", "western", "family"})
-SPREAD_MAX = 2
-SPREAD_WINDOW = 10
+SPREAD_GENRES = frozenset(str(g).lower() for g in RULES["spread"]["shelves"] or [])
+SPREAD_MAX = int(RULES["spread"]["max"])
+SPREAD_WINDOW = int(RULES["spread"]["window"])
 
 
 def apply_genre_spread(items: List[Dict[str, Any]], exempt: Optional[Set[str]] = None,
@@ -544,17 +244,15 @@ def apply_genre_spread(items: List[Dict[str, Any]], exempt: Optional[Set[str]] =
     return [it for it, _ in out]
 
 
-VIBE_WEIGHT = 3.0
-VIBE_SHORTLIST = 400
+VIBE_WEIGHT = float(_W["vibe"])
+VIBE_SHORTLIST = int(_W["vibe_shortlist"])
 
-TIER_BOOSTS: Dict[str, float] = {
-    # A: you both liked it — the scarcest and most useful signal
-    # B: one of you loved it, the other hasn't seen it — "he'd recommend this"
-    # C: exploration
-    "A": 1.5,
-    "B": 0.8,
-    "C": 0.0,
-}
+# A: you both liked it — the scarcest and most useful signal
+# B: one of you loved it, the other hasn't seen it — "he'd recommend this"
+# C: exploration
+TIER_BOOSTS: Dict[str, float] = {str(k): float(v) for k, v in (RULES["tier_boosts"] or {}).items()}
+for _tier in ("A", "B", "C"):
+    TIER_BOOSTS.setdefault(_tier, 0.0)
 
 
 def _origin_negated(before: str) -> bool:
@@ -615,142 +313,171 @@ def _theme_mentioned(theme: str, tokens: List[str]) -> bool:
     return any(t in haystack for t in THEMES[theme]["terms"])
 
 
+def _item_themes(item: Dict[str, Any]) -> List[str]:
+    text = f"{item.get('title')} {item.get('overview')}".lower()
+    return [name for name, spec in THEMES.items() if any(t in text for t in spec["terms"])]
+
+
+def _concept_adjustment(item: Dict[str, Any], item_genres: Set[str],
+                        requested_themes: Optional[List[str]] = None) -> float:
+    """Concept requests: premise themes in the synopsis lift a film (more when the
+    request describes that premise itself), and genres that can't carry "an idea
+    to interpret" (a family cartoon) push it down. Soft: a film can still surprise us."""
+    boost = 0.0
+    matched = _item_themes(item)
+    if matched:
+        boost += min(float(_CONCEPT["theme_boost"]) + float(_CONCEPT["theme_boost_more"]) * (len(matched) - 1),
+                     float(_CONCEPT["theme_boost_max"]))
+        boost += float(_CONCEPT.get("named_theme_boost", 0.0)) * len(set(matched) & set(requested_themes or []))
+        item["matched_themes"] = [THEMES[n]["label"] for n in matched]
+    if item_genres & CONCEPT_INCOMPATIBLE_GENRES:
+        boost -= float(_CONCEPT["penalty"])
+    return boost
+
+
+def genre_boost(item_genres: Set[str], boosts: Optional[Dict[str, float]]) -> float:
+    """Points for the genres a request asked for, hinted at or leans to (negative
+    for "less X"). `boosts` keys are lower case; TV's combined genres match too."""
+    if not boosts or not item_genres:
+        return 0.0
+    have = set(item_genres)
+    for g in item_genres:
+        for part in g.split("&"):
+            have.add(part.strip())
+    return sum(w for g, w in boosts.items() if g in have)
+
+
+def _word_match(item: Dict[str, Any], words: Set[str]) -> float:
+    """Points for request words found in the title, synopsis or keywords."""
+    if not words:
+        return 0.0
+    text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
+    matches = sum(1 for w in words if len(w) > 3 and w in text)
+    return min(matches * float(_W["word_match"]), float(_W["word_match_max"]))
+
+
 NEGATORS = {"not", "no", "never", "without", "less", "nothing", "avoid", "skip",
             "dont", "don", "isn", "aren", "nor", "none"}
 # Words that end a negation's reach: "not scary but funny" negates scary only.
 NEGATION_BREAKERS = {"but", "and", "or", "yet", "though", "although", "however", "just", "also"}
 NEGATION_WINDOW = 3
-NEGATION_KEEPS_EFFECT = {"complicated", "simple"}
 
 
-def _is_negated(tokens: List[str], i: int) -> bool:
-    """A negator up to three words back, with no "but"/"and" in between.
+def _negator_before(tokens: List[str], i: int) -> Optional[str]:
+    """The negator up to three words back, with no "but"/"and" in between.
 
     A one-word window missed "not too complicated" and "no really scary".
     """
     for j in range(i - 1, max(i - 1 - NEGATION_WINDOW, -1), -1):
         if tokens[j] in NEGATION_BREAKERS:
-            return False
+            return None
         if tokens[j] in NEGATORS:
-            return True
-    return False
+            return tokens[j]
+    return None
+
+
+def _is_negated(tokens: List[str], i: int) -> bool:
+    return _negator_before(tokens, i) is not None
 
 
 def parse_query_intent(query: Optional[str]) -> Dict[str, Any]:
-    """Turn a free-text prompt into genre include/exclude signals + weights.
-
-    The old behaviour substring-matched every query word against item
-    overviews, so "relaxing but not too complicated, a bit funny" boosted any
-    film whose blurb contained "funny" while "relaxing" did nothing at all.
-    Intent words are now recognised explicitly and mapped to genres, so they
-    steer the hard filter (exclusions especially) as well as the score.
+    """Turn a free-text request into genre signals, using the word lists in
+    recommender_rules.yaml.
 
     Returns:
-        include_genres: genres the user positively asked for
-        exclude_genres: genres contradicting the request (hard-excluded)
-        boost_genres:   genres to nudge in scoring
-        weight:         how strongly the query should shape the result
+        include_genres:       genres the request NAMED ("comedy"): a hard filter
+        hinted_genres:        genres it described ("make me laugh"): a strong pull
+        exclude_genres:       hard exclusions (named or hinted with "no", plus the
+                              tones' exclusions that nothing else asks for)
+        named_exclude_genres: the "no X" part of exclude_genres
+        boost_weights:        {genre: points} for scoring (negative for "less X")
+        boost_genres:         the genres with a positive pull
+        weight:               > 0 when the request carried any recognised intent
     """
     result: Dict[str, Any] = {
-        "include_genres": [], "exclude_genres": [],
-        "boost_genres": [], "weight": 0.0,
-        "concept_requested": False, "themes": [],
+        "include_genres": [], "hinted_genres": [], "exclude_genres": [],
+        "named_exclude_genres": [], "boost_genres": [], "boost_weights": {},
+        "weight": 0.0, "concept_requested": False, "themes": [],
+        "matched_terms": [], "content_words": [], "any_language": False,
     }
     if not query or not query.strip():
         return result
 
     tokens = [w for w in re.findall(r"[a-z]+", query.lower()) if w]
-    seen_include: Set[str] = set()
-    seen_exclude: Set[str] = set()
-    matched_terms: List[str] = []
-
-    for i, word in enumerate(tokens):
-        intent = QUERY_INTENT.get(word)
-        if not intent:
-            continue
-        negated = _is_negated(tokens, i)
-        matched_terms.append(word)
-        # "not complicated" means simple, and both words carry the same
-        # exclusions, so for these the negation must not flip anything.
-        if negated and word in NEGATION_KEEPS_EFFECT:
-            negated = False
-
-        for g in intent.get("genres", []):
-            if negated:
-                seen_exclude.add(g)
-            else:
-                seen_include.add(g)
-                if g not in result["boost_genres"]:
-                    result["boost_genres"].append(g)
-
-        for g in intent.get("exclude_genres", []):
-            # "not too complicated" negates the *exclusion* this term implies.
-            if negated:
-                seen_include.add(g)
-            else:
-                seen_exclude.add(g)
-
-        if not negated:
-            result["weight"] += intent.get("weight", 0.2)
-
-    # Typed genre names, negated: a hard exclusion the user asked for by name.
-    named_exclude: Set[str] = set()
+    concept = any(w in CONCEPT_REQUEST_TERMS for w in tokens)
+    named: Set[str] = set()
+    hinted: Set[str] = set()
+    no_genres: Set[str] = set()
+    less: Set[str] = set()
+    tone_boost: Set[str] = set()
+    tone_exclude: Set[str] = set()
     negated_words: Set[str] = set()
+    matched: List[str] = []
+
     for i, word in enumerate(tokens):
-        if word in GENRE_WORDS and _genre_negated(tokens, i):
-            named_exclude.add(GENRE_WORDS[word])
-            negated_words.add(word)
-            matched_terms.append(f"no {word}")
-        elif word not in QUERY_INTENT and _is_negated(tokens, i):
-            # "no zombies": a negated word must never boost films that mention it.
-            negated_words.add(word)
-    seen_exclude |= named_exclude
-    seen_include -= named_exclude
-    result["boost_genres"] = [g for g in result["boost_genres"] if g not in named_exclude]
+        genres = GENRE_NAMES.get(word) or GENRE_HINTS.get(word)
+        if genres:
+            negator = _negator_before(tokens, i)
+            if _genre_negated(tokens, i) or (negator and negator != "less"):
+                no_genres.update(genres)
+                negated_words.add(word)
+                matched.append(f"no {word}")
+            elif _genre_lessened(tokens, i):
+                less.update(genres)
+                negated_words.add(word)
+                matched.append(f"less {word}")
+            else:
+                (named if word in GENRE_NAMES else hinted).update(genres)
+                matched.append(word)
+            continue
+        tone = TONES.get(word)
+        if tone:
+            matched.append(word)
+            if _is_negated(tokens, i) and not tone.get("same_when_negated"):
+                negated_words.add(word)        # "not relaxing" drops the tone
+                continue
+            tone_boost.update(tone.get("boost") or [])
+            tone_exclude.update(tone.get("exclude") or [])
+            continue
+        if _is_negated(tokens, i):
+            negated_words.add(word)            # "no zombies" must never boost zombies
 
-    # "A great concept to interpret" is a QUALITY bar, not a genre. Detected
-    # separately so it can veto Family/Animation/Music and pull in themes,
-    # rather than silently resolving to whichever mood genres were nearby.
-    concept_requested = any(w in CONCEPT_REQUEST_TERMS for w in tokens)
-    if concept_requested:
-        matched_terms.append("concept")
+    named -= no_genres
+    hinted -= no_genres | named
+    asked = named | hinted
+    # A tone's exclusions never remove a genre the request asks for ("relaxing horror").
+    exclude = no_genres | (tone_exclude - asked)
 
-    # A request that asks for a CONCEPT must not also be restricted to the
-    # genres of the words that surround it. "Chill, a bit funny, but a great
-    # concept like They Live" contains "funny", which pulls in Comedy — and
-    # They Live is Sci-Fi/Action/Thriller with no Comedy at all, so the very
-    # film the user named was hard-excluded by their own description of it.
-    # Concept-bearing requests widen rather than narrow: the concept signal
-    # discriminates on premise, so a fixed genre whitelist only gets in the way.
-    if concept_requested:
-        for g in THEMES_GENRES_FOR_CONCEPT:
-            seen_include.add(g)
+    # In a concept request, "it was chill and funny" describes the film it wants.
+    scale = float(_CONCEPT["hint_weight"]) if concept else 1.0
+    hint_points = float(_W["hinted_genre"]) * scale
+    weights: Dict[str, float] = {}
+    for g in tone_boost - exclude:
+        weights[g] = float(_W["tone_genre"]) * scale
+    for g in hinted:
+        weights[g] = hint_points
+    for g in named:
+        weights[g] = float(_W["named_genre"])
+    for g in less - asked:
+        weights[g] = -float(_W.get("less_genre", 1.0))
 
-    # A genre cannot be both required and forbidden. The concept widening list
-    # is a permissive safety net, not a demand, so when it collides with an
-    # explicit exclusion the EXCLUSION wins and the genre leaves the include
-    # list. Losing "Horror" from the pool is correct; the user's "chill, not
-    # horror" is a real constraint and must not be silently discarded.
-    if concept_requested:
-        seen_include -= seen_exclude
-    seen_include -= named_exclude
-
-    result["include_genres"] = sorted(seen_include)
-    result["exclude_genres"] = sorted(seen_exclude)
-    result["named_exclude_genres"] = sorted(named_exclude)
-    result["weight"] = round(min(result["weight"], 1.0), 2)
-    result["matched_terms"] = matched_terms
-    result["concept_requested"] = concept_requested
-    result["themes"] = [name for name in THEMES if _theme_mentioned(name, tokens)]
-
-    # Content words worth matching against overviews/titles: intent words are
-    # already handled structurally, and stopwords carry no signal.
-    result["content_words"] = sorted(
-        w for w in set(tokens)
-        if len(w) > 3 and w not in QUERY_STOPWORDS
-        and w not in QUERY_INTENT and w not in QUERY_NON_GENRE
-        and w not in negated_words
-    )
+    if concept:
+        matched.append("concept")
+    skip = set(GENRE_NAMES) | set(GENRE_HINTS) | set(TONES) | QUERY_STOPWORDS | QUERY_NON_GENRE | negated_words
+    result.update({
+        "include_genres": sorted(named),
+        "hinted_genres": sorted(hinted),
+        "exclude_genres": sorted(exclude),
+        "named_exclude_genres": sorted(no_genres),
+        "boost_weights": weights,
+        "boost_genres": sorted(g for g, w in weights.items() if w > 0),
+        "weight": round(min(1.0, 0.25 * len(matched)), 2),
+        "matched_terms": matched,
+        "concept_requested": concept,
+        "themes": [name for name in THEMES if _theme_mentioned(name, tokens)],
+        "content_words": sorted(w for w in set(tokens) if len(w) > 3 and w not in skip),
+        "any_language": any(w in ANY_LANGUAGE_WORDS for w in tokens),
+    })
     return result
 
 
@@ -759,48 +486,46 @@ def resolve_effective_genres(
     chip_genres: Optional[List[str]],
     query: Optional[str],
 ) -> Dict[str, Any]:
-    """Combine mood genres + user's chips + query intent into one filter spec.
+    """Combine the mood card, the genre chips and the typed request into one spec.
 
-    Precedence: explicit chips win (the user clicked them deliberately), then
-    query intent, then the mood's own genres. Exclusions apply regardless —
-    asking for "relaxing, not too complicated" should veto a violent film even
-    if Horror is among the chips, because the phrase is a contradiction rather
-    than a narrowing choice.
+    What you type or tap beats the mood card: genre chips and genres named in
+    the request are the filter. The mood's genres are the filter only when the
+    request asks for no genre of its own (and no concept); otherwise they are a
+    soft pull. Typed "no X" always wins.
     """
     intent = parse_query_intent(query)
-    chip_list = list(chip_genres or [])
-    mood_list = list(mood_genres or [])
+    excluded = set(intent["exclude_genres"])
+    mood_list = [g for g in (mood_genres or []) if g]
 
     include: List[str] = []
-    for g in chip_list + intent["include_genres"] + mood_list:
-        if g not in include:
+    for g in list(chip_genres or []) + intent["include_genres"]:
+        if g and g not in include and g not in excluded:
             include.append(g)
 
-    # Only apply exclusion filtering when the query actually expressed one,
-    # and never let a mood's own genre veto its films (mood 4 = Horror must
-    # still be able to return horror).
-    exclude: List[str] = []
-    named = set(intent.get("named_exclude_genres", []))
-    if intent["exclude_genres"]:
-        for g in intent["exclude_genres"]:
-            # A genre typed by name ("no animation") is excluded even when the
-            # mood's own genres include it: the user said so in words.
-            if g in named:
-                include = [x for x in include if x != g]
-            elif g in include and g in mood_list and mood_list and intent["weight"] < 0.3:
-                continue
-            if g not in exclude:
-                exclude.append(g)
+    boosts = dict(intent["boost_weights"])
+    asks_genre = bool(include or intent["hinted_genres"] or intent["concept_requested"])
+    if not asks_genre:
+        include = [g for g in mood_list if g not in excluded]
+    else:
+        for g in mood_list:
+            if g not in excluded and g not in boosts:
+                boosts[g] = float(_W["tone_genre"])
+
+    # The mood's own genres are never vetoed by a tone ("scary" mood + "relaxing").
+    named = set(intent["named_exclude_genres"])
+    exclude = [g for g in intent["exclude_genres"] if g in named or g not in mood_list]
 
     return {
         "include": include,
         "exclude": exclude,
-        "boost": intent["boost_genres"],
+        "hinted": intent["hinted_genres"],
+        "boost": {g.strip().lower(): w for g, w in boosts.items() if g and g.strip()},
         "weight": intent["weight"],
         "content_words": intent.get("content_words", []),
         "matched_terms": intent.get("matched_terms", []),
         "concept_requested": intent.get("concept_requested", False),
         "themes": intent.get("themes", []),
+        "any_language": intent.get("any_language", False),
     }
 
 
@@ -1063,9 +788,9 @@ class RecommenderService:
         query: Optional[str] = None,
         exclude_ids: Optional[Set[int]] = None,
         content_words: Optional[List[str]] = None,
-        intent_boost_genres: Optional[Set[str]] = None,
-        intent_bonus: float = 0.0,
+        genre_boosts: Optional[Dict[str, float]] = None,
         concept_requested: bool = False,
+        requested_themes: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Profile-aware scoring: Bayesian quality + blended taste + co-view tier.
 
@@ -1116,11 +841,8 @@ class RecommenderService:
         if profile in ("me", "partner"):
             exclude = exclude | viewer_seen_ids
         query_words = set(content_words) if content_words else set()
-        # `intent_boost_genres` / `intent_bonus` come pre-computed from the
-        # caller's query spec: genres the prompt asked for ("funny" -> Comedy)
-        # get a real score bump. Previously only free-text overview matching
-        # contributed, so a query could pull a film in and still rank it
-        # mid-table.
+        # `genre_boosts` come from the request spec (resolve_effective_genres):
+        # points for genres it named, hinted at ("laugh" -> Comedy) or leans to.
 
         # Bayesian prior must scale with the pool being ranked. A fixed
         # min_votes=1000 suits a mainstream catalogue averaging ~820 votes, but
@@ -1136,7 +858,6 @@ class RecommenderService:
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
-            theme_boost = 0.0
             if item.get("id") in exclude:
                 continue
 
@@ -1148,11 +869,9 @@ class RecommenderService:
 
             item_genres = set(_split_lower(item.get("genres")))
             item_keywords = set(_split_lower(item.get("tier2_keywords")))
-            relevance_boost = 0.0
-            # Query intent bump: the film carries a genre the prompt asked for
-            # ("funny" -> Comedy), independent of either person's taste.
-            if intent_boost_genres and (item_genres & intent_boost_genres):
-                relevance_boost += intent_bonus
+            # Genres the request asked for, independent of either person's taste,
+            # plus request words found in the title, synopsis or keywords.
+            relevance_boost = genre_boost(item_genres, genre_boosts) + _word_match(item, query_words)
             taste_bonus, own_bonus, other_bonus = self._taste_bonus(
                 item_genres, item_keywords, own_taste, other_taste, mix
             )
@@ -1160,39 +879,7 @@ class RecommenderService:
             cv = coview.get(item.get("id")) or {}
             tier = cv.get("tier", "C")
             tier_boost = TIER_BOOSTS.get(tier, 0.0)
-
-            if query_words:
-                item_text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
-                matches = sum(1 for w in query_words if len(w) > 3 and w in item_text)
-                relevance_boost = min(matches * 0.3, 2.0)
-
-                relevance_boost = min(matches * 0.3, 2.0)
-
-            # Thematic signal. Genres say what a film IS; when the request is
-            # about a concept ("hidden puppetmasters among us"), only the plot
-            # can answer it. Scored against the synopsis rather than the genre
-            # list, so a satirical Sci-Fi about covert alien control outranks a
-            # Sci-Fi comedy about nothing in particular.
-            if concept_requested:
-                item_text_lower = (
-                    f"{item.get('title')} {item.get('overview')}"
-                ).lower()
-                matched_themes = [
-                    name for name in THEMES
-                    if any(t in item_text_lower for t in THEMES[name]["terms"])
-                ]
-                if matched_themes:
-                    theme_boost += min(0.6 + 0.35 * (len(matched_themes) - 1), 1.6)
-                    item["matched_themes"] = [
-                        THEMES[n]["label"] for n in matched_themes
-                    ]
-                # A request for an interpretable concept cannot be satisfied by
-                # a family cartoon, however well rated. Soft penalty rather than
-                # a hard filter: the user asked for "chill AND funny AND deep",
-                # not for a genre whitelist, and a film should be able to
-                # surprise us.
-                if item_genres & CONCEPT_INCOMPATIBLE_GENRES:
-                    theme_boost -= 1.2
+            theme_boost = _concept_adjustment(item, item_genres, requested_themes) if concept_requested else 0.0
 
             final_score = base_score + taste_bonus + tier_boost + relevance_boost + theme_boost
 
@@ -1225,13 +912,14 @@ class RecommenderService:
         taste_profile: Dict[str, Any],
         query: Optional[str] = None,
         concept_requested: bool = False,
+        genre_boosts: Optional[Dict[str, float]] = None,
+        content_words: Optional[List[str]] = None,
+        requested_themes: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Multi-faceted scoring combining Bayesian rating, taste profile, and vector similarity."""
+        """Cold start (nobody has rated anything): Bayesian rating, the old summed
+        taste profile, and the same request signals as the profile-aware path."""
         preferred_genres = taste_profile.get("preferred_genres", {})
         preferred_keywords = taste_profile.get("preferred_keywords", {})
-
-        # Compute query vector embedding if model is deployed
-        query_vector = get_vector_embeddings(query) if query else None
 
         scored: List[Tuple[float, Dict[str, Any]]] = []
         for item in candidates:
@@ -1255,37 +943,9 @@ class RecommenderService:
 
             taste_bonus = min(taste_bonus, 2.0)
 
-            # 3. Vector Semantic Relevance vs Term Matching Boost
-            relevance_boost = 0.0
-            if query_vector and item.get("embedding"):
-                # Fast Cosine Similarity using stored JSON vector
-                similarity = cosine_similarity(query_vector, item["embedding"])
-                relevance_boost = similarity * 3.0
-            elif query:
-                # Text fall-back match
-                q_words = set(re.findall(r"\w+", query.lower()))
-                item_text = f"{item.get('title')} {item.get('overview')} {item.get('tier2_keywords')}".lower()
-                matches = sum(1 for w in q_words if len(w) > 3 and w in item_text)
-                relevance_boost = min(matches * 0.3, 2.0)
-
-            # Same concept layer as the profile-aware path. A cold-start user
-            # (no ratings yet) previously fell to this loop and got concept-
-            # blind results, so the very first search of a new account could
-            # return a cartoon for a request about hidden controllers.
-            theme_boost = 0.0
-            if concept_requested:
-                item_text_lower = (
-                    f"{item.get('title')} {item.get('overview')}"
-                ).lower()
-                matched_themes = [
-                    n for n in THEMES
-                    if any(t in item_text_lower for t in THEMES[n]["terms"])
-                ]
-                if matched_themes:
-                    theme_boost += min(0.6 + 0.35 * (len(matched_themes) - 1), 1.6)
-                    item["matched_themes"] = [THEMES[n]["label"] for n in matched_themes]
-                if item_genres & CONCEPT_INCOMPATIBLE_GENRES:
-                    theme_boost -= 1.2
+            # 3. The request: genres asked for and words in the synopsis.
+            relevance_boost = genre_boost(item_genres, genre_boosts) + _word_match(item, set(content_words or []))
+            theme_boost = _concept_adjustment(item, item_genres, requested_themes) if concept_requested else 0.0
 
             final_score = base_score + taste_bonus + relevance_boost + theme_boost
 
@@ -1369,29 +1029,23 @@ class RecommenderService:
         """
         mood_info = MOOD_MAPPINGS.get(mood_id, MOOD_MAPPINGS[8])
 
-        # Resolve Genres. The free-text query is a first-class filter input, not
-        # just a scoring nudge: "relaxing, not too complicated" has to be able to
-        # veto a violent film even when the mood's own genres include it.
+        # The server fills genres_override with the mood card's genres when no
+        # chip was tapped; those are the mood's, not a choice of genre.
         chip_genres = genres_override
+        if chip_genres is not None and list(chip_genres) == list(mood_info["genres"]):
+            chip_genres = None
         genre_spec = resolve_effective_genres(mood_info["genres"], chip_genres, query)
         genres = genre_spec["include"] or None
         excluded_genres = genre_spec["exclude"]
-        intent_weight = genre_spec["weight"]
         content_words = genre_spec["content_words"]
         concept_requested = genre_spec.get("concept_requested", False)
-        # Premise terms for the SQL shortlist. Only the concrete nouns from
-        # THEMES — never the abstract request words ("concept", "interpret"),
-        # which appear in no synopsis and would match nothing while diluting
-        # the terms that do.
+        genre_boosts = dict(genre_spec["boost"])
+        # Premise terms for the SQL shortlist: the concrete phrases from the
+        # themes, never the abstract request words ("concept", "interpret").
         concept_terms: List[str] = []
         if concept_requested:
-            seen_terms: Set[str] = set()
-            for theme in THEMES:
-                for term in THEMES[theme]["terms"]:
-                    key = term.strip().lower()
-                    if key and key not in seen_terms:
-                        seen_terms.add(key)
-                        concept_terms.append(key)
+            concept_terms = list(dict.fromkeys(t.strip() for spec in THEMES.values()
+                                               for t in spec["terms"] if t.strip()))
 
         # Origin-of-cinema requests ("South Asian movies") are places, not
         # genres. Filter on country AND language so TMDB's origin mislabels
@@ -1405,59 +1059,39 @@ class RecommenderService:
                 f"countries={origin_countries} languages={origin_languages}",
                 flush=True,
             )
+        # Foreign-language titles only when top tier, unless the request named a
+        # place or a language, said "foreign", or ranks the people's own library.
+        gate = None
+        if not origin_spec and not genre_spec.get("any_language") and only_ids is None:
+            gate = foreign_gate(RULES, media_type)
 
-        if media_type == "tv" and genres:
-            expanded = list(genres)
-            for g in genres:
-                expanded.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
-            genres = list(dict.fromkeys(expanded))
-        if media_type == "tv" and excluded_genres:
-            expanded_ex = []
-            for g in excluded_genres:
-                expanded_ex.append(g)
-                expanded_ex.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
-            excluded_genres = list(dict.fromkeys(expanded_ex))
+        def with_tv_aliases(names: Optional[List[str]]) -> Optional[List[str]]:
+            if media_type != "tv" or not names:
+                return names
+            out = list(names)
+            for g in names:
+                out.extend(TV_GENRE_ALIASES.get(g.strip().lower(), []))
+            return list(dict.fromkeys(out))
 
-        # Baseline Minimum Rating Floor
-        min_rating = 6.0 if min_rating_override is None else min_rating_override
+        genres = with_tv_aliases(genres)
+        excluded_genres = with_tv_aliases(excluded_genres)
+
+        min_rating = float(_W["min_rating"]) if min_rating_override is None else min_rating_override
         if query and any(kw in query.lower() for kw in GUILTY_PLEASURE_KEYWORDS):
             min_rating = 0.0
 
-        # Stage 1: Quality-cut candidate funnel — hard filters + Bayesian
-        # audience-weighted ordering computed in SQL (real vote counts), cut
-        # to the shortlist so Python scoring never touches the full catalogue.
-        #
         # NB: the SQL `exclude_watched` drops anything EITHER profile has
         # watched. In a profile-aware run that would delete every rated film
         # before the scorer could see its tier, making Tier A unreachable — so
         # watched exclusion is handled in Python below, where "seen by both"
         # can be distinguished from "seen by one".
         sql_exclude_watched = exclude_watched and profile not in PROFILE_MIX
-        candidates = self.db.get_top_candidates(
-            media_type=media_type,
-            genres=genres if genres else None,
-            exclude_genres=excluded_genres or None,
-            origin_countries=origin_countries,
-            origin_languages=origin_languages,
-            exclude_watched=sql_exclude_watched,
-            min_rating=min_rating,
-            era=era_preference,
-            duration=duration_preference if media_type == "movie" else None,
-            concept_terms=concept_terms,
-            limit=self.shortlist_size,
-            only_ids=only_ids,
-        )
 
-        # A concept request must not be decided by the quality cut alone. SQL
-        # returns the top `shortlist_size` by Bayesian rating, and a theme-
-        # relevant film rated 7.3 loses to 250 better-rated titles that have
-        # nothing to do with the request — They Live was filtered out of its
-        # own shortlist by exactly this. For concept requests the shortlist is
-        # widened so premise matching actually gets a chance to rank them.
-        if concept_requested:
-            extra = self.db.get_top_candidates(
+        def fetch(**over: Any) -> List[Dict[str, Any]]:
+            """The quality-cut funnel: hard filters + Bayesian ordering in SQL."""
+            args = dict(
                 media_type=media_type,
-                genres=genres if genres else None,
+                genres=genres or None,
                 exclude_genres=excluded_genres or None,
                 origin_countries=origin_countries,
                 origin_languages=origin_languages,
@@ -1465,35 +1099,48 @@ class RecommenderService:
                 min_rating=min_rating,
                 era=era_preference,
                 duration=duration_preference if media_type == "movie" else None,
-                concept_terms=concept_terms,
-                limit=self.shortlist_size * 2,
+                foreign_gate=gate,
+                limit=self.shortlist_size,
             )
-            seen_ids = {c.get("id") for c in candidates}
-            candidates = list(candidates) + [
-                c for c in extra if c.get("id") not in seen_ids
-            ]
+            args.update(over)
+            return self.db.get_top_candidates(**args)
 
-        # Vibe search: the titles whose vibe documents are closest to the
-        # typed request join the shortlist, through the same hard filters, so
-        # a well-matching 6.9 film isn't lost to 250 better-rated ones.
-        vibe = self._vibe_query(query) if self.vibe_ready(query) else None
-        if vibe:
-            near = self.vibe_index.top(vibe["vector"], k=VIBE_SHORTLIST)
-            extra = self.db.get_top_candidates(
-                media_type=media_type,
-                genres=genres if genres else None,
-                exclude_genres=excluded_genres or None,
-                origin_countries=origin_countries,
-                origin_languages=origin_languages,
-                exclude_watched=sql_exclude_watched,
-                min_rating=min_rating,
-                era=era_preference,
-                duration=duration_preference if media_type == "movie" else None,
-                limit=VIBE_SHORTLIST,
-                only_ids=[i for i, _ in near],
-            )
+        candidates = fetch(concept_terms=concept_terms, only_ids=only_ids)
+        if not candidates and genres:
+            # A named genre the catalogue has nothing for (TMDB's TV genres have
+            # no Horror): keep it as a strong pull instead of returning nothing.
+            for g in genre_spec["include"]:
+                genre_boosts[g.strip().lower()] = float(_W["hinted_genre"])
+            genres = None
+            candidates = fetch(concept_terms=concept_terms, only_ids=only_ids)
+
+        def merge(extra: List[Dict[str, Any]]) -> None:
+            nonlocal candidates
             seen_ids = {c.get("id") for c in candidates}
             candidates = list(candidates) + [c for c in extra if c.get("id") not in seen_ids]
+
+        # Genres the request hinted at ("make me laugh"): their best titles join
+        # the shortlist, so the pull has films to pull. The general quality cut
+        # alone holds few of any one genre.
+        for g in genre_spec.get("hinted") or []:
+            if g in (genre_spec["include"] or []):
+                continue
+            merge(fetch(genres=with_tv_aliases([g]), limit=int(_W["hinted_shortlist"]), only_ids=only_ids))
+
+        # A concept request must not be decided by the quality cut alone: a
+        # premise-relevant film rated 7.3 loses to hundreds of better-rated ones.
+        if concept_requested:
+            merge(fetch(concept_terms=concept_terms, limit=self.shortlist_size * 2, only_ids=only_ids))
+
+        # Vibe search: the titles whose vibe documents are closest to the
+        # typed request join the shortlist, through the same hard filters.
+        vibe = self._vibe_query(query) if self.vibe_ready(query) else None
+        if vibe:
+            near = [i for i, _ in self.vibe_index.top(vibe["vector"], k=VIBE_SHORTLIST)]
+            if only_ids is not None:
+                allowed = {int(i) for i in only_ids}
+                near = [i for i in near if int(i) in allowed]
+            merge(fetch(limit=VIBE_SHORTLIST, only_ids=near))
 
         if not candidates:
             return {"total_results": 0, "page": page, "page_size": page_size, "items": []}
@@ -1543,18 +1190,17 @@ class RecommenderService:
             ranked = self.rank_candidates_profile_aware(
                 candidates, profile=profile, query=query,
                 content_words=content_words,
-                intent_boost_genres={
-                    g.strip().lower()
-                    for g in (genre_spec.get("boost") or []) if g and g.strip()
-                },
-                intent_bonus=0.5 * intent_weight,
+                genre_boosts=genre_boosts,
                 concept_requested=concept_requested,
+                requested_themes=genre_spec.get("themes"),
             )
         else:
             taste = self.db.get_user_taste_profile(min_rating=7.0)
             ranked = self.rank_candidates(
                 candidates, taste, query=query,
                 concept_requested=concept_requested,
+                genre_boosts=genre_boosts, content_words=content_words,
+                requested_themes=genre_spec.get("themes"),
             )
             for item in ranked:
                 item["co_view_tier"] = "C"
@@ -1584,13 +1230,14 @@ class RecommenderService:
         targeted = bool(
             origin_spec
             or genre_spec["include"]
+            or genre_spec["hinted"]
             or genre_spec["exclude"]
             or genre_spec.get("weight", 0) > 0
             or bool(vibe)   # a vibe-ranked list is a targeted answer too
             or pool_hook is not None
         )
         result = self.finalize(ranked, page, page_size, shuffle=variety and not targeted,
-                               spread_exempt=set(genre_spec["include"]))
+                               spread_exempt=set(genre_spec["include"]) | set(genre_spec["hinted"]))
         result["vibe"] = vibe_info
         return result
 

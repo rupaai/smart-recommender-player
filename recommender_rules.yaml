@@ -1,0 +1,292 @@
+# Recommender rules: every personal choice the recommender makes, in one place.
+#
+# The code reads this file (services/recommender_rules.py) and holds no word lists,
+# genre lists or tuning numbers of its own. Edit here and restart the server.
+# RECOMMENDER_RULES_PATH points the app at another copy.
+#
+# Machine-specific knobs (funnel sizes, engine mode, the taste model switch) stay in
+# config.yaml / homelab/config.yaml.
+
+# ---------------------------------------------------------------------------
+# Foreign-language titles
+# ---------------------------------------------------------------------------
+# Unless a request names a place or a language ("korean", "in hindi", "foreign"),
+# a title whose original language is not one of home_languages is shown only when
+# it is top tier: TMDB rating at least min_rating AND at least min_votes votes.
+# 7.8 is roughly TMDB's top 500 films (Parasite, Spirited Away, Amélie, Train to
+# Busan pass; most well-liked but ordinary foreign films don't).
+foreign_titles:
+  home_languages: [en]
+  min_rating: 7.8
+  min_votes:
+    movie: 2000
+    tv: 500           # shows get far fewer votes than films
+  # Words that mean "any language is fine" (no place filter, no gate).
+  any_language_words: [foreign, international, subtitled, subtitles]
+
+# ---------------------------------------------------------------------------
+# Words typed into a request
+# ---------------------------------------------------------------------------
+# genre_names: the genre itself. Typed, it is a hard filter ("comedy" shows only
+# comedies); negated ("no animation", "nothing scary or musicals") it is a hard
+# exclusion. "Drama" is left out on purpose: "no drama" usually means low conflict.
+# Single words only.
+genre_names:
+  Comedy: [comedy, comedies, comedic, sitcom, sitcoms, romcom, romcoms]
+  Romance: [romance, romances, romcom, romcoms]
+  Horror: [horror, horrors, slasher]
+  Animation: [animation, animations, animated, cartoon, cartoons, anime]
+  Documentary: [documentary, documentaries, docuseries]
+  Music: [musical, musicals]
+  War: [war]
+  Western: [western, westerns]
+  Thriller: [thriller, thrillers]
+  Crime: [crime, heist, gangster, gangsters]
+  Mystery: [mystery, mysteries, whodunit, whodunnit]
+  Fantasy: [fantasy]
+  Action: [action, superhero, superheroes]
+  Adventure: [adventure, adventures]
+  History: [history, historical]
+  Science Fiction: [scifi, sci]
+  Family: [kids]
+
+# genre_hints: words that describe a genre without naming it ("make me laugh").
+# Not a filter, but a strong pull: films of that genre get `weights.hinted_genre`
+# points and the genre's best titles join the shortlist. Negated ("not scary") they
+# exclude the genre like a named one.
+genre_hints:
+  Comedy: [funny, laugh, laughs, laughing, laughter, hilarious, humour, humor, humorous,
+           silly, goofy, witty, lol, giggle]
+  Horror: [scary, spooky, creepy, terrifying, frightening, haunted, horrifying]
+  Romance: [romantic, swoon, swoony]
+  Thriller: [tense, suspense, suspenseful, gripping]
+  Action: [explosions, fights, fighting]
+  Science Fiction: [space, aliens, futuristic, robots]
+  Mystery: [detective, puzzle]
+  Family: [family]
+
+# tones: how the evening should feel. Soft: `boost` genres get `weights.tone_genre`
+# points; `exclude` genres are kept out unless the request also asks for them.
+# Negating a tone ("not relaxing") drops it, except the ones marked same_when_negated
+# ("not too complicated" means the same thing as "simple").
+tones:
+  relaxing: {boost: [Comedy, Drama, Romance], exclude: [Horror, War]}
+  chill: {boost: [Comedy, Drama, Romance], exclude: [Horror, War]}
+  cozy: {boost: [Comedy, Romance, Family], exclude: [Horror, Thriller, Crime]}
+  cosy: {boost: [Comedy, Romance, Family], exclude: [Horror, Thriller, Crime]}
+  light: {boost: [Comedy, Romance], exclude: [Horror]}
+  dark: {boost: [Thriller, Crime, Horror]}
+  thoughtful: {boost: [Drama, Science Fiction]}
+  smart: {boost: [Science Fiction, Mystery]}
+  complicated: {exclude: [Horror, Thriller, Crime, War], same_when_negated: true}
+  simple: {exclude: [Horror, Thriller, Crime, War], same_when_negated: true}
+
+# Words that drop the rating floor ("guilty pleasure", "so bad it's good").
+guilty_pleasure: ["guilty pleasure", "so bad it's good", "so bad its good", cringe, b-movie,
+                  "b movie", trash, campy, cheesy]
+
+# ---------------------------------------------------------------------------
+# "A great concept to interpret"
+# ---------------------------------------------------------------------------
+# A request using one of these words asks for an idea, not a genre. Films whose
+# synopsis matches a theme get a boost (plus named_theme_boost when the request
+# describes that premise itself, "people among us"); penalty_genres are pushed
+# down (soft); genre hints and tones in the same request count only hint_weight
+# of their usual pull, since "it was chill and funny, with a great concept"
+# describes the film rather than asking for a comedy.
+concept_request:
+  words: [concept, concepts, conceptual, interpret, interpretation, interpretable,
+          intellectual, thoughtprovoking, clever, subtext, metaphor, metaphorical,
+          symbolic, mindbending, philosophical, meaningful, bigidea, ideas, premise,
+          satire, satirical, allegory, allegorical]
+  penalty_genres: [Family, Animation, Music, Musical]
+  penalty: 1.2
+  hint_weight: 0.25
+  theme_boost: 0.6          # first matching theme
+  theme_boost_more: 0.35    # each further theme
+  theme_boost_max: 1.6
+  named_theme_boost: 0.6
+  themes:
+    hidden_puppeteer:
+      label: hidden controllers among us
+      terms: [aliens are, alien disguised, shape-shifting, shapeshifting, infiltrat,
+              masquerading as, masquerade, lulling the public, secret society, illuminati,
+              shadow government, mind control, brainwash, hypnot, puppeteer, covertly control,
+              secretly control, among us]
+    exploitation:
+      label: people used by others
+      terms: [exploit, manipulat, puppet master, puppeteer, brainwash, mind control, used by,
+              enslave, exploitation, parasite, feeds on, predatory, coerc, blackmail,
+              pulling their strings, who pull the strings, on the payroll, clandestine,
+              black ops, corporate espionage]
+    identity:
+      label: questions of identity and self
+      terms: [identity, who am i, imposter, clone, cloning, double, look-alike, replica,
+              android, cyborg, memory, remember, simulate, virtual reality]
+    surveillance:
+      label: watched and watched back
+      terms: [surveill, watched, monitor, big brother, camera, tracking, spied, observed, pods]
+    satire:
+      label: satire of everyday life
+      terms: [satir, lampoon, mock, parody, ridicule, consumerism, conformity, middle class,
+              bureaucracy, corporate]
+    philosophical:
+      label: big ideas, open to interpretation
+      terms: [meaning, existence, reality, question, dilemma, philosoph, meaning of,
+              identity of, mortality, free will, consciousness, paradox]
+
+# ---------------------------------------------------------------------------
+# Mood cards (the original app's Discover moods, Choose for us)
+# ---------------------------------------------------------------------------
+# A mood's genres are a filter only when the request types no genre of its own;
+# otherwise they become a soft tone_genre pull.
+moods:
+  1: {name: "😊 Happy / Feel-Good", vibe: "light, funny, uplifting", genres: [Comedy, Family, Animation, Music]}
+  2: {name: "😢 Sad / Emotional", vibe: "moving, heartfelt, tearjerker", genres: [Drama, Romance]}
+  3: {name: "😱 Thrilling / On the Edge", vibe: "intense, gripping, high-stakes", genres: [Action, Thriller, Adventure]}
+  4: {name: "👻 Scary / Spooky", vibe: "dark, tense, hair-raising", genres: [Horror, Mystery]}
+  5: {name: "❤️ Romantic", vibe: "warm, swoony, tender", genres: [Romance]}
+  6: {name: "🤯 Mind-Bending / Thoughtful", vibe: "clever, cerebral, twisty", genres: [Science Fiction, Sci-Fi, Mystery]}
+  7: {name: "😌 Relaxing / Chill", vibe: "gentle, cozy, low-stakes", genres: [Animation, Family, Comedy, Romance, Music]}
+  8: {name: "🎲 Surprise Me!", vibe: "anything goes", genres: []}
+
+# "Choose for us": the mood and length used when nobody picked one, by day and time.
+# Days: mon..sun, or weekday (mon-thu evenings/nights); parts: daytime, evening, night.
+# Duration "short" = under 105 minutes. First matching rule wins.
+choose_defaults:
+  - {when: daytime, mood: 1}
+  - {days: [fri, sat], mood: 8}
+  - {days: [sun], mood: 7, duration: short}
+  - {when: evening, mood: 8, duration: short}
+  - {when: night, mood: 7, duration: short}
+
+# ---------------------------------------------------------------------------
+# Scoring weights
+# ---------------------------------------------------------------------------
+weights:
+  min_rating: 6.0           # TMDB rating floor (dropped for guilty pleasures)
+  hinted_genre: 2.0         # film has a genre the request hinted at ("funny" -> Comedy)
+  less_genre: 1.0           # pushed down for "less X" ("less animation")
+  named_genre: 1.0          # film has a genre the request named (on top of the filter; rewards a horror-comedy for "horror comedy")
+  tone_genre: 0.5           # film has a genre the tone or mood leans to
+  word_match: 0.3           # each other request word found in title / synopsis / keywords
+  word_match_max: 2.0
+  vibe: 3.0                 # vibe-search similarity (0..1, stretched over the pool) x this
+  vibe_shortlist: 400       # nearest vibe matches that join the shortlist
+  hinted_shortlist: 300     # best titles of each hinted genre that join the shortlist
+
+# How much each person's taste counts: (viewer, the other person).
+profile_mix:
+  together: [0.6, 0.4]
+  me: [0.75, 0.25]
+  partner: [0.75, 0.25]
+
+# Co-view tiers: A = you both liked it, B = one of you loved it and the other hasn't seen it.
+tier_boosts: {A: 1.5, B: 0.8, C: 0.0}
+
+# Discover's memory: a title shown and not opened loses `ignored` points per showing,
+# fading over ignored_days and capped; "Not this one" costs `dismissed` for dismissed_days.
+memory:
+  ignored: 1.0
+  ignored_cap: 3.0
+  ignored_days: 14
+  dismissed: 5.0
+  dismissed_days: 30
+
+# Averaged taste (recommender.taste_formula: average): how much more you liked a genre
+# or keyword than your own average, shrunk while there are few ratings.
+taste:
+  genre_shrink: 3.0
+  mean_shrink: 5.0
+  keyword_shrink: 2.0
+  keyword_min: 1
+  genre_scale: 4.0
+  keyword_scale: 3.0
+  keyword_full: 3
+
+# Genre spread: at most `max` of any `window` picks from one shelf, unless the request asked for it.
+spread:
+  shelves: [animation, horror, documentary, music, war, western, family]
+  max: 2
+  window: 10
+
+# ---------------------------------------------------------------------------
+# Places and languages ("korean", "south asian", "in hindi")
+# ---------------------------------------------------------------------------
+# A title matches when its origin country is listed AND its original language is listed
+# (TMDB mislabels co-production countries; the language is reliable). The longest
+# phrase in the request wins ("south korean" over "korean").
+origins:
+  south asian: {countries: [IN, BD, PK, LK, NP], languages: [hi, ta, te, ml, kn, bn, pa, mr, gu, ur, si, ne], label: South Asian}
+  bangladeshi: {countries: [BD], languages: [bn], label: Bangladeshi}
+  bangladesh: {countries: [BD], languages: [bn], label: Bangladeshi}
+  bengali: {countries: [BD, IN], languages: [bn], label: Bengali (Bangladesh/India)}
+  bangla: {countries: [BD, IN], languages: [bn], label: Bengali (Bangladesh/India)}
+  deshi: {countries: [BD], languages: [bn], label: Bangladeshi (deshi)}
+  pakistani: {countries: [PK], languages: [ur, pa], label: Pakistani}
+  urdu: {countries: [PK, IN], languages: [ur], label: Urdu}
+  sri lankan: {countries: [LK], languages: [si], label: Sri Lankan}
+  nepali: {countries: [NP], languages: [ne], label: Nepali}
+  indian: {countries: [IN], languages: [hi, ta, te, ml, kn, bn, pa, mr, gu], label: Indian}
+  bollywood: {countries: [IN], languages: [hi], label: Bollywood (Hindi)}
+  hindi: {countries: [IN], languages: [hi], label: Hindi}
+  kollywood: {countries: [IN], languages: [ta], label: Tamil}
+  tamil: {countries: [IN, LK], languages: [ta], label: Tamil}
+  tollywood: {countries: [IN], languages: [te], label: Telugu}
+  telugu: {countries: [IN], languages: [te], label: Telugu}
+  malayalam: {countries: [IN], languages: [ml], label: Malayalam}
+  punjabi: {countries: [IN, PK], languages: [pa], label: Punjabi}
+  thai: {countries: [TH], languages: [th], label: Thai}
+  indonesian: {countries: [ID], languages: [id], label: Indonesian}
+  filipino: {countries: [PH], languages: [tl], label: Filipino}
+  vietnamese: {countries: [VN], languages: [vi], label: Vietnamese}
+  east asian: {countries: [JP, CN, HK, TW, KR], languages: [ja, zh, ko, cn], label: East Asian}
+  korean: {countries: [KR], languages: [ko], label: Korean}
+  south korean: {countries: [KR], languages: [ko], label: South Korean}
+  north korean: {countries: [KP], languages: [ko], label: North Korean}
+  k-drama: {countries: [KR], languages: [ko], label: Korean}
+  japanese: {countries: [JP], languages: [ja], label: Japanese}
+  anime: {countries: [JP], languages: [ja], label: Japanese (anime)}
+  chinese: {countries: [CN, HK, TW], languages: [zh, cn, yue], label: Chinese-language}
+  mandarin: {countries: [CN, TW], languages: [zh, cn], label: Mandarin}
+  cantonese: {countries: [HK], languages: [cn, yue, zh], label: Cantonese}
+  greek: {countries: [GR], languages: [el], label: Greek}
+  swedish: {countries: [SE], languages: [sv], label: Swedish}
+  danish: {countries: [DK], languages: [da], label: Danish}
+  norwegian: {countries: ["NO"], languages: ["no", nb], label: Norwegian}
+  finnish: {countries: [FI], languages: [fi], label: Finnish}
+  nordic: {countries: [SE, "NO", DK, FI, IS], languages: [sv, "no", da, fi], label: Nordic}
+  dutch: {countries: [NL], languages: [nl], label: Dutch}
+  polish: {countries: [PL], languages: [pl], label: Polish}
+  ukrainian: {countries: [UA], languages: [uk], label: Ukrainian}
+  russian: {countries: [RU], languages: [ru], label: Russian}
+  turkish: {countries: [TR], languages: [tr], label: Turkish}
+  iranian: {countries: [IR], languages: [fa], label: Iranian}
+  persian: {countries: [IR], languages: [fa], label: Persian}
+  arabic: {countries: [EG, SA, AE, JO, LB, IQ], languages: [ar], label: Arabic}
+  egyptian: {countries: [EG], languages: [ar], label: Egyptian/Arabic}
+  nigerian: {countries: [NG], languages: [en, yo, ig, ha], label: Nigerian}
+  nollywood: {countries: [NG], languages: [en, yo, ig, ha], label: Nigerian}
+  spanish: {countries: [ES, MX, AR, CO, CL], languages: [es], label: Spanish-language}
+  mexican: {countries: [MX], languages: [es], label: Mexican}
+  peruvian: {countries: [PE], languages: [es], label: Peruvian}
+  argentine: {countries: [AR], languages: [es], label: Argentine}
+  argentinian: {countries: [AR], languages: [es], label: Argentine}
+  colombian: {countries: [CO], languages: [es], label: Colombian}
+  chilean: {countries: [CL], languages: [es], label: Chilean}
+  latin american: {countries: [BR, MX, AR, CO, CL], languages: [pt, es], label: Latin American}
+  portuguese: {countries: [BR, PT], languages: [pt], label: Portuguese}
+  brazilian: {countries: [BR], languages: [pt], label: Brazilian}
+  french: {countries: [FR, BE, CA, CH], languages: [fr], label: French}
+  german: {countries: [DE, AT, CH], languages: [de], label: German}
+  italian: {countries: [IT], languages: [it], label: Italian}
+
+# TV genres come combined on TMDB; a movie genre also matches these TV names.
+tv_genre_aliases:
+  action: [Action & Adventure, Action]
+  adventure: [Action & Adventure, Adventure]
+  science fiction: [Sci-Fi & Fantasy, Science Fiction]
+  sci-fi: [Sci-Fi & Fantasy, Sci-Fi]
+  fantasy: [Sci-Fi & Fantasy, Fantasy]
+  family: [Family, Kids]
+  war: [War & Politics, War]

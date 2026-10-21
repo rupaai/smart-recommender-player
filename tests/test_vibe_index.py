@@ -82,7 +82,7 @@ def test_like_and_parsers():
     check("'not complicated' no longer adds Horror",
           "Horror" not in parse_query_intent("not complicated")["include_genres"])
     check("negation reaches 3 words back", "Horror" in parse_query_intent("no really scary films")["exclude_genres"])
-    check("negation stops at 'but'", "Comedy" in parse_query_intent("not scary but funny")["include_genres"])
+    check("negation stops at 'but'", "Comedy" in parse_query_intent("not scary but funny")["boost_genres"])
     check("'indiana jones' is not Indian", parse_origin_intent("indiana jones vibes") is None)
     check("'animated' is not anime", parse_origin_intent("an animated film") is None)
     check("'polished' is not Polish", parse_origin_intent("something polished") is None)
@@ -131,7 +131,7 @@ def test_recommender(tmp):
             return {"items": [], "engine": "generative"}
 
     routed = route_recommend(rec, Gen(), "fallback", query="something calm", min_rating_override=0)
-    check("typed request routed to the vibe engine", routed.get("vibe_routed_to") == "legacy", routed.keys())
+    check("typed request routed to the vibe engine", routed.get("query_routed_to") == "legacy", routed.keys())
     routed = route_recommend(rec, Gen(), "fallback", query=None)
     check("no text still goes to the generative engine", routed["engine"] == "generative")
     found = resolve_like_titles("a film like calm film", db, CatalogueSearch(db))

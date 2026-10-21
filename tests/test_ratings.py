@@ -482,8 +482,8 @@ def test_query_intent(build):
 
     # "not too complicated" must not be read as a request for complexity.
     neg = parse_query_intent("something scary not relaxing")
-    check("negated intent term inverts its effect",
-          "Horror" in neg["include_genres"], neg["include_genres"])
+    check("a negated tone is dropped, the rest of the request stays",
+          "Horror" in neg["boost_genres"] and "Horror" not in neg["exclude_genres"], neg)
 
     # Relaxing mood should not map to Documentary (nature docs / preschool TV).
     check("relaxing mood includes Comedy",
@@ -1025,8 +1025,8 @@ def test_concept_intent(build):
           (spec["include"], spec["exclude"]))
     check("an explicit exclusion survives the concept widening",
           "Horror" in spec["exclude"], spec["exclude"])
-    check("a concept request can reach sci-fi (where They Live lives)",
-          "Science Fiction" in spec["include"], spec["include"])
+    check("a concept request is not narrowed by the mood's genres (They Live is sci-fi)",
+          spec["include"] == [], spec["include"])
 
     # Theme terms are premise phrases, not genre words.
     text = ("aliens are systematically gaining control of the Earth by "
@@ -1089,7 +1089,7 @@ def test_concept_intent(build):
     from services.generative_retriever import route_recommend
     served = route_recommend(r, None, "generative_only", query=Q)
     check("a concept request is routed away from the generative engine",
-          served.get("concept_routed_to") == "legacy", served.get("engine"))
+          served.get("query_routed_to") == "legacy", served.get("engine"))
 
 
 def main():
