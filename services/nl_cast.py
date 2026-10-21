@@ -7,8 +7,9 @@ Three small pieces, all pure so they are tested without a server or Jellyfin:
    address; the Chromecast is not on Tailscale) and which receiver app to launch
    (`northern_lights.cast_receiver_app_id`; empty = Google's Default Media Receiver).
 2. CastTokens: short-lived signed stream tokens. A token is bound to ONE Jellyfin item and an
-   expiry and signed with HMAC-SHA256 using a server secret (env NL_CAST_SECRET; if unset a random
-   secret is made at start-up and kept in memory only, so tokens die on restart). The secret is never
+   expiry and signed with HMAC-SHA256 using a server secret (env NL_CAST_SECRET if set; otherwise a secret
+   the app makes once and keeps in a file in its data folder, so cast links survive a restart. Only if that
+   folder cannot be written is a random in-memory secret used). The secret is never
    derived from the Jellyfin key, and the Jellyfin key is never in a token.
 3. cast_payload(): turns a normal play answer into the one the sender hands the Chromecast:
    absolute LAN URLs carrying the token, plus the content type and the artwork.
@@ -36,6 +37,7 @@ DEFAULT_RECEIVER_APP_ID = "CC1AD845"      # Google's Default Media Receiver
 TOKEN_VERSION = "v1"
 TOKEN_TTL_SECONDS = 6 * 60 * 60
 MIN_SECRET_LENGTH = 16
+SECRET_FILE = "nl_cast_secret"
 TOKEN_PARAM = "t"
 
 _ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
@@ -130,11 +132,34 @@ def path_allowed(jellyfin_id: str, path: str) -> bool:
     return False
 
 
-class CastTokens:
-    """Mints and checks stream tokens. `secret` comes from the environment; without one a random secret
-    lives in memory only."""
+def _file_secret(data_dir: str) -> Optional[bytes]:
+    """The secret in `<data_dir>/nl_cast_secret`, made once (random, mode 0600, written atomically) if missing.
+    None when the folder cannot be used."""
+    path = os.path.join(data_dir, SECRET_FILE)
+    try:
+        if not os.path.exists(path):
+            tmp = f"{path}.{os.getpid()}.tmp"
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(secrets.token_urlsafe(32))
+                os.link(tmp, path)      # fails if another process made the file first; its value stands
+            except FileExistsError:
+                pass
+            finally:
+                os.unlink(tmp)
+        with open(path, encoding="utf-8") as f:
+            value = f.read().strip()
+        return value.encode("utf-8") if len(value) >= MIN_SECRET_LENGTH else None
+    except OSError:
+        return None
 
-    def __init__(self, secret: Optional[str] = None, clock=time.time):
+
+class CastTokens:
+    """Mints and checks stream tokens. `secret` comes from the environment; without one the secret is read
+    from (or first written to) a file in `data_dir`; without a usable folder it lives in memory only."""
+
+    def __init__(self, secret: Optional[str] = None, clock=time.time, data_dir: Optional[str] = None):
         self.clock = clock
         self.from_env = False
         if secret is not None and secret.strip():
@@ -148,7 +173,12 @@ class CastTokens:
                 self._secret = secret.strip().encode("utf-8")
                 self.from_env = True
         if not self.from_env:
-            self._secret = secrets.token_bytes(32)
+            self._secret = _file_secret(data_dir) if data_dir else None
+            if self._secret is None:
+                if data_dir:
+                    print(f"[NL] Cannot use {os.path.join(data_dir, SECRET_FILE)}; using a secret kept in memory "
+                          "(cast links stop working when the app restarts).", flush=True)
+                self._secret = secrets.token_bytes(32)
 
     def _sign(self, expiry: int, norm_id: str) -> str:
         message = f"{TOKEN_VERSION}|{expiry}|{norm_id}".encode("ascii")

@@ -48,3 +48,6 @@ tv-app/app/build/
 tv-app/local.properties
 tv-app/.idea/
 *.apk
+
+# Cast link secret made by the app next to its database
+nl_cast_secret
