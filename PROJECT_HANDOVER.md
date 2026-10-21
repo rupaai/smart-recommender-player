@@ -71,7 +71,7 @@ Train on the Mac, serve on `mars`. Vibe search = embeddings + clusters. LLM mood
 The app is **Northern Lights**. The original app's look is the ticket look (§6). `DESIGN.md` is still to be written from it. The variable font `static/fonts/Archivo-Variable.ttf` is committed; the CSS also asks for a `.woff2` that does not exist (a harmless 404).
 
 ## 10. Recommender v2 features (state)
-- **10.1 Mood tags + TMDB vibe backfill:** `utils/backfill_tmdb_vibe.py` (free) and `utils/mood_tag.py` (costs money) are built and tested offline. **Not run yet** on the real catalogue.
+- **10.1 Mood tags + TMDB vibe backfill:** `utils/backfill_tmdb_vibe.py` (free) and `utils/mood_tag.py` (costs money). **Run on 2026-10-08 on the Mac's `catalogue_full.db`:** 48,260 titles tagged by Haiku for $5.30 (pilot + 5 batches, see `mood_tag_batches`, `reports/mood_tag_run.md`); `facets` there come from those tags. Not yet confirmed that `mars`'s database has them (`GET /api/vibe/status`). Only the questions pop-up, the off-by-default taste model and the vibe index read them; typed searches do not use them yet.
 - **10.2 Search to rate:** done (`services/catalogue_search.py`, Rate tab search, TMDB import).
 - **10.3 Feedback logging:** done (`discover_sessions`, `discover_impressions`, outcomes shown < opened < dismissed < downloaded < played < rated).
 - **10.4 Vibe documents:** done (`services/vibe_document.py`).
