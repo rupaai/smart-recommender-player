@@ -37,6 +37,9 @@ secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY]
 # Homelab makes these itself. ADMIN_TOKEN is what the Mac sends (ops/mac): copy it from
 # Apps -> Northern Lights -> Secrets. Cast links need no secret from you; the app keeps its own in /data.
 generate_secrets: [ADMIN_TOKEN]
+# Secrets come as files in /run/secrets, not env vars, so they don't show in docker inspect.
+# services/homelab_secrets.py reads them at start-up. Needs Homelab with secrets_as (homelab #21).
+secrets_as: files
 memory: 2g
 
 services:
