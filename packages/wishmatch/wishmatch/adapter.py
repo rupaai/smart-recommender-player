@@ -18,7 +18,9 @@ class Adapter(Protocol):
 
     def items(self, request: Request) -> Iterable[Item]:
         """Every item that may be picked for this request, already described, with the
-        project's hard filters applied (already seen, wrong language, ...)."""
+        project's hard filters applied (already seen, wrong language, ...). When
+        request.only_ids is set, return only those items: the engine then skips its own
+        familiarity and pool-size cuts and ranks exactly what it is given."""
 
     def describe(self, item_ids: List[Any]) -> Dict[Any, Item]:
         """These items described (used for the items people reacted to)."""

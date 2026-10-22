@@ -70,7 +70,10 @@ class Wishmatch:
         return out
 
     def recommend(self, request: Request, wish: Optional[Wish] = None) -> Dict[str, Any]:
-        """{"picks": [Pick, best first], "wish": Wish, "candidates": {kind: count}}."""
+        """{"picks": [Pick, ...], "wish": Wish, "candidates": {kind: count}}.
+
+        Picks are best first within each kind; with several kinds and a `mix` setting they are
+        interleaved so each kind keeps its share (see mix_kinds). The caller slices the list."""
         settings = self.settings()
         vocab = self.adapter.vocabulary()
         wish = wish or read_wish(request.text, vocab, settings["lexicon"])
