@@ -81,6 +81,8 @@ from services.nl_people import (
 )
 from services.catalogue_search import CatalogueSearch, _tmdb_get, tmdb_import, tmdb_search
 from services.generative_retriever import GenerativeRetriever, route_recommend
+from services.wishmatch_movies import EngineSwitch, WishmatchMovies
+from services.wishmatch_movies.router import engine_name
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services import paths as model_paths
 from services import verdicts as vd
@@ -140,6 +142,12 @@ recommender_service = RecommenderService(
 # automatically serves the existing recommender instead.
 generative_retriever = GenerativeRetriever(db_manager=db, config=config, taste_runtime=taste_runtime)
 
+# Wishmatch (PROJECT_HANDOVER.md §17) and the engine switch: recommender.engine picks legacy, tiger or wishmatch
+# for every screen. The catalogue's mood tags are read on the first Wishmatch request, not at start-up.
+wishmatch_movies = WishmatchMovies(db, MOOD_MAPPINGS)
+recommender = EngineSwitch(engine_name(recommender_cfg), recommender_service, generative_retriever,
+                           wishmatch_movies, route_recommend, generative_retriever.engine_mode)
+
 def reload_models() -> None:
     """Loads the model files again after the Mac publishes a new bundle (or one is rolled back)."""
     tiger_ok = generative_retriever.reload()
@@ -190,7 +198,7 @@ nl_cast_tokens = CastTokens(secret_from_env(), data_dir=os.path.dirname(os.path.
 nl_type = TypeChannels()
 
 # Northern Lights picks for two (M6): watchlist, yes / maybe / pass, and the "For both of us" row.
-nl_picks = NLPicks(db, nl_browse, recommender_service, lambda: nl_people)
+nl_picks = NLPicks(db, nl_browse, recommender, lambda: nl_people)
 
 # Northern Lights choosing for two (M9b): Choose for us, vetoes, the rotating chooser. `northern_lights.timezone`
 # (an IANA name like Europe/London) is only the fallback for a browser that sends no UTC offset.
@@ -535,16 +543,9 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
             spread_exempt=_spread_exempt(popup))
         results["engine"] = "legacy"
     else:
-        # Feature-flag router: dispatches between the untouched legacy recommender
-        # and the parallel TIGER generative retrieval engine (with fallback safety).
-        # Per-item exclusion is applied after routing so it works for both engines.
-        results = await asyncio.to_thread(
-            route_recommend,
-            recommender_service,
-            generative_retriever,
-            generative_retriever.engine_mode,
-            **kwargs,
-        )
+        # Engine switch (recommender.engine): legacy / tiger / wishmatch, each falling back to the
+        # untouched legacy recommender. Per-item exclusion is applied after routing so it works for all.
+        results = await asyncio.to_thread(recommender.route, explicit_genres=req.genres, **kwargs)
 
     # exclude_ids: per-tap "not this one" — drop items the user dismissed so
     # the next request surfaces something else instead of the same list.
@@ -776,6 +777,56 @@ async def vibe_status() -> Dict[str, Any]:
     index = recommender_service.vibe_index
     out = index.status() if index else {"ready": False}
     out["mood_data"] = await asyncio.to_thread(db.get_mood_data_counts)
+    return out
+
+
+class RecRequest(BaseModel):
+    query: Optional[str] = None
+    mood_id: int = 8
+    media_type: Optional[str] = None  # 'movie', 'tv', or none for both
+    profile: str = "together"         # 'me' | 'partner' | 'together'
+    genres: Optional[List[str]] = None
+    era: Optional[str] = None
+    duration: Optional[str] = None
+    include_watched: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=50)
+
+
+class WishRequest(BaseModel):
+    text: str = ""
+
+
+def _rec_domain(domain: str) -> WishmatchMovies:
+    if domain != "movies":
+        raise HTTPException(status_code=404, detail=f"No recommender for {domain!r}.")
+    return wishmatch_movies
+
+
+@app.post("/api/rec/{domain}/recommend")
+async def rec_recommend(domain: str, req: RecRequest) -> Dict[str, Any]:
+    """Wishmatch picks, whatever recommender.engine says; each item carries its score and reason words."""
+    engine = _rec_domain(domain)
+    return await asyncio.to_thread(
+        engine.recommend, query=req.query, mood_id=req.mood_id, media_type=req.media_type, profile=req.profile,
+        genres_override=req.genres, era_preference=req.era, duration_preference=req.duration,
+        exclude_watched=not req.include_watched, page=req.page, page_size=req.page_size)
+
+
+@app.post("/api/rec/{domain}/wish")
+async def rec_wish(domain: str, req: WishRequest) -> Dict[str, Any]:
+    """How Wishmatch read these words: mood dials, feelings, what to avoid, words it did not know."""
+    return _rec_domain(domain).read_wish(req.text)
+
+
+@app.get("/api/rec/status")
+async def rec_status() -> Dict[str, Any]:
+    """Which engine answers, and how many titles Wishmatch can use."""
+    out: Dict[str, Any] = {"engine": recommender.engine}
+    try:
+        out["movies"] = await asyncio.to_thread(wishmatch_movies.status)
+    except Exception as e:  # noqa: BLE001
+        out["movies"] = {"error": str(e)}
     return out
 
 

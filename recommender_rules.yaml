@@ -290,3 +290,185 @@ tv_genre_aliases:
   fantasy: [Sci-Fi & Fantasy, Fantasy]
   family: [Family, Kids]
   war: [War & Politics, War]
+
+# ---------------------------------------------------------------------------
+# Wishmatch (the new recommender, PROJECT_HANDOVER.md §17)
+# ---------------------------------------------------------------------------
+# Used only when config.yaml says recommender.engine: wishmatch. The legacy engine
+# above never reads this section. Words here must be words of services/vibe_vocab.py:
+# trait names are its dials (0 = low end, 1 = high end), tag names come from its
+# feels, good-for, setting, season and content-flag lists.
+wishmatch:
+  # How many candidates are scored, and the film / show split when no type is chosen.
+  candidates:
+    total: 2000
+    kinds: {movie: 0.7, tv: 0.3}              # about 1,400 films and 600 shows
+    known: [well, somewhat]                   # how well Haiku knew the title
+    min_popularity: {somewhat: 100}           # a "somewhat" title needs this many TMDB votes
+    hidden_gem_known: [somewhat, not]         # used instead when the wish asks for hidden gems
+  # Share of films and shows in the results when no type is chosen (one pick in three is a show).
+  mix: {movie: 0.67, tv: 0.33}
+  # score = match x fit to the wish + taste x fit to your tastes + quality x TMDB rating.
+  weights:
+    match: 1.0
+    taste: 0.6
+    quality: 0.3
+    crowd: 0.0          # MovieLens, from build step 3
+    trait: 1.0          # inside the match: a mood dial the wish names
+    tag: 1.0            # inside the match: a feeling or occasion the wish names
+    avoid_tag: 1.0      # inside the match: something the wish does not want
+  people:
+    other_weight: 0.2       # alone: the other person's taste counts this much
+    together_dislike: 0.5   # together: push down by this x how much the less keen of you dislikes it
+  taste:
+    shrink: 5.0             # ratings needed before a taste counts fully
+    tag_shrink: 3.0
+    trait_weight: 0.5       # half the taste score from mood dials, half from feelings
+  explain:
+    max_reasons: 3
+    hide_groups: [flags]    # content warnings (infidelity, animal harm) are never shown as reasons
+  questions: {max: 2}       # build step 5
+  tagging_model: ""         # open-weight Ollama model for new titles, picked by the bake-off (step 6)
+  # TMDB rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
+  quality_floor: 5.0
+  quality_ceiling: 8.5
+  # Plain word lookup that turns a typed wish into mood words (build step 4 adds a
+  # language model; this stays as its fallback). Phrases match longest first; a
+  # "no" / "not" just before a phrase flips it. Every feeling and occasion word in
+  # vibe_vocab.py ("cozy", "date night", "bad day") is understood without listing it here.
+  lexicon:
+    traits:
+      relaxing: {energy: 0.2, tension: 0.1}
+      relaxed: {energy: 0.2, tension: 0.1}
+      chill: {energy: 0.2, tension: 0.1}
+      calm: {energy: 0.1, tension: 0.1}
+      easy: {attention: 0.2}
+      easy watch: {attention: 0.1, weight: 0.2}
+      light: {weight: 0.2, darkness: 0.2}
+      lighthearted: {weight: 0.2, darkness: 0.1}
+      feel good: {ending_valence: 0.9, weight: 0.2}
+      feel-good: {ending_valence: 0.9, weight: 0.2}
+      happy ending: {ending_valence: 0.9}
+      uplifting: {ending_valence: 0.9}
+      funny: {humour: 0.9}
+      laugh: {humour: 0.9}
+      make me laugh: {humour: 0.9}
+      make us laugh: {humour: 0.9}
+      hilarious: {humour: 1.0}
+      comedy: {humour: 0.8}
+      intense: {energy: 0.9, tension: 0.8}
+      exciting: {energy: 0.8, pace: 0.8}
+      action: {energy: 0.9, spectacle: 0.7}
+      fast: {pace: 0.9}
+      fast paced: {pace: 0.9}
+      slow: {pace: 0.2}
+      slow burn: {pace: 0.2, tension: 0.6}
+      gripping: {tension: 0.8, attention: 0.7}
+      suspense: {tension: 0.9}
+      suspenseful: {tension: 0.9}
+      thriller: {tension: 0.9}
+      scary: {darkness: 0.8, tension: 0.8}
+      horror: {darkness: 0.9, tension: 0.8}
+      creepy: {darkness: 0.7, strangeness: 0.6}
+      dark: {darkness: 0.8}
+      gritty: {darkness: 0.7}
+      violent: {darkness: 0.9, gore: 0.6}
+      gory: {gore: 0.9}
+      gore: {gore: 0.9}
+      blood: {gore: 0.8}
+      wholesome: {darkness: 0.0, ending_valence: 0.8}
+      sad: {weight: 0.8, ending_valence: 0.3}
+      emotional: {weight: 0.8}
+      heavy: {weight: 0.9}
+      tearjerker: {weight: 0.9}
+      cry: {weight: 0.9}
+      deep: {weight: 0.7, attention: 0.7}
+      thought provoking: {attention: 0.8, weight: 0.6}
+      thoughtful: {attention: 0.7}
+      smart: {attention: 0.8}
+      clever: {attention: 0.7}
+      twisty: {attention: 0.9}
+      complicated: {attention: 0.9}
+      simple: {attention: 0.2}
+      background: {attention: 0.1}
+      weird: {strangeness: 0.9}
+      strange: {strangeness: 0.8}
+      surreal: {strangeness: 1.0}
+      quirky: {strangeness: 0.6, humour: 0.6}
+      awkward: {cringe: 0.8}
+      cringe: {cringe: 0.8}
+      fantasy: {fantasy: 0.9}
+      magic: {fantasy: 0.9}
+      magical: {fantasy: 0.9}
+      realistic: {fantasy: 0.1}
+      true story: {fantasy: 0.0}
+      epic: {spectacle: 0.9}
+      big: {spectacle: 0.8}
+      small: {spectacle: 0.2}
+      intimate: {spectacle: 0.1}
+      talky: {talkiness: 0.9}
+      dialogue: {talkiness: 0.9}
+      romantic: {weight: 0.4}
+    tags:
+      make me laugh: [silly, witty, playful]
+      make us laugh: [silly, witty, playful]
+      funny: [witty, silly]
+      comfort: [comforting, cozy]
+      comforting: [comforting]
+      cosy: [cozy]
+      heartwarming: [warm, tender]
+      romantic: [tender, date night]
+      romance: [tender]
+      date: [date night]
+      sweet: [tender, wholesome]
+      fun: [playful, joyful]
+      silly: [silly]
+      goofy: [silly]
+      sad: [melancholy, bittersweet]
+      tearjerker: [devastating, cathartic]
+      cry: [cathartic]
+      scary: [dread, eerie]
+      spooky: [eerie]
+      creepy: [eerie, unsettling]
+      haunting: [haunting]
+      tense: [tense]
+      mind bending: [mind-bending]
+      mindbending: [mind-bending]
+      mind blowing: [mind-bending]
+      thought provoking: [cerebral, talking about after]
+      smart: [cerebral]
+      nostalgic: [nostalgic]
+      summer: [sun-soaked, summer]
+      sunny: [sun-soaked]
+      winter: [wintry, winter]
+      christmas: [wintry, winter, cozy]
+      rainy: [rain, rainy afternoon]
+      tired: [winding down, half-watching]
+      sleepy: [dozing off, winding down]
+      sick: [when you're sick]
+      hungover: [sunday hangover]
+      hangover: [sunday hangover]
+      rough day: [a bad day]
+      long day: [a bad day, winding down]
+      bad day: [a bad day]
+      friends: [friends over]
+      party: [friends over, a crowd-pleaser]
+      binge: [binge]
+      bingeable: [binge]
+      dinner: [eating dinner]
+      cooking: [background while cooking]
+      space: [space]
+      road trip: [road-journey]
+      small town: [small-town]
+      dog dies: [animal_harm]
+      animal dies: [animal_harm]
+      cheating: [infidelity]
+      jump scares: [jump_scares]
+      jumpscares: [jump_scares]
+      war: [war_violence]
+      suicide: [suicide]
+    hidden_gem_words: [hidden gem, hidden gems, underrated, obscure, lesser known, lesser-known, deep cut]
+    stop_words: [a, an, the, and, or, me, us, we, i, something, anything, some, movie, movies, film, films,
+                 show, shows, series, tv, tonight, today, to, for, with, of, that, is, it, please, watch,
+                 want, like, kind, sort, really, very, bit, little, but, after, just, had, have, im, i'm,
+                 good, great, nice, new, old]

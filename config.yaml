@@ -46,6 +46,11 @@ recommender:
   # sum over moods of P(mood) x fit(film, mood). Higher = answers move the order more.
   mood_weight: 3.0
 
+  # Which engine answers on every screen: legacy (today's rules engine, with TIGER per
+  # engine_mode below), tiger (TIGER first) or wishmatch (PROJECT_HANDOVER.md §17; its
+  # settings are in recommender_rules.yaml, wishmatch:). Each falls back to legacy.
+  engine: legacy
+
   # Recommendation engine router for the TIGER generative retrieval engine
   # (parallel engine — the legacy SQL/taste recommender is never modified):
   #   "fallback"        generative first; legacy on missing artifacts/history
