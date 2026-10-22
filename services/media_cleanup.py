@@ -115,6 +115,9 @@ def delete_files(video: str, roots: Sequence[str]) -> List[str]:
     if not root or not os.path.isfile(video) or os.path.islink(video):
         return []
     folder = os.path.dirname(os.path.realpath(video))
+    # Report each file under the path Jellyfin and the catalogue know it by, not its resolved one: a
+    # symlinked media folder (or macOS's /var -> /private/var) would otherwise leave catalogue rows behind.
+    known_folder = os.path.dirname(video)
     stem = os.path.splitext(os.path.basename(video))[0]
     removed: List[str] = []
     for name in sorted(os.listdir(folder)):
@@ -122,7 +125,7 @@ def delete_files(video: str, roots: Sequence[str]) -> List[str]:
         if (name == os.path.basename(video) or name.startswith(stem + ".")) and os.path.isfile(full) \
                 and not os.path.islink(full):
             os.remove(full)
-            removed.append(full)
+            removed.append(os.path.join(known_folder, name))
     while folder != root and folder.startswith(root + os.sep):
         try:
             os.rmdir(folder)                               # only succeeds when empty

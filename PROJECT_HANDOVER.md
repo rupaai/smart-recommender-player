@@ -6,7 +6,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 
 ## Branches and open work
 - `main` (up to PR #96, 2026-10-21): the original app, the mood-based questions pop-up (§10.10), the Northern Lights player and TV app M0-M10c (§14), the Homelab deployment (§13), the bug-audit fixes B1-B15 (PRs #80-#91), watched cleanup (§13), the recommender rules file (§4 B1, PR #94), secrets as files (PR #95) and both Jellyfin users (PR #96). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
-- **Next: Wishmatch** (§17; `make check` on a Mac: `tests/test_media_cleanup.py` fails on `main` too, because macOS temp paths go through `/private/var`; CI on Linux passes), a new recommender that runs beside the current ones. Design agreed 2026-10-21; steps 1-2 done (tags on `mars`; package + movie adapter, switch still `legacy`), step 3 next.
+- **Next: Wishmatch** (§17), a new recommender that runs beside the current ones. Design agreed 2026-10-21; steps 1-2 done (tags on `mars`; package + movie adapter, switch still `legacy`), step 3 next.
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
 - `codex/decouple-household-server-routers` (2026-10-14, not merged, no PR here): splits `server.py` routes and household config; now far behind `main`. Ask Labiba before reviving or deleting it.
