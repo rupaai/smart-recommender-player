@@ -33,12 +33,12 @@ jobs:
         run: echo "CLAUDE_CODE_OAUTH_TOKEN is not set yet, skipping the review."
 
       - if: env.HAS_TOKEN == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       - if: env.HAS_TOKEN == 'true'
-        uses: anthropics/claude-code-action@8d70a0dd265122bd65b8e09d3d959e65373ae2a1 # v1
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |

@@ -54,7 +54,6 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - UI: the original app uses the light "ticket" look (paper ground, white ticket cards, roll colours as roles, condensed Archivo, aurora only as holographic foil). Northern Lights pages share that look; TV pages are dark. Every new feature must work on phone (390 px), laptop and TV (D-pad focus, `NLFocus`), with no horizontal scroll.
 - Missing data degrades, never 500s: no Jellyfin, no TMDB, no model, no people configured each have a fallback.
 - Write plain, short user-facing text.
-- GitHub Actions must be pinned to a full commit id (`uses: x@<sha> # v7`); the repo setting refuses tags like `@v7`. Dependabot updates the pins.
 
 ## 7. Recommender: known open problems
 - Variety (§10.11) only remembers Discover's own impressions. Rows like "For both of us" don't log impressions, so memory doesn't rotate them.
