@@ -365,6 +365,18 @@ async function main() {
   await k6.cast.request().catch(() => { threw = true; });
   check("closing the device picker is not an error", threw === false);
 
+  console.log("the switch forwards everything player.js uses");
+  const pageSrc = fs.readFileSync(path.join(__dirname, "..", "..", "static", "nl", "player.js"), "utf8");
+  const used = [...new Set((pageSrc.match(/\bplayer\.[A-Za-z]+/g) || []).map((m) => m.slice(7)))].filter((n) => n !== "on");
+  const w7 = makeWindow();
+  const tvLocal = Object.assign(fakeLocal(), { canSwitchAudioInPlace: true, canDrawEmbeddedSubtitles: true, canShowStats: true,
+    setAudioOrder() { return "order"; }, stats() { return { source: "original" }; } });
+  const sw = w7.NLCast.attach(w7, tvLocal, false).player;
+  const missing = used.filter((n) => !(n in sw));
+  check("every player.X in player.js exists on the switch", missing.length === 0, missing);
+  check("the TV app's v6 flags reach the page", sw.canShowStats === true && sw.canDrawEmbeddedSubtitles === true && sw.canSwitchAudioInPlace === true);
+  check("stats() and setAudioOrder() reach the TV adapter", sw.stats().source === "original" && sw.setAudioOrder(1) === "order");
+
   if (failed) { console.log("\n" + failed + " FAILED"); process.exit(1); }
   console.log("\nall cast.js checks passed");
 }
