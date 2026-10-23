@@ -42,17 +42,17 @@ def test_profile_content():
     check("mkv, mp4, m4v, mov, webm, ts direct play",
           set(split(d["Container"])) == {"mkv", "mp4", "m4v", "mov", "webm", "ts"}, d["Container"])
     check("video h264, hevc, vp9, av1", set(split(d["VideoCodec"])) == {"h264", "hevc", "vp9", "av1"}, d["VideoCodec"])
-    check("audio aac, mp3, ac3, eac3, opus, flac, vorbis",
-          set(split(d["AudioCodec"])) == {"aac", "mp3", "ac3", "eac3", "opus", "flac", "vorbis"}, d["AudioCodec"])
+    check("audio: the old list plus truehd, mlp, dts, dca, pcm and alac (the app decodes them)",
+          set(split(d["AudioCodec"])) == {"aac", "mp3", "ac3", "eac3", "opus", "flac", "vorbis", "truehd", "mlp", "dts", "dca",
+                                          "pcm_s16le", "pcm_s24le", "alac"}, d["AudioCodec"])
     check("mkv + hevc is direct play", "mkv" in split(d["Container"]) and "hevc" in split(d["VideoCodec"]))
-    everything = json.dumps(TV_PROFILE).lower()
-    check("no dts and no truehd anywhere", "dts" not in everything.replace("dvdsub", "") and "truehd" not in everything)
     t = TV_PROFILE["TranscodingProfiles"]
     check("transcode: HLS fMP4, hevc/h264 + aac/ac3/eac3, 6 channels",
           len(t) == 1 and t[0]["Protocol"] == "hls" and t[0]["Container"] == "mp4"
           and set(split(t[0]["VideoCodec"])) == {"hevc", "h264"}
           and set(split(t[0]["AudioCodec"])) == {"aac", "ac3", "eac3"} and t[0]["MaxAudioChannels"] == "6", t)
-    check("120 Mbps ceiling", TV_PROFILE["MaxStreamingBitrate"] == 120_000_000)
+    check("400 Mbps ceiling (the original is never limited)",
+          TV_PROFILE["MaxStreamingBitrate"] == 400_000_000 and TV_PROFILE["MaxStaticBitrate"] == 400_000_000)
     subs = TV_PROFILE["SubtitleProfiles"]
     ext = {s["Format"] for s in subs if s["Method"] == "External"}
     emb = {s["Format"] for s in subs if s["Method"] == "Embed"}
@@ -69,6 +69,97 @@ def test_profile_content():
     check("client=tv gives TV_PROFILE, caps ignored", profile_for("tv", caps) is TV_PROFILE and profile_for("tv", None) is TV_PROFILE)
     check("no client + caps gives the device-aware browser profile", profile_for(None, caps) == browser_profile(parse_caps(caps)))
     check("no client, no caps gives BROWSER_PROFILE", profile_for(None, None) == BROWSER_PROFILE)
+
+
+TRUEHD_STREAMS = [
+    {"Type": "Video", "Index": 0, "Codec": "hevc", "VideoRangeType": "DOVIWithHDR10"},
+    {"Type": "Audio", "Index": 1, "Codec": "truehd", "Language": "eng", "Channels": 8, "IsDefault": True, "DisplayTitle": "English - TrueHD Atmos - 7.1"},
+    {"Type": "Audio", "Index": 2, "Codec": "ac3", "Language": "ita", "Channels": 6, "DisplayTitle": "Italian - AC3 - 5.1"},
+    {"Type": "Audio", "Index": 4, "Codec": "dts", "Language": "fra", "Channels": 6, "DisplayTitle": "French - DTS - 5.1"},
+    {"Type": "Subtitle", "Index": 3, "Codec": "PGSSUB", "Language": "eng", "IsGraphicalSubtitleStream": True, "DisplayTitle": "English - PGS"},
+]
+
+
+class OriginalFileJellyfin(nl_fake.FakeJellyfin):
+    """A TrueHD + Dolby Vision 7 + PGS file. `mode` "direct" offers the file itself; "convert" only an HLS conversion."""
+
+    def __init__(self):
+        super().__init__()
+        self.mode = "direct"
+        self.bodies = []
+
+    def request(self, method, url, **kw):
+        path = url.split("jellyfin.test:8096", 1)[1] if "jellyfin.test:8096" in url else url
+        if path.endswith("/PlaybackInfo") and method == "POST":
+            body = kw.get("json") or {}
+            self.bodies.append(body)
+            jf = path.split("/")[2]
+            base = {"Id": "ms-" + jf, "Container": "mkv", "RunTimeTicks": 50 * 60 * nl_fake.TICKS, "Bitrate": 92_000_000,
+                    "DefaultAudioStreamIndex": 1, "MediaStreams": TRUEHD_STREAMS}
+            wants_conversion = body.get("AudioStreamIndex") not in (None, 1) or (body.get("SubtitleStreamIndex") or -1) >= 0
+            if self.mode == "direct" and not wants_conversion:
+                ms = {**base, "SupportsDirectPlay": True, "SupportsDirectStream": True}
+            else:
+                url_ = f"/videos/{jf}/master.m3u8?MediaSourceId=ms-{jf}&TranscodeReasons=AudioCodecNotSupported"
+                ms = {**base, "SupportsDirectPlay": False, "SupportsDirectStream": False, "TranscodingUrl": url_}
+            return nl_fake.FakeResponse(json_data={"PlaySessionId": "ps-" + jf, "MediaSources": [ms]})
+        return super().request(method, url, **kw)
+
+
+def run_original_file(ctx):
+    print("The TV always plays the original file")
+    server, client, ids = ctx["server"], ctx["client"], ctx["ids"]
+    fake = OriginalFileJellyfin()
+    server.jellyfin_service.session = fake
+    server.jellyfin_playback._ids = {}
+    server.jellyfin_playback._last_refresh = None
+    alpha = ids["Alpha"]
+
+    def play(**params):
+        fake.bodies.clear()
+        return client.get(f"/api/nl/play/{alpha}", params=params)
+
+    r = play(client="tv")
+    d = r.json()
+    check("TrueHD + DV7 + PGS: direct play of the static file", r.status_code == 200 and d["kind"] == "file" and d["play_method"] == "DirectPlay"
+          and "static=true" in d["url"], r.text[:300])
+    check("... audio_order 0 for the default track", d["audio_index"] == 1 and d["audio_order"] == 0, (d.get("audio_index"), d.get("audio_order")))
+    check("... all audio tracks listed, in file order", [t["index"] for t in d["audio_tracks"]] == [1, 2, 4], d["audio_tracks"])
+    check("... the TV profile allowed 400 Mbps", fake.bodies[0]["DeviceProfile"]["MaxStreamingBitrate"] == 400_000_000)
+
+    r = play(client="tv", audio=2)
+    d = r.json()
+    check("a non-default audio track: still the static file", r.status_code == 200 and d["kind"] == "file" and "static=true" in d["url"]
+          and "master.m3u8" not in d["url"], r.text[:300])
+    check("... with the right audio_order", d["audio_index"] == 2 and d["audio_order"] == 1, (d.get("audio_index"), d.get("audio_order")))
+    check("... and the track choice never reached Jellyfin", all("AudioStreamIndex" not in b for b in fake.bodies), fake.bodies)
+    r = play(client="tv", audio=4)
+    check("the third audio track has audio_order 2 (not its stream index 4)", r.json()["audio_order"] == 2, r.text[:300])
+
+    r = play(client="tv", audio=2, subtitle=3)
+    d = r.json()
+    check("a picture subtitle is not burned in for the TV", r.status_code == 200 and d["kind"] == "file" and d["subtitle_index"] == -1
+          and all("SubtitleStreamIndex" not in b for b in fake.bodies), r.text[:300])
+
+    r = play(client="tv", max_kbps=1000)
+    check("the viewer's quality cap does not lower the TV's original", r.status_code == 200 and r.json()["kind"] == "file"
+          and fake.bodies[0]["DeviceProfile"]["MaxStreamingBitrate"] == 400_000_000, r.text[:300])
+
+    r = play(caps="v=h264.hevc;a=aac;h=h264.hevc.aac", audio=2)
+    d = r.json()
+    check("the browser still converts for a non-default audio track", r.status_code == 200 and d["kind"] == "hls" and "audio_order" not in d, r.text[:300])
+
+    fake.mode = "convert"
+    r = play(client="tv")
+    d = r.json()
+    check("no original from Jellyfin: 415 naming the reason, with the converted-copy flag",
+          r.status_code == 415 and d.get("can_convert") is True and d["detail"].startswith("This TV can't play the original file as it is")
+          and "AudioCodecNotSupported" in d["detail"], r.text[:300])
+    r = play(client="tv", allow_conversion=1)
+    d = r.json()
+    check("with allow_conversion: the converted stream", r.status_code == 200 and d["kind"] == "hls" and "master.m3u8" in d["url"], r.text[:300])
+    r = play(caps="v=h264;a=aac;h=h264.aac")
+    check("the browser never gets the flag", "can_convert" not in r.text, r.text[:200])
 
 
 def run(tmp):
@@ -135,6 +226,12 @@ def run(tmp):
     check("player-core.js drives bridge v2 (pause, resume, seekTo, setSubtitle, version, time events)",
           all(n in r.text for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"')),
           [n for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"') if n not in r.text])
+    check("player-core.js drives bridge v5 (setAudioTrack, audioOrder)", all(n in r.text for n in ('"setAudioTrack"', "audioOrder")))
+    page = client.get(f"/nl/play/{alpha}?tv=1")
+    check("the player page has the hidden converted-copy button", 'id="nl-convert"' in page.text and "Play a converted copy (lower quality)" in page.text, page.status_code)
+    js = client.get("/static/nl/player.js").text
+    check("player.js sends allow_conversion only after the button and shows it for can_convert",
+          "allow_conversion=1" in js and "err.canConvert" in js and "canSwitchAudioInPlace" in js)
     css_player = client.get("/static/nl/player.css").text
     check("player.css makes the page transparent in native mode and keeps the v1 fallback",
           "html.native body" in css_player and "background: transparent" in css_player and "native-v1" in css_player)
@@ -147,6 +244,8 @@ def run(tmp):
     check("/api/nl/home", home.status_code == 200 and "continue_watching" in home.json() and SECRET not in home.text)
     lib = client.get("/api/nl/library", params={"type": "movie"})
     check("/api/nl/library", lib.status_code == 200 and len(lib.json()["items"]) >= 2 and SECRET not in lib.text)
+
+    run_original_file(ctx)
 
 
 def main():

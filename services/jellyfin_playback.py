@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import quote, unquote
 
-from services.device_profiles import BROWSER_PROFILE
+from services.device_profiles import BROWSER_PROFILE, TV_PROFILE
 from services import nl_picture, nl_settings
 from services.nl_people import pick_audio_index, pick_subtitle_track
 from services.jellyfin_service import JellyfinService
@@ -49,7 +49,14 @@ class ItemNotFound(Exception):
 
 
 class NotPlayable(Exception):
-    """Jellyfin has no way to play this item for the browser profile (HTTP 415)."""
+    """Jellyfin has no way to play this item for the browser profile (HTTP 415).
+
+    `can_convert` is True when the TV asked for the original file, Jellyfin cannot give it, and a converted
+    copy would be possible if the viewer agrees (the TV page then offers a button)."""
+
+    def __init__(self, message: str = "", can_convert: bool = False):
+        super().__init__(message)
+        self.can_convert = can_convert
 
 
 class SubtitleError(Exception):
@@ -725,7 +732,7 @@ class JellyfinPlayback:
         if resp.status_code >= 400:
             raise self._refine_subtitle_error(subtitle_error_for(resp.status_code, _body_text(resp), "download"))
 
-    def _cannot_play_message(self, jf_id: str, ms: Optional[Dict[str, Any]], code: str, device: str) -> str:
+    def _cannot_play_message(self, jf_id: str, ms: Optional[Dict[str, Any]], code: str, device: str, original: bool = False) -> str:
         """The 415 text when Jellyfin has no way to play a file here (P20): names the codecs when they can be read,
         e.g. "This browser can't play this format (HEVC video, DTS sound) and Jellyfin has no way to convert it (NoCompatibleStream)."."""
         formats = nl_picture.formats_of(ms, None) if ms else {}
@@ -739,6 +746,8 @@ class JellyfinPlayback:
                 formats = {}
         named = [f"{formats[k]} {w}" for k, w in (("video", "video"), ("audio", "sound")) if formats.get(k)]
         where = f" ({', '.join(named)})" if named else ""
+        if original:
+            return f"{device} can't play the original file as it is{where}. Jellyfin said: {code}."
         return f"{device} can't play this format{where} and Jellyfin has no way to convert it ({code})."
 
     def stream_for(
@@ -751,8 +760,13 @@ class JellyfinPlayback:
         prefer: Optional[Dict[str, Any]] = None,
         max_kbps: Optional[int] = None,
         device: str = "This browser",
+        allow_conversion: bool = False,
     ) -> Dict[str, Any]:
-        """`max_kbps` (M10c) is the viewer's quality choice (None = Auto): the highest stream rate to ask for.
+        """`allow_conversion`: for the TV profile the answer is always the original file (static URL, `audio_order` says
+        which audio track of the file to select, picture subtitles are not burned in, the viewer's quality cap is not
+        applied); when Jellyfin cannot give that, NotPlayable(can_convert=True) is raised unless this is True, which
+        brings back the conversion path below.
+        `max_kbps` (M10c) is the viewer's quality choice (None = Auto): the highest stream rate to ask for.
         `device` ("This TV" / "This browser") is how the conversion note names the screen.
         `prefer` ({audio_lang, subtitle_lang, subtitles_on}, from the viewer's prefs, M4) picks the
         default tracks when the caller did not ask for any: audio in the preferred language, and a
@@ -771,14 +785,21 @@ class JellyfinPlayback:
         if not jf_id:
             raise ItemNotFound("Jellyfin does not know this file yet.")
 
+        original_only = profile is TV_PROFILE and not allow_conversion
+        if original_only:
+            # The original is never lowered, and a track choice never reaches Jellyfin (the app switches inside the file).
+            max_kbps = None
+            subtitle_index = None
         cap = nl_settings.effective_cap_bps(int((profile or BROWSER_PROFILE).get("MaxStreamingBitrate") or 0) or None, max_kbps) if max_kbps else None
 
         def pinfo(audio, sub, start, **kw):
+            if original_only:
+                audio = sub = None
             return self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, **kw)
 
         def not_playable(info_, ms_=None):
             code = (info_ or {}).get("ErrorCode") or "no media source"
-            return NotPlayable(self._cannot_play_message(jf_id, ms_, code, device))
+            return NotPlayable(self._cannot_play_message(jf_id, ms_, code, device, original=original_only))
 
         info = pinfo(audio_index, subtitle_index, start_seconds)
         media_sources = info.get("MediaSources") or []
@@ -798,7 +819,8 @@ class JellyfinPlayback:
                 track = pick_subtitle_track(first["subtitle_tracks"], prefer.get("subtitle_lang"))
                 if track is not None:
                     if track.get("kind") == "image":
-                        want_sub = track["index"]
+                        if not original_only:
+                            want_sub = track["index"]
                     else:
                         default_subtitle_index = track["index"]
             if want_audio != audio_index or want_sub != subtitle_index:
@@ -816,7 +838,7 @@ class JellyfinPlayback:
             audio_index is not None and default_audio is not None and audio_index != default_audio
         )
         wants_burn_in = subtitle_index is not None and subtitle_index >= 0
-        if (wants_other_audio or wants_burn_in) and not ms.get("TranscodingUrl"):
+        if (wants_other_audio or wants_burn_in) and not ms.get("TranscodingUrl") and not original_only:
             info = pinfo(audio_index, subtitle_index, start_seconds, direct_play=False)
             media_sources = info.get("MediaSources") or []
             if info.get("ErrorCode") or not media_sources:
@@ -833,7 +855,13 @@ class JellyfinPlayback:
         source_id = ms.get("Id") or jf_id
         transcoding_url = ms.get("TranscodingUrl")
 
-        if ms.get("SupportsDirectPlay") or (ms.get("SupportsDirectStream") and not transcoding_url):
+        direct = bool(ms.get("SupportsDirectPlay") or (ms.get("SupportsDirectStream") and not transcoding_url))
+        if original_only and not direct:
+            reasons = nl_picture.transcode_reasons(transcoding_url)
+            code = ", ".join(reasons) or "no stream offered"
+            raise NotPlayable(self._cannot_play_message(jf_id, ms, code, device, original=True), can_convert=True)
+
+        if direct:
             play_method = "DirectPlay" if ms.get("SupportsDirectPlay") else "DirectStream"
             url = proxy_url(
                 f"Videos/{jf_id}/stream?static=true&MediaSourceId={source_id}&PlaySessionId={session_id}"
@@ -879,6 +907,10 @@ class JellyfinPlayback:
             play_method, nl_picture.transcode_reasons(transcoding_url), formats, device, cap_kbps=max_kbps
         )
         bitrate = ms.get("Bitrate")
+        audio_order = None
+        if original_only:
+            order = [t["index"] for t in tracks["audio_tracks"]]
+            audio_order = order.index(selected_audio) if selected_audio in order else None
         return {
             "audio_codec": formats["audio_codec"],
             "conversion": conversion,
@@ -898,6 +930,7 @@ class JellyfinPlayback:
             "title": title,
             "episode": episode,
             "audio_index": selected_audio,
+            **({"audio_order": audio_order} if original_only else {}),
             "subtitle_index": subtitle_index if subtitle_index is not None else -1,
             "default_subtitle_index": default_subtitle_index,
             "resume_seconds": resume_ticks / _TICKS,

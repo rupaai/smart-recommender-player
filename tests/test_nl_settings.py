@@ -246,12 +246,14 @@ def run(tmp):
     check("0 = Auto for this viewing, even with a default", sent_cap() == (20_000_000, 20_000_000) and r.json()["quality"]["applied_kbps"] is None, sent_cap())
     client.put("/api/nl/prefs", json={"quality_kbps": 8000})
     play(query="client=tv")
-    check("the TV app gets it too, below its own 120 Mbps ceiling", sent_cap() == (8_000_000, 8_000_000), sent_cap())
+    check("the TV's original file ignores the cap (400 Mbps profile ceiling)", sent_cap() == (20_000_000, 400_000_000), sent_cap())
+    play(query="client=tv&allow_conversion=1")
+    check("a converted copy for the TV gets it, below the profile's ceiling", sent_cap() == (8_000_000, 8_000_000), sent_cap())
     client.put("/api/nl/prefs", json={"quality_kbps": None})
     play(query="client=tv")
-    check("TV with no choice keeps what it had (the body's 20 Mbps, the TV profile's own 120)", sent_cap() == (20_000_000, 120_000_000), sent_cap())
+    check("TV with no choice keeps what it had (the body's 20 Mbps, the TV profile's own 400)", sent_cap() == (20_000_000, 400_000_000), sent_cap())
     client.put("/api/nl/prefs", json={"quality_kbps": 1000})
-    play(query="client=tv&max_kbps=8000")
+    play(query="client=tv&max_kbps=8000&allow_conversion=1")
     check("the quality never raises a ceiling", sent_cap() == (8_000_000, 8_000_000))
     client.put("/api/nl/prefs", json={"quality_kbps": None})
 
@@ -268,8 +270,8 @@ def run(tmp):
     d = play().json()
     check("browser: 'This browser can't play this format, so it's being converted.' with the codecs",
           d["conversion"]["state"] == "converting" and d["conversion"]["note"] == "This browser can't play this format, so it's being converted." and d["conversion"]["detail"] == "HEVC video, DTS sound", d["conversion"])
-    d = play(query="client=tv").json()
-    check("TV: the same sentence for 'This TV'", d["conversion"]["note"] == "This TV can't play this format, so it's being converted.", d["conversion"])
+    d = play(query="client=tv&allow_conversion=1").json()
+    check("TV, after the viewer agreed to a converted copy: the same sentence for 'This TV'", d["conversion"]["note"] == "This TV can't play this format, so it's being converted.", d["conversion"])
     fake.reasons = "ContainerBitrateExceedsLimit"
     d = play(query="max_kbps=4000").json()
     check("converted only because of the quality chosen", d["conversion"]["note"] == "Playing at 4 Mbps or less as you chose, so it's being converted.", d["conversion"])
@@ -284,8 +286,10 @@ def run(tmp):
     fake.mode = "no_way"
     r = play()
     check("no way to play: 415 naming the codecs", r.status_code == 415 and "HEVC video, DTS sound" in r.json()["detail"] and r.json()["detail"].startswith("This browser can't play this format"), r.text)
+    r = play(query="client=tv&allow_conversion=1")
+    check("... for the TV (conversion allowed) it says so", r.status_code == 415 and r.json()["detail"].startswith("This TV can't play this format"), r.text)
     r = play(query="client=tv")
-    check("... for the TV it says so", r.status_code == 415 and r.json()["detail"].startswith("This TV can't play this format"), r.text)
+    check("... for the TV's original file it says so and offers a converted copy", r.status_code == 415 and r.json()["detail"].startswith("This TV can't play the original file as it is (HEVC video, DTS sound)") and r.json()["can_convert"] is True, r.text)
     fake.mode = "error"
     r = play(item=beta)
     check("Jellyfin's own error with nothing to name still reads plainly", r.status_code == 415 and "can't play this format" in r.json()["detail"] and "NoCompatibleStream" in r.json()["detail"], r.text)
@@ -379,7 +383,7 @@ def test_static():
     check("the TV me page cycles each setting and hides picture size in the app", "tv-pref-quality" in tv and "tv-pref-skip" in tv and "NorthernLightsNative" in tv and "tv-pref-fit-row" in tv)
     check("the prefs script knows the new settings", all(k in read("static/nl/prefs.js") for k in ("skip_seconds", "autoplay", "quality_kbps", "picture_fit", "qualityChoices")))
     bridge = read("tv-app/app/src/main/java/app/northernlights/tv/NativeBridge.kt")
-    check("the Kotlin app is untouched: still bridge v4", "bridge v4" in bridge)
+    check("the Kotlin bridge is documented as v5", "bridge v5" in bridge)
     check("the proxy allowlist is untouched", "videos/" in read("services/jellyfin_playback.py").lower() and "_IMAGE_PATH" in read("services/jellyfin_playback.py"))
 
 

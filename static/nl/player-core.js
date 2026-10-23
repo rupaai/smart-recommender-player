@@ -385,8 +385,11 @@
    *                                         raise: 0|1|2}; styles the subtitles Media3 draws (works before and during playback)
    *   NorthernLightsNative.setSpeed(rate)   (version 4) playback speed as a string, "0.75" ... "2" (Media3 setPlaybackSpeed);
    *                                         the page re-sends it after every "started" because a new stream starts at 1x
+   *   NorthernLightsNative.setAudioTrack(n) (version 5) select the n-th audio track of the file (0-based, file order = the server's
+   *                                         audio_order) inside the playing stream, no reload. Only for kind "file" (the original); the
+   *                                         play() json carries audioOrder for the first selection.
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
-   *   NorthernLightsNative.version()        "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *   NorthernLightsNative.version()        "5" (v5 = v4 + setAudioTrack, audioOrder in play()), "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
    *                                         setSubtitle and with its own native controls: the web
    *                                         controls then stay hidden and seek() restarts the stream
    *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
@@ -417,6 +420,7 @@
     var v2 = Number(nativeVersion()) >= 2;
     var v3 = Number(nativeVersion()) >= 3;
     var v4 = Number(nativeVersion()) >= 4;
+    var v5 = Number(nativeVersion()) >= 5;
     var rate = 1;
     var listeners = {};
     var pos = 0;
@@ -572,6 +576,7 @@
           return { index: t.index, label: t.label || "", language: t.language || "", url: absolute(t.url), kind: t.kind || "text" };
         }),
         audioIndex: n.audioIndex === undefined ? null : n.audioIndex,
+        audioOrder: v5 && typeof n.audioOrder === "number" ? n.audioOrder : null,
         subtitleIndex: n.subtitleIndex === undefined ? -1 : n.subtitleIndex,
         nextUp: n.nextUp || null
       };
@@ -591,7 +596,7 @@
 
     return {
       native: true,
-      nativeVersion: v4 ? 4 : (v3 ? 3 : (v2 ? 2 : 1)),
+      nativeVersion: v5 ? 5 : v4 ? 4 : (v3 ? 3 : (v2 ? 2 : 1)),
       load: function (src) {
         lastSrc = src;
         dur = 0;
@@ -642,6 +647,11 @@
         if (!v4 || !(r >= 0.25 && r <= 4)) { return; }
         rate = r;
         if (ready && !closed) { call("setSpeed", String(rate)); }
+      },
+      // Bridge v5: switch audio inside the playing original file (no new stream). Older apps: the page reloads instead.
+      canSwitchAudioInPlace: v5,
+      setAudioOrder: function (order) {
+        if (v5 && !closed && typeof order === "number" && order >= 0) { call("setAudioTrack", String(order)); }
       },
       setTextTracks: function () { /* the native player loads them from the play() json */ },
       showTextTrack: function (id) {

@@ -1003,12 +1003,13 @@ async def nl_play_info(
     source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
     client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
     max_kbps: Optional[int] = Query(None, ge=0, le=200000, description="Quality for this viewing: 8000, 4000, 2000 or 1000 kbit/s; 0 = Auto; absent = the person's default"),
+    allow_conversion: bool = Query(False, description="TV only: the viewer agreed to a converted copy because the original cannot be played"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
     default tracks from their language prefs, and Resume from their own progress (the further of the
     two for "Both of us", with a note when they are in different places)."""
-    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client, max_kbps)
+    return await _nl_play(request, item_id, audio, subtitle, start, caps, source, client, max_kbps, allow_conversion)
 
 
 async def _nl_play(
@@ -1021,6 +1022,7 @@ async def _nl_play(
     source: Optional[int],
     client: Optional[str],
     max_kbps: Optional[int] = None,
+    allow_conversion: bool = False,
 ) -> Dict[str, Any]:
     viewer = _nl_viewer_or_default(request)
     prefs = _nl_effective_prefs(viewer)
@@ -1050,6 +1052,7 @@ async def _nl_play(
         info = await asyncio.to_thread(
             _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer,
             quality, "This TV" if client == "tv" else ("This Chromecast" if client == "cast" else "This browser"),
+            allow_conversion,
         )
         states: Dict[str, Dict[str, Any]] = {}
         if nl_people.configured and info.get("jellyfin_id"):
@@ -1059,6 +1062,8 @@ async def _nl_play(
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except NotPlayable as e:
+        if e.can_convert:
+            return JSONResponse(status_code=415, content={"detail": str(e), "can_convert": True})
         raise HTTPException(status_code=415, detail=str(e))
     info["quality"] = {**(info.get("quality") or {}), "default_kbps": prefs.quality_kbps, "options": nl_settings.quality_options()}
     info["media_item_id"] = item_id
@@ -1106,12 +1111,12 @@ async def nl_cast_play(
     return cast_payload(info, nl_cast, nl_cast_tokens)
 
 
-def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser"):
+def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser", allow_conversion=False):
     if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on")):
         prefer = None
     if prefer:
-        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device)
-    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device)
+        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion)
+    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion)
 
 
 def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
