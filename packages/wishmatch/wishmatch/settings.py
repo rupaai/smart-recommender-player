@@ -37,6 +37,17 @@ DEFAULTS: Dict[str, Any] = {
         "extra_candidates": 300,     # strongest crowd suggestions added to the pool beyond the popularity cut
         "min_score": 0.3,            # crowd score an item needs to be added that way
     },
+    # Questions (questions.py): asked only where the top picks really differ.
+    "questions": {
+        "max": 2,                    # at most this many per search
+        "look_at": 40,               # the top picks a question tries to tell apart
+        "min_share": 0.2,            # each answer must cover at least this share of them
+        "min_spread": 0.18,          # a trait's spread (0..0.5) needed to ask about it
+        "min_tag_strength": 0.6,     # a tag split's evenness needed to ask about it
+        "prefer_trait_spread": 0.22, # a trait split this wide beats a tag split
+        "tag_groups": [],            # vocabulary groups to ask about; [] = all
+        "answer_weight": 0.5,        # an answer counts this much against a typed word
+    },
     # Whose taste counts and how much.
     "people": {
         "other_weight": 0.2,         # alone: the other person's taste at this weight

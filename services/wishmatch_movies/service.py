@@ -19,6 +19,7 @@ import os
 from wishmatch import LLMWishReader, OllamaClient, Request, Wishmatch
 
 from .adapter import MovieAdapter
+from .session import WishmatchSession
 
 KINDS = ("movie", "tv")
 
@@ -34,6 +35,11 @@ class WishmatchMovies:
                                wait_seconds=float(cfg.get("wait_seconds", 8)),
                                avoid_groups=list(cfg.get("avoid_groups") or ["flags"])) if self.ollama else None
         self.engine = Wishmatch(self.adapter, reader=reader)
+        # Question wording waits less than a wish: a slow answer falls back to a fixed sentence.
+        qcfg = self.adapter.rules().get("questions") or {}
+        self.question_client = self._ollama({**(self.adapter.rules().get("wish_reader") or {}),
+                                             "timeout_seconds": qcfg.get("wording_timeout_seconds", 6),
+                                             "max_tokens": 60}) if qcfg.get("model_wording", True) else None
         self.moods = mood_mappings or {}
 
     @staticmethod
@@ -150,6 +156,10 @@ class WishmatchMovies:
             "engine": "wishmatch",
             "wish": result["wish"].as_dict(),
         }
+
+    def session(self, session_id: int, kwargs: Dict[str, Any]) -> WishmatchSession:
+        """A Discover questions session (step 5) for these recommend kwargs."""
+        return WishmatchSession(session_id, {"kwargs": kwargs}, self)
 
     # --- extras for the /api/rec endpoints ----------------------------------------
     def read_wish(self, text: str) -> Dict[str, Any]:

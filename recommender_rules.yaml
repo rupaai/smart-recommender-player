@@ -332,7 +332,19 @@ wishmatch:
   explain:
     max_reasons: 3
     hide_groups: [flags]    # content warnings (infidelity, animal harm) are never shown as reasons
-  questions: {max: 2}       # build step 5
+  # Questions in the Discover pop-up, asked only where the top picks really differ
+  # (some very funny and some not at all; some silly and some witty). None when they agree.
+  questions:
+    max: 2                    # at most two per search
+    look_at: 40               # the top picks a question tries to tell apart
+    min_share: 0.2            # each answer must fit at least a fifth of them
+    min_spread: 0.18          # how widely a mood dial must vary to ask about it
+    min_tag_strength: 0.6     # how evenly feelings must split to ask about them
+    prefer_trait_spread: 0.22
+    tag_groups: [feels, good_for]
+    answer_weight: 0.5        # an answer counts half as much as a word you typed
+    model_wording: true       # the Ollama model words the question; a fixed sentence if it's slow
+    wording_timeout_seconds: 6
   # The wish reader: an open-weight model in Ollama turns the typed wish into the
   # words above; the word lookup below stays as its fallback (slow, missing or
   # confused model = lookup only). OLLAMA_URL picks the server (Homelab sets

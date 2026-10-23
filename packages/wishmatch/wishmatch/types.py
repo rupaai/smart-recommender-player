@@ -49,6 +49,8 @@ class Wish:
     words_unknown: List[str] = field(default_factory=list)        # request words that were not
     hidden_gems: bool = False                                     # include little-known items
     source: str = "lookup"                                        # who read it: lookup | model | model+lookup
+    weights: Dict[str, float] = field(default_factory=dict)       # how much a trait or phrase counts (default 1);
+                                                                  # answers to questions count less than typed words
 
     def is_empty(self) -> bool:
         return not (self.traits or self.tags or self.avoid_tags)
@@ -64,6 +66,7 @@ class Wish:
             "words_unknown": self.words_unknown,
             "hidden_gems": self.hidden_gems,
             "source": self.source,
+            "weights": {k: round(v, 2) for k, v in self.weights.items()},
         }
 
 
@@ -96,3 +99,8 @@ class Pick:
     reasons: List[str] = field(default_factory=list)
     crowd: float = 0.0                         # -1..1, liked by fans of what the people liked
     because: Any = None                        # the liked item that pulled this in most (crowd), if any
+
+
+def phrase_key(tags: Set[str]) -> str:
+    """The key of a tag phrase in Wish.weights."""
+    return "tags:" + ",".join(sorted(tags))

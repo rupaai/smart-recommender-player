@@ -258,6 +258,27 @@ def main():
     os.environ.pop("HOMELAB_ENV", None)
     os.environ.pop("OLLAMA_URL", None)
 
+    print("\n[11] Questions picked for the request (Discover pop-up)")
+    sess = wm.session(1, {"query": "", "media_type": "movie", "profile": "together", "mood_id": 8})
+    q = sess.next_question()
+    pq = sess.public_question()
+    check("with funny and tense films mixed, a question is asked", q is not None and pq["options"], q)
+    check("the question is worded (template without a model) and has example films",
+          pq and pq["text"] and all(o["examples"] for o in pq["options"]), pq)
+    first = [r["title"] for r in sess.page(1, 5)["items"]]
+    sess.answer(pq["id"], pq["options"][0]["id"])
+    after = [r["title"] for r in sess.page(1, 5)["items"]]
+    check("an answer re-ranks the picks", first != after, (first, after))
+    check("the wish records the answer", sess.wish.weights, sess.wish.as_dict())
+    try:
+        sess.answer("nope", "low")
+        check("a stale question id is refused", False)
+    except ValueError:
+        check("a stale question id is refused", True)
+    sess2 = wm.session(2, {"query": "comedy", "media_type": "movie", "profile": "me", "mood_id": 8})
+    check("no question when the picks already agree", sess2.next_question() is None, sess2.current)
+    check("log fields are JSON", json.loads(sess.log_fields()["belief_json"])["weights"], sess.log_fields())
+
     print("\n[8] The wishmatch: rules only use vocabulary words")
     rules = load_wishmatch_rules()
     lex = rules.get("lexicon") or {}
