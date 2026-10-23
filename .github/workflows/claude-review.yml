@@ -1,0 +1,70 @@
+name: Claude review
+
+# An AI reviewer (Claude) reads every pull request and leaves comments.
+# It only comments. It can't push, approve or merge.
+# Setup (once, by Labiba): run `claude setup-token`, then save the token as
+# the repo secret CLAUDE_CODE_OAUTH_TOKEN. Until then this job is skipped.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Forks don't get repo secrets, so only review branches pushed to this repo.
+    if: >-
+      !github.event.pull_request.draft &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    steps:
+      - if: env.HAS_TOKEN != 'true'
+        run: echo "CLAUDE_CODE_OAUTH_TOKEN is not set yet, skipping the review."
+
+      - if: env.HAS_TOKEN == 'true'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - if: env.HAS_TOKEN == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. The PR branch is checked out here.
+            Follow the rules in AGENTS.md and read the handover doc it names.
+
+            Look for, in this order:
+            - Bugs and wrong behavior. Fixes must fix the cause, not hide it.
+            - Missing or weak tests.
+            - Security, and above all secrets: app secret values must never be
+              printed, logged, committed or shown to anyone but the owner.
+            - The handover doc not updated when behavior changed.
+            - Code that is more complex than it needs to be.
+
+            The author may be a beginner. Be kind, short and concrete.
+            Use plain, simple sentences. Say what to change and why.
+            Skip style nitpicks that linters already catch.
+
+            Use `mcp__github_inline_comment__create_inline_comment` (with
+            `confirmed: true`) for comments on specific lines.
+            Then post one summary with `gh pr comment`: start with
+            "Looks good" or "Needs changes", then a short list.
+            If you reviewed this PR before, only comment on what is new.
+          claude_args: |
+            --model claude-opus-5-5
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Glob,Grep"
