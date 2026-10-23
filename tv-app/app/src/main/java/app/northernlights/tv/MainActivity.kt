@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
+import kotlin.concurrent.thread
 
 /**
  * Hosts the Northern Lights TV web UI in a WebView. Native playback (Media3, bridge v2) is drawn
@@ -232,6 +233,23 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
 
     override fun onSpeedRequested(rate: Double) {
         runOnUiThread { if (pageTrusted) player.setSpeed(rate) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppUpdater.resumeInstallIfAllowed(this)
+        checkForUpdate()
+    }
+
+    /** At most every 6 hours, never during a film: ask GitHub for a newer build and offer it. */
+    private fun checkForUpdate() {
+        if (player.isActive || !AppUpdater.claimAutoCheck(this)) return
+        thread(name = "nl-update-check") {
+            val build = AppUpdater.findNewerBuild(applicationContext) ?: return@thread
+            runOnUiThread {
+                if (!player.isActive && !isFinishing && !isDestroyed) AppUpdater.offer(this, build)
+            }
+        }
     }
 
     override fun onStop() {

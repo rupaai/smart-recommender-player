@@ -47,3 +47,35 @@ jobs:
           name: northern-lights-tv-${{ github.run_number }}
           path: tv-app/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  # The app updates itself from the fixed release `tv-app` (see UpdateCheck.kt): it reads version.json and,
+  # when versionCode is bigger than its own, downloads northern-lights-tv.apk. Only main builds go there.
+  # The tag is not a version number and the release is a pre-release, so it stays apart from vX.Y.Z releases.
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: tv-app-publish
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN: ${{ github.run_number }}
+    steps:
+      - name: Get the APK from the build job
+        run: |
+          gh run download "$GITHUB_RUN_ID" -n "northern-lights-tv-$RUN" -D apk
+          mv "apk/northern-lights-tv-$RUN.apk" northern-lights-tv.apk
+          printf '{"versionCode": %s, "sha": "%s"}\n' "$RUN" "$GITHUB_SHA" > version.json
+      - name: Put it on the tv-app release
+        run: |
+          gh release view tv-app >/dev/null 2>&1 || gh release create tv-app --prerelease --target "$GITHUB_SHA" \
+            --title "TV app (newest build)" --notes "The TV app downloads its updates from here."
+          # APK first, then version.json, so the app is never told about a build that is not there yet.
+          gh release upload tv-app northern-lights-tv.apk --clobber
+          gh release upload tv-app version.json --clobber
+          gh release edit tv-app --notes "Newest TV app: version 1.0.$RUN, built from $GITHUB_SHA. The TV app downloads its updates from here."

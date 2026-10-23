@@ -7,6 +7,14 @@ It only talks to our FastAPI server. It never holds or sends a Jellyfin key.
 - Package `app.northernlights.tv`, minSdk 24, target/compile SDK 35.
 - AGP 8.7.3, Kotlin 2.0.21, Gradle 8.10.2 (wrapper), AndroidX Media3 1.5.1 (`exoplayer`, `exoplayer-hls`, `ui`, `session`).
 
+## Updates
+
+The app updates itself. Every merge to `main` that changes `tv-app/` puts the new APK on the GitHub release [`tv-app`](https://github.com/rupaai/smart-recommender-player/releases/tag/tv-app) (a pre-release that always holds the newest build, plus `version.json`). When the app comes to the front (at most every 6 hours, never during a film) it checks that release and asks "Update available". Install downloads it and Android shows its own "Update this app?" screen: press OK on the remote. Settings (Menu button) also has "Check for updates" and shows the installed version.
+
+The first time, Android asks you to allow Northern Lights to install apps. Turn it on and press Back; the update carries on. Android does not let a normal app update without that one OK.
+
+Branch builds are not published there; install those by hand as below.
+
 ## Get the APK
 
 1. GitHub: Actions, workflow "TV app", pick the latest run for your branch.

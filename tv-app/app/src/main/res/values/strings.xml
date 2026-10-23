@@ -9,4 +9,15 @@
     <string name="try_again">Try again</string>
     <string name="change_server">Change server</string>
     <string name="press_back_again">Press Back again to exit</string>
+    <string name="app_version">App %1$s</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_none">You have the newest app.</string>
+    <string name="update_title">Update available</string>
+    <string name="update_message">Version %1$s of the TV app is ready. Install it now?</string>
+    <string name="update_install">Install</string>
+    <string name="update_later">Later</string>
+    <string name="update_downloading">Downloading the update…</string>
+    <string name="update_failed">Update failed: %1$s</string>
+    <string name="update_allow_hint">Turn on \"Allow\" for Northern Lights, then press Back. The update carries on.</string>
 </resources>

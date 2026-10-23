@@ -16,6 +16,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var save: Button
     private lateinit var serverVersion: TextView
+    private lateinit var appVersion: TextView
+    private lateinit var checkUpdate: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,6 +26,10 @@ class SettingsActivity : AppCompatActivity() {
         status = findViewById(R.id.status)
         save = findViewById(R.id.save)
         serverVersion = findViewById(R.id.server_version)
+        appVersion = findViewById(R.id.app_version)
+        checkUpdate = findViewById(R.id.check_update)
+        appVersion.text = getString(R.string.app_version, "1.0.${AppUpdater.installedBuild(this)}")
+        checkUpdate.setOnClickListener { checkForUpdate() }
 
         val existing = ServerConfig.load(this)
         address.setText(existing ?: ServerConfig.DEFAULT_PREFILL)
@@ -50,6 +56,29 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
         address.requestFocus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        AppUpdater.resumeInstallIfAllowed(this)
+    }
+
+    private fun checkForUpdate() {
+        checkUpdate.isEnabled = false
+        showStatus(getString(R.string.update_checking), null)
+        thread(name = "nl-update-check") {
+            val build = AppUpdater.findNewerBuild(applicationContext)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                checkUpdate.isEnabled = true
+                if (build == null) {
+                    showStatus(getString(R.string.update_none), true)
+                } else {
+                    showStatus("", null)
+                    AppUpdater.offer(this, build)
+                }
+            }
+        }
     }
 
     private fun showStatus(text: String, ok: Boolean?) {
