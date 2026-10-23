@@ -10,7 +10,7 @@ It only talks to our FastAPI server. It never holds or sends a Jellyfin key.
 ## Get the APK
 
 1. GitHub: Actions, workflow "TV app", pick the latest run for your branch.
-2. Download the artifact `northern-lights-tv-debug` (a zip containing `app-debug.apk`).
+2. Download the artifact `northern-lights-tv-<run>` (a zip containing `northern-lights-tv-<run>.apk`; the app shows up as version 1.0.<run> in Settings > Apps).
 
 The workflow runs on changes under `tv-app/` and on "Run workflow". To build locally you need JDK 17 and the Android SDK (`ANDROID_HOME`): `cd tv-app && ./gradlew assembleDebug`; the APK lands in `app/build/outputs/apk/debug/`.
 
@@ -25,7 +25,7 @@ Then, from a computer on the same network, using adb:
 
 ```
 adb connect <tv-ip>:5555
-adb install -r app-debug.apk
+adb install -r northern-lights-tv-<run>.apk
 ```
 
 `-r` installs over the copy already on the TV and keeps its saved server address. Every build is signed with the committed `app/debug.keystore`, so updates always match. If adb says `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (a copy from before that key), run `adb uninstall app.northernlights.tv` once and install again.
