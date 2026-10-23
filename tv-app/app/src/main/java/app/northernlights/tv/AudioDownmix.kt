@@ -12,11 +12,18 @@ object AudioDownmix {
     private const val SURROUND = 0.707f
 
     /**
+     * Overall level: -3 dB, so dialogue sits at 0.707 of full scale. Scaling so the largest output sum is 1.0 would
+     * put dialogue 8 to 10 dB lower, which is the "quiet dialogue" problem this mix exists to fix. A frame where the
+     * front, centre and surrounds are all near full scale at once (rare) is clamped by Media3's 16-bit mixer
+     * (AudioMixingUtil constrains to the Short range), the same trade-off mpv and Kodi make by default.
+     */
+    const val LEVEL = 0.707f
+
+    /**
      * Row-major coefficients for Media3's ChannelMixingMatrix: `coefficients[input * 2 + output]`. Null when
      * [inputChannelCount] is not 6 or 8 (other layouts are left as they are).
      *   L' = L + 1.0*C + 0.707*BL (+ 0.707*SL for 7.1), R' likewise.
-     * The whole matrix is then scaled so the larger of the two output sums is 1.0, so a full-scale signal can never
-     * clip. No other gain is applied.
+     * The whole matrix is then scaled by [LEVEL].
      */
     fun stereoMatrix(inputChannelCount: Int): FloatArray? {
         if (inputChannelCount != 6 && inputChannelCount != 8) return null
@@ -35,13 +42,7 @@ object AudioDownmix {
             put(6, 0, SURROUND) // SL -> L
             put(7, 1, SURROUND) // SR -> R
         }
-        var worst = 0f
-        for (output in 0..1) {
-            var sum = 0f
-            for (input in 0 until inputChannelCount) sum += m[input * 2 + output]
-            if (sum > worst) worst = sum
-        }
-        for (i in m.indices) m[i] = m[i] / worst
+        for (i in m.indices) m[i] = m[i] * LEVEL
         return m
     }
 }

@@ -24,11 +24,19 @@ class AudioDownmixTest {
     }
 
     @Test
-    fun largestOutputSumIsExactlyOneSoNothingClips() {
+    fun dialogueSitsAtMinusThreeDecibels() {
         for (channels in intArrayOf(6, 8)) {
             val m = AudioDownmix.stereoMatrix(channels)!!
-            val worst = maxOf(outputSum(m, channels, 0), outputSum(m, channels, 1))
-            assertEquals(1.0f, worst, 1e-5f)
+            assertEquals(0.707f, coef(m, 2, 0), 1e-5f)
+            assertEquals(0.707f, coef(m, 2, 1), 1e-5f)
+        }
+    }
+
+    @Test
+    fun bothSidesGetTheSameTotalGain() {
+        for (channels in intArrayOf(6, 8)) {
+            val m = AudioDownmix.stereoMatrix(channels)!!
+            assertEquals(outputSum(m, channels, 0), outputSum(m, channels, 1), 1e-6f)
         }
     }
 
@@ -69,7 +77,7 @@ class AudioDownmixTest {
     @Test
     fun fiveOneValuesFollowTheRecipe() {
         val m = AudioDownmix.stereoMatrix(6)!!
-        val scale = 1f / (1f + 1f + 0.707f)
+        val scale = AudioDownmix.LEVEL
         assertEquals(scale, coef(m, 0, 0), 1e-5f)
         assertEquals(scale, coef(m, 2, 0), 1e-5f)
         assertEquals(0.707f * scale, coef(m, 4, 0), 1e-5f)
@@ -79,7 +87,7 @@ class AudioDownmixTest {
     fun sevenOneAddsTheSideChannelsAtTheSameGain() {
         val m = AudioDownmix.stereoMatrix(8)!!
         assertEquals(coef(m, 4, 0), coef(m, 6, 0), 0f)
-        val scale = 1f / (1f + 1f + 0.707f + 0.707f)
+        val scale = AudioDownmix.LEVEL
         assertEquals(scale, coef(m, 0, 0), 1e-5f)
     }
 }
