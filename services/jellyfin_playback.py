@@ -551,7 +551,9 @@ class JellyfinPlayback:
             profile["MaxStaticBitrate"] = min(int(profile.get("MaxStaticBitrate") or ceiling), ceiling)
         body: Dict[str, Any] = {
             "DeviceProfile": profile,
-            "MaxStreamingBitrate": ceiling if max_bitrate else MAX_STREAMING_BITRATE,
+            # Jellyfin checks the file against this request-level limit as well as the profile's, so it must be
+            # the same ceiling: a fixed 20 Mbps here made every remux "ContainerBitrateExceedsLimit" on the TV.
+            "MaxStreamingBitrate": ceiling,
             "EnableDirectPlay": direct_play,
             "EnableDirectStream": direct_stream,
             "EnableTranscoding": True,
