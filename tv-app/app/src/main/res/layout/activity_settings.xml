@@ -62,11 +62,27 @@
         android:layout_marginTop="16dp"
         android:text="@string/save" />
 
+    <Button
+        android:id="@+id/check_update"
+        style="@style/NlButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="@string/update_check" />
+
+    <TextView
+        android:id="@+id/app_version"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="20sp" />
+
     <TextView
         android:id="@+id/server_version"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
+        android:layout_marginTop="8dp"
         android:textColor="@color/text_secondary"
         android:textSize="20sp" />
 </LinearLayout>
