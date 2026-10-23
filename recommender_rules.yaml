@@ -333,6 +333,21 @@ wishmatch:
     max_reasons: 3
     hide_groups: [flags]    # content warnings (infidelity, animal harm) are never shown as reasons
   questions: {max: 2}       # build step 5
+  # The wish reader: an open-weight model in Ollama turns the typed wish into the
+  # words above; the word lookup below stays as its fallback (slow, missing or
+  # confused model = lookup only). OLLAMA_URL picks the server (Homelab sets
+  # http://ollama:11434); with no URL the lookup is used alone. Free.
+  wish_reader:
+    enabled: true
+    model: qwen2.5:3b         # about 1.9 GB; downloaded into Ollama once (auto_pull)
+    auto_pull: true
+    pull_in: [prod]           # under Homelab only prod downloads it; dev just uses the word lookup
+    wait_seconds: 8           # a search waits this long; a slower answer is kept for next time
+    timeout_seconds: 60       # give up on a model answer after this long
+    keep_alive: 5m            # Ollama unloads the model after this long without a search
+    threads: 4                # of mars's 6 cores, so Jellyfin keeps room
+    max_tokens: 80
+    avoid_groups: [flags]     # the model may only rule out content warnings ("the dog can't die")
   tagging_model: ""         # open-weight Ollama model for new titles, picked by the bake-off (step 6)
   # TMDB rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
   quality_floor: 5.0

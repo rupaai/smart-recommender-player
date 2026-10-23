@@ -48,6 +48,7 @@ class Wish:
     words_used: List[str] = field(default_factory=list)           # request words that were understood
     words_unknown: List[str] = field(default_factory=list)        # request words that were not
     hidden_gems: bool = False                                     # include little-known items
+    source: str = "lookup"                                        # who read it: lookup | model | model+lookup
 
     def is_empty(self) -> bool:
         return not (self.traits or self.tags or self.avoid_tags)
@@ -62,6 +63,7 @@ class Wish:
             "words_used": self.words_used,
             "words_unknown": self.words_unknown,
             "hidden_gems": self.hidden_gems,
+            "source": self.source,
         }
 
 

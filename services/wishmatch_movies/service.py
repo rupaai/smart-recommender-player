@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from wishmatch import Request, Wishmatch
+import os
+
+from wishmatch import LLMWishReader, OllamaClient, Request, Wishmatch
 
 from .adapter import MovieAdapter
 
@@ -26,8 +28,34 @@ class WishmatchMovies:
                  adapter: Optional[MovieAdapter] = None):
         self.db = db
         self.adapter = adapter or MovieAdapter(db)
-        self.engine = Wishmatch(self.adapter)
+        self.ollama = self._ollama(self.adapter.rules().get("wish_reader") or {})
+        cfg = self.adapter.rules().get("wish_reader") or {}
+        reader = LLMWishReader(self.ollama.generate, noun="films and TV shows",
+                               wait_seconds=float(cfg.get("wait_seconds", 8)),
+                               avoid_groups=list(cfg.get("avoid_groups") or ["flags"])) if self.ollama else None
+        self.engine = Wishmatch(self.adapter, reader=reader)
         self.moods = mood_mappings or {}
+
+    @staticmethod
+    def _ollama(cfg: Dict[str, Any]) -> Optional[OllamaClient]:
+        """The wish reader's Ollama connection (wishmatch.wish_reader in recommender_rules.yaml), or None.
+        OLLAMA_URL picks the server (Homelab: http://ollama:11434); no URL = word lookup only."""
+        url = os.getenv("OLLAMA_URL") or str(cfg.get("url") or "")
+        if not cfg.get("enabled", True) or not url or not cfg.get("model"):
+            return None
+        options = {"temperature": 0, "num_predict": int(cfg.get("max_tokens", 80))}
+        if cfg.get("threads"):
+            options["num_thread"] = int(cfg["threads"])
+        return OllamaClient(url, str(cfg["model"]), timeout=float(cfg.get("timeout_seconds", 60)),
+                            keep_alive=str(cfg.get("keep_alive", "5m")), options=options)
+
+    def start(self) -> None:
+        """At server start: ask Ollama to download the wish reader's model if it lacks it (in the background).
+        Under Homelab only in the environments `pull_in` names (prod), so dev never downloads it."""
+        cfg = self.adapter.rules().get("wish_reader") or {}
+        env = os.getenv("HOMELAB_ENV", "")
+        if self.ollama and cfg.get("auto_pull", True) and (not env or env in (cfg.get("pull_in") or ["prod"])):
+            self.ollama.ensure_model(background=True)
 
     # --- requests -------------------------------------------------------------
     def wish_text(self, query: Optional[str], mood_id: Optional[int], sub_mood: Optional[str] = None) -> str:
@@ -133,4 +161,6 @@ class WishmatchMovies:
         for item in catalogue.values():
             by_known = counts.setdefault(item.kind, {})
             by_known[item.known] = by_known.get(item.known, 0) + 1
-        return {"tagged_titles": len(catalogue), "by_type": counts, "crowd": self.adapter.crowd_status()}
+        reader = self.ollama.status() if self.ollama else {"enabled": False}
+        return {"tagged_titles": len(catalogue), "by_type": counts, "crowd": self.adapter.crowd_status(),
+                "wish_reader": reader}

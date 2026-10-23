@@ -581,6 +581,93 @@ def test_engine_without_crowd_weight_skips_crowd():
     assert out["crowd_added"] == 0 and all(p.crowd == 0.0 for p in out["picks"])
 
 
+# ---------------------------------------------------------------- 8. model wish reader
+
+def test_parse_answer_keeps_only_vocabulary_words():
+    from wishmatch.llm import parse_answer
+    w = parse_answer('{"w": ["cozy", "spaceship"], "a": ["tense"], "s": {"humour": 8, "nonsense": 3}}', VOCAB)
+    assert w.tags == {"cozy"} and w.avoid_tags == {"tense"} and w.traits == {"humour": 0.8}
+    assert parse_answer("not json", VOCAB) is None and parse_answer(None, VOCAB) is None
+    assert parse_answer('Sure! {"w": ["witty"], "a": []} hope that helps', VOCAB).tags == {"witty"}
+
+
+def test_model_reading_is_laid_over_the_lookup():
+    from wishmatch.llm import LLMWishReader
+    calls = []
+
+    def fake(prompt, schema=None, system=""):
+        calls.append(prompt)
+        return '{"w": ["cozy", "witty"], "a": ["eerie"]}'
+
+    r = LLMWishReader(fake, avoid_groups=None)
+    lookup = read_wish("relaxing, make me laugh", VOCAB, LEX)
+    w = r.read("relaxing, make me laugh", VOCAB, lookup)
+    assert w.source == "model+lookup"
+    assert w.traits == lookup.traits                       # the lookup's dials stay
+    assert {"cozy", "silly", "witty"} <= w.tags
+    assert w.avoid_tags == set()                           # no "no / not" typed: the model's avoid list is dropped
+    assert {"cozy"} in [ts for ts in w.tag_sets if "cozy" in ts] or any("cozy" in ts for ts in w.tag_sets)
+    r.read("Relaxing,  make me LAUGH", VOCAB, lookup)
+    assert len(calls) == 1                                 # same words: remembered
+
+
+def test_model_avoid_counts_only_when_ruled_out_and_in_allowed_groups():
+    from wishmatch.llm import LLMWishReader
+    r = LLMWishReader(lambda *a, **k: '{"w": [], "a": ["eerie", "a bad day"]}', avoid_groups=["feels"])
+    w = r.read("something fun but not eerie", VOCAB, read_wish("something fun but not eerie", VOCAB, LEX))
+    assert w.avoid_tags == {"eerie"}, w.avoid_tags          # "a bad day" is not in the allowed groups
+
+
+def test_slow_or_failing_model_falls_back_to_lookup():
+    import threading
+    from wishmatch.llm import LLMWishReader
+    gate = threading.Event()
+
+    def slow(*a, **k):
+        gate.wait(2)
+        return '{"w": ["cozy"], "a": []}'
+
+    r = LLMWishReader(slow, wait_seconds=0.05)
+    lookup = read_wish("make me laugh", VOCAB, LEX)
+    first = r.read("make me laugh", VOCAB, lookup)
+    assert first.source == "lookup" and "cozy" not in first.tags
+    gate.set()
+    for _ in range(100):
+        if r.cached("make me laugh"):
+            break
+        threading.Event().wait(0.02)
+    assert "cozy" in r.read("make me laugh", VOCAB, lookup).tags   # the late answer is used next time
+    broken = LLMWishReader(lambda *a, **k: None)
+    assert broken.read("make me laugh", VOCAB, lookup).source == "lookup"
+
+
+def test_engine_uses_reader_and_survives_its_errors():
+    class Boom:
+        def read(self, *a):
+            raise RuntimeError("down")
+
+    out = Wishmatch(FakeAdapter(), reader=Boom()).recommend(Request(text="make me laugh"))
+    assert out["wish"].source == "lookup" and out["picks"]
+
+
+def test_word_question_falls_back_to_template():
+    from wishmatch.llm import word_question
+    t = word_question("tone", ["silly", "witty"])
+    assert t["source"] == "template" and t["options"] == ["silly", "witty"]
+    good = word_question("tone", ["silly", "witty"],
+                         lambda *a, **k: '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}')
+    assert good == {"question": "Goofy or clever?", "options": ["Goofy", "Clever"], "source": "model"}
+    bad = word_question("tone", ["silly", "witty"], lambda *a, **k: '{"question": "Hm?", "options": ["One"]}')
+    assert bad["source"] == "template"
+
+
+def test_ollama_client_fails_quietly_without_a_server():
+    from wishmatch import OllamaClient
+    c = OllamaClient("http://127.0.0.1:9", "tiny", timeout=0.5)
+    assert c.generate("hi") is None and c.last_error
+    assert c.status()["reachable"] is False
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     tests.sort(key=lambda p: p[1].__code__.co_firstlineno)
