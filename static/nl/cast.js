@@ -23,10 +23,13 @@
   var SDK_TIMEOUT_MS = 10000;
   var SUB_TRACK_BASE = 1000;     // Cast track ids for subtitles: 1000 + the page's subtitle index
 
+  // Everything player.js uses on `player` must be listed here, or the page never sees it (it is the switch, not the
+  // adapter). The last methods and props are the TV app's (bridge v5/v6); the Chromecast adapter has none of them.
   var METHODS = ["load", "play", "pause", "seek", "setTextTracks", "showTextTrack", "setSubtitleDelay",
-    "setSubtitleStyle", "toggleFullscreen", "destroy"];
+    "setSubtitleStyle", "toggleFullscreen", "destroy", "setAudioOrder", "stats"];
   var PROPS = ["currentTime", "duration", "paused", "buffered", "volume", "muted", "canSetVolume", "canChangeSpeed",
-    "playbackRate", "canStyleSubtitles", "canDelaySubtitles", "subtitleDelay", "isFullscreen"];
+    "playbackRate", "canStyleSubtitles", "canDelaySubtitles", "subtitleDelay", "isFullscreen",
+    "canSwitchAudioInPlace", "canDrawEmbeddedSubtitles", "canShowStats"];
 
   /* ------------------------------------------------------------------ feature detection and SDK loading */
 
@@ -60,7 +63,7 @@
     var handlers = {};
     var player = {};
     METHODS.forEach(function (name) {
-      player[name] = function () { return active[name].apply(active, arguments); };
+      player[name] = function () { return typeof active[name] === "function" ? active[name].apply(active, arguments) : undefined; };
     });
     PROPS.forEach(function (name) {
       Object.defineProperty(player, name, {
