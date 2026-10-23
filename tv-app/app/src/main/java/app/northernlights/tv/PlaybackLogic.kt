@@ -2,6 +2,16 @@ package app.northernlights.tv
 
 import org.json.JSONObject
 
+/**
+ * Resident memory in MB from the text of /proc/self/statm ("size resident shared ..." in pages). Reading that one
+ * line is cheap; Debug.getPss() walks every memory mapping of the process, which can hold up the player, and the panel
+ * asks once a second. 0 when the text cannot be read.
+ */
+fun residentMbFromStatm(statm: String?, pageBytes: Long = 4096L): Int {
+    val pages = statm?.trim()?.split(Regex("\\s+"))?.getOrNull(1)?.toLongOrNull() ?: return 0
+    return (pages * pageBytes / (1024L * 1024L)).toInt()
+}
+
 /** Id prefix of the text tracks the page asks Media3 to side-load (see PlayerController). */
 const val SIDE_LOADED_SUBTITLE_PREFIX = "nlsub"
 

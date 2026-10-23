@@ -8,6 +8,13 @@ import org.junit.Test
 
 class PlaybackLogicTest {
     @Test
+    fun residentMemoryComesFromTheSecondStatmField() {
+        assertEquals(400, residentMbFromStatm("2000000 102400 3000 10 0 50000 0\n"))   // 102400 pages x 4 KB
+        assertEquals(0, residentMbFromStatm(null))
+        assertEquals(0, residentMbFromStatm("garbage"))
+    }
+
+    @Test
     fun sideLoadedIdsAreRecognised() {
         assertTrue(isSideLoadedSubtitleId("nlsub3"))
         assertTrue(isSideLoadedSubtitleId("1:nlsub3"))

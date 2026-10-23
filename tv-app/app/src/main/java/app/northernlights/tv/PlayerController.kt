@@ -3,7 +3,8 @@ package app.northernlights.tv
 import android.app.Activity
 import android.graphics.Color
 import android.net.Uri
-import android.os.Debug
+import android.system.Os
+import android.system.OsConstants
 import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
@@ -29,6 +30,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.SubtitleView
 import org.json.JSONObject
+import java.io.File
 
 /**
  * Headless native player (bridge v2): Media3 decodes and draws the picture (and text subtitles)
@@ -184,8 +186,14 @@ class PlayerController(
     }
     private var playingAudioLabels: List<String> = emptyList()
 
-    /** Bridge v6 stats(): the last snapshot (refreshed every 500 ms) plus the app's memory, read now. */
-    fun statsJson(): String = stats.toJson(((Debug.getPss() / 1024L).toInt()))
+    /** Bridge v6 stats(): the last snapshot (refreshed every 500 ms) plus the app's resident memory, read now (cheap). */
+    fun statsJson(): String = stats.toJson(residentMbFromStatm(readStatm(), Os.sysconf(OsConstants._SC_PAGESIZE)))
+
+    private fun readStatm(): String? = try {
+        File("/proc/self/statm").readText()
+    } catch (e: Exception) {
+        null
+    }
 
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(
@@ -260,7 +268,9 @@ class PlayerController(
         clearPendingSeek()
 
         val mediaSourceFactory = DefaultMediaSourceFactory(activity)
-            .setDataSourceFactory(PlaybackCache.dataSourceFactory(activity))
+            .setDataSourceFactory(
+                if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
+            )
         val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(

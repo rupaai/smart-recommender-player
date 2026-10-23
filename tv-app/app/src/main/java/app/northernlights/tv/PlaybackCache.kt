@@ -10,7 +10,11 @@ import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
-/** Shared bounded disk cache for TV playback; one cache instance must own its directory. */
+/**
+ * Shared bounded disk cache for converted (HLS) playback; one cache instance must own its directory. The original
+ * file is streamed with [directDataSourceFactory] instead: at ~90 Mbps, writing every byte to the TV's flash can slow
+ * loading to barely the film's own bitrate (we saw 0-2 s loaded ahead) and writes ~80 GB per film to the flash.
+ */
 internal object PlaybackCache {
     private const val MAX_CACHE_BYTES = 512L * 1024L * 1024L
     private const val DIRECTORY_NAME = "playback-cache"
@@ -28,13 +32,15 @@ internal object PlaybackCache {
             ).also { cache = it }
         }
 
-        val upstream = DefaultDataSource.Factory(
-            appContext,
-            DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true),
-        )
         return CacheDataSource.Factory()
             .setCache(diskCache)
-            .setUpstreamDataSourceFactory(upstream)
+            .setUpstreamDataSourceFactory(directDataSourceFactory(appContext))
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
     }
+
+    /** Straight from the server into Media3's memory buffer, no disk. */
+    fun directDataSourceFactory(context: Context): DataSource.Factory = DefaultDataSource.Factory(
+        context.applicationContext,
+        DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true),
+    )
 }
