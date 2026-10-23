@@ -341,7 +341,7 @@ def test_static():
     check("TV title page has a Find subtitles hook", "subtitles.js" in read("templates/nl/tv/base.html") and "Find subtitles" in read("static/nl/tv/tv.js"))
 
     kt = read("tv-app/app/src/main/java/app/northernlights/tv/NativeBridge.kt")
-    check("bridge keeps setSubtitleStyle (v3) and reports version 5 (v4 setSpeed, v5 setAudioTrack)", "fun setSubtitleStyle" in kt and '"5"' in kt)
+    check("bridge keeps setSubtitleStyle (v3) and reports version 6 (v4 setSpeed, v5 setAudioTrack, v6 stats)", "fun setSubtitleStyle" in kt and '"6"' in kt)
     ctl = read("tv-app/app/src/main/java/app/northernlights/tv/PlayerController.kt")
     check("PlayerController styles the PlayerView's SubtitleView",
           "CaptionStyleCompat" in ctl and "setFractionalTextSize" in ctl and "setBottomPaddingFraction" in ctl and "subtitleView" in ctl)

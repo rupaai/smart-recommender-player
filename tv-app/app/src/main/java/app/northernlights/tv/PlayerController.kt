@@ -3,11 +3,14 @@ package app.northernlights.tv
 import android.app.Activity
 import android.graphics.Color
 import android.net.Uri
+import android.os.Debug
+import android.os.SystemClock
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
@@ -18,6 +21,8 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.ui.CaptionStyleCompat
@@ -53,12 +58,22 @@ class PlayerController(
     private var appliedAudioOrder = -1
     private var frameRateHandled = false
     private var previousDisplayModeId: Int? = null // set while we have asked the display for another mode
+    private var subtitleTracks: List<SubtitleTrackInfo> = emptyList() // bridge v6: the page's list, to tell embedded from side-loaded
+    private val seekTimer = SeekTimer()
+    @Volatile private var stats = PlaybackStats()
+    private var droppedFrames = 0L
+    private var audioChannels = 0
+    private var audioPath = ""
+    private var bandwidthMbps = 0.0
+    private var videoDecoder = ""
+    private var statsSource = "original"
 
     val isActive: Boolean get() = player != null
 
     private val timeTick = object : Runnable {
         override fun run() {
             val p = player ?: return
+            refreshStats()
             emit("time")
             ticks += 1
             if (ticks % PROGRESS_EVERY_TICKS == 0 && p.isPlaying) emit("progress")
@@ -83,12 +98,94 @@ class PlayerController(
             if (ready && (playbackCanAdvance || playbackCannotAdvance || p.playbackState == Player.STATE_ENDED)) {
                 pendingSeekTargetMs = null
                 pendingSeekPositionMs = null
+                seekTimer.ready(SystemClock.elapsedRealtime()) // a jump inside the buffer may never leave STATE_READY
                 emit("seeked")
             } else {
                 handler.postDelayed(this, SEEK_CHECK_MS)
             }
         }
     }
+
+    /** Numbers for the info panel (bridge v6 stats()). All callbacks arrive on the main thread. */
+    private val analytics = object : AnalyticsListener {
+        override fun onVideoDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long,
+        ) {
+            videoDecoder = decoderName
+        }
+
+        override fun onDroppedVideoFrames(eventTime: AnalyticsListener.EventTime, droppedFrames: Int, elapsedMs: Long) {
+            this@PlayerController.droppedFrames += droppedFrames
+        }
+
+        override fun onAudioTrackInitialized(eventTime: AnalyticsListener.EventTime, audioTrackConfig: AudioSink.AudioTrackConfig) {
+            val pcm = isLinearPcm(audioTrackConfig.encoding)
+            audioPath = if (pcm) "decoded" else "passthrough"
+            audioChannels = if (pcm) channelCountOf(audioTrackConfig.channelConfig) else 0
+        }
+
+        override fun onBandwidthEstimate(
+            eventTime: AnalyticsListener.EventTime,
+            totalLoadTimeMs: Int,
+            totalBytesLoaded: Long,
+            bitrateEstimate: Long,
+        ) {
+            bandwidthMbps = bitrateEstimate / 1_000_000.0
+        }
+    }
+
+    private fun isLinearPcm(encoding: Int): Boolean = when (encoding) {
+        C.ENCODING_PCM_8BIT, C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN, C.ENCODING_PCM_24BIT,
+        C.ENCODING_PCM_32BIT, C.ENCODING_PCM_FLOAT -> true
+        else -> false
+    }
+
+    private fun refreshStats() {
+        val p = player ?: return
+        var width = 0
+        var height = 0
+        var hdr = ""
+        var audioLabel = ""
+        for (group in p.currentTracks.groups) {
+            for (i in 0 until group.length) {
+                if (!group.isTrackSelected(i)) continue
+                val f = group.getTrackFormat(i)
+                if (group.type == C.TRACK_TYPE_VIDEO) {
+                    width = f.width
+                    height = f.height
+                    hdr = hdrLabel(f.codecs, f.colorInfo?.colorTransfer ?: Format.NO_VALUE)
+                } else if (group.type == C.TRACK_TYPE_AUDIO) {
+                    audioLabel = audioTrackLabel(f)
+                }
+            }
+        }
+        stats = PlaybackStats(
+            source = statsSource,
+            videoDecoder = videoDecoder,
+            width = width,
+            height = height,
+            hdr = hdr,
+            droppedFrames = droppedFrames,
+            audioLabel = audioLabel,
+            audioPath = audioPath,
+            audioChannels = audioChannels,
+            bandwidthMbps = bandwidthMbps,
+            bufferedAheadSeconds = p.totalBufferedDuration.coerceAtLeast(0L) / 1000.0,
+            lastSeekMs = seekTimer.lastMs,
+        )
+    }
+
+    private fun audioTrackLabel(f: Format): String {
+        val fromPage = if (appliedAudioOrder >= 0) playingAudioLabels.getOrNull(appliedAudioOrder) else null
+        return fromPage ?: f.label ?: f.language ?: ""
+    }
+    private var playingAudioLabels: List<String> = emptyList()
+
+    /** Bridge v6 stats(): the last snapshot (refreshed every 500 ms) plus the app's memory, read now. */
+    fun statsJson(): String = stats.toJson(((Debug.getPss() / 1024L).toInt()))
 
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(
@@ -105,6 +202,7 @@ class PlayerController(
         override fun onPlaybackStateChanged(state: Int) {
             if (player == null) return
             if (state == Player.STATE_BUFFERING && pendingSeekTargetMs != null) emit("time")
+            if (state == Player.STATE_READY) seekTimer.ready(SystemClock.elapsedRealtime())
             checkSeekCompletion()
             if (state == Player.STATE_READY && !startedSent) {
                 startedSent = true
@@ -148,6 +246,15 @@ class PlayerController(
         appliedAudioOrder = -1
         frameRateHandled = false
         selectedSubtitleIndex = -1
+        subtitleTracks = req.subtitleTracks
+        playingAudioLabels = if (req.kind == "file") req.audioTracks.map { it.label } else emptyList()
+        statsSource = if (req.kind == "file") "original" else "converted"
+        droppedFrames = 0
+        videoDecoder = ""
+        audioPath = ""
+        audioChannels = 0
+        seekTimer.reset()
+        stats = PlaybackStats(source = statsSource)
         playerView.subtitleView?.visibility = View.VISIBLE
         ticks = 0
         clearPendingSeek()
@@ -177,6 +284,7 @@ class PlayerController(
             )
             .build()
         exo.addListener(listener)
+        exo.addAnalyticsListener(analytics)
         if (speed != 1.0) exo.setPlaybackSpeed(speed.toFloat())
         // Land on the nearest keyframe: no decoding up to an exact frame, so seeks start sooner.
         exo.setSeekParameters(SeekParameters.CLOSEST_SYNC)
@@ -231,6 +339,7 @@ class PlayerController(
         session?.release()
         session = null
         p.removeListener(listener)
+        p.removeAnalyticsListener(analytics)
         p.release()
         restoreDisplayMode()
         if (notifyClosed) onClosed()
@@ -255,6 +364,9 @@ class PlayerController(
         pendingSeekTargetMs = target
         pendingSeekPositionMs = null
         handler.removeCallbacks(seekCompletionCheck)
+        seekTimer.start(SystemClock.elapsedRealtime())
+        // A jump inside what is already loaded is served from the buffer; Media3 does that by itself, so nothing here
+        // drops or flushes the buffer.
         p.seekTo(target)
         checkSeekCompletion()
     }
@@ -434,6 +546,8 @@ class PlayerController(
     /** Returns true when a matching side-loaded text track was found and selected. */
     private fun selectSubtitleLocally(index: Int): Boolean {
         val p = player ?: return false
+        val embedded = subtitleTracks.firstOrNull { it.index == index && it.kind == "embedded" }
+        if (embedded != null) return selectEmbeddedSubtitle(p, embedded.index, embedded.order)
         val wantedId = SUB_ID_PREFIX + index
         for (group in p.currentTracks.groups) {
             if (group.type != C.TRACK_TYPE_TEXT) continue
@@ -452,12 +566,28 @@ class PlayerController(
         return false
     }
 
+    /**
+     * Bridge v6: a subtitle stream inside the file (a disc PGS track) that Media3 reads and draws itself. [order] is its
+     * position among the file's subtitle streams; the side-loaded text groups are not counted.
+     */
+    private fun selectEmbeddedSubtitle(p: ExoPlayer, index: Int, order: Int): Boolean {
+        val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        val position = embeddedTextGroupPosition(groups.map { g -> if (g.length > 0) g.getFormat(0).id else null }, order)
+            ?: return false
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(TrackSelectionOverride(groups[position].mediaTrackGroup, 0))
+            .build()
+        selectedSubtitleIndex = index
+        return true
+    }
+
     companion object {
         private const val TIME_MS = 500L
         private const val PROGRESS_EVERY_TICKS = 20 // 20 x 500 ms = 10 s
         private const val SEEK_CHECK_MS = 50L
         private const val SEEK_PROGRESS_MS = 200L
-        private const val SUB_ID_PREFIX = "nlsub"
+        private const val SUB_ID_PREFIX = SIDE_LOADED_SUBTITLE_PREFIX
         private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
         // Buffered before playback resumes after a seek or a stall. The network measured 294 Mbps against a 92 Mbps film,

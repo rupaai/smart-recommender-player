@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative (bridge v5 = v4 + setAudioTrack; v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v6 = v5 + stats() and embedded subtitle tracks (kind "embedded" + order in play()'s subtitleTracks, chosen with setSubtitle); v5 = v4 + setAudioTrack; v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -21,6 +21,8 @@ class NativeBridge(private val host: Host) {
         fun onSubtitleStyleRequested(json: String)
         fun onSpeedRequested(rate: Double)
         fun onAudioTrackRequested(order: Int)
+        /** Bridge v6: the info panel's numbers as JSON. May be called from any thread. */
+        fun statsJson(): String
     }
 
     @JavascriptInterface
@@ -97,8 +99,16 @@ class NativeBridge(private val host: Host) {
         host.onAudioTrackRequested(value)
     }
 
+    /**
+     * Bridge v6: numbers for the playback info panel, as JSON: {source, videoDecoder, width, height, hdr, droppedFrames,
+     * audioLabel, audioPath ("passthrough"|"decoded"|""), audioChannels, bandwidthMbps, bufferedAheadSeconds,
+     * lastSeekMs (-1 = none yet), memoryMb}. "{}" when the page is not trusted.
+     */
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "5" else ""
+    fun stats(): String = if (host.isTrusted()) host.statsJson() else "{}"
+
+    @JavascriptInterface
+    fun version(): String = if (host.isTrusted()) "6" else ""
 
     companion object {
         private const val MIN_SPEED = 0.25

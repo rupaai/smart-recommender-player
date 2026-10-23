@@ -11,6 +11,8 @@ data class SubtitleTrackInfo(
     val language: String,
     val url: String?,
     val kind: String,
+    /** Bridge v6: for kind "embedded", the position among the file's own subtitle streams; otherwise -1. */
+    val order: Int = -1,
 )
 
 /** The JSON the web page passes to NorthernLightsNative.play(). */
@@ -73,6 +75,7 @@ data class PlayRequest(
                             language = t.optString("language", ""),
                             url = subUrl,
                             kind = t.optString("kind", "text"),
+                            order = if (t.isNull("order")) -1 else t.optInt("order", -1),
                         )
                     )
                 }

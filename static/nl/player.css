@@ -256,3 +256,6 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .nl-player.fit-original video { object-fit: none; }
 .nl-menu-note { padding: 6px 12px 8px; max-width: 22rem; font-size: 0.85rem; line-height: 1.35; color: var(--nl-ink-2); }
 .tv .nl-menu-note { font-size: 1.5rem; max-width: 36rem; padding: 0.5rem 1.25rem 0.75rem; }
+
+/* TV playback info panel: the lines sit tight, like a read-out. */
+.nl-menu-info .nl-menu-note { padding-top: 2px; padding-bottom: 2px; color: var(--nl-ink); }

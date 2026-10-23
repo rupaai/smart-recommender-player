@@ -68,6 +68,38 @@
     return SPEEDS[clamp(i + step, 0, SPEEDS.length - 1)];
   }
 
+  /* ---- TV info panel: the app's stats() numbers in plain words ---- */
+  function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
+  function infoLines(st) {
+    st = st || {};
+    var lines = [st.source === "converted" ? "Converted copy (not the original file)" : "Original file"];
+    var w = num(st.width), h = num(st.height);
+    var picture = [];
+    if (w && h) { picture.push(w + "×" + h); }
+    if (st.hdr) { picture.push(st.hdr); }
+    if (picture.length) { lines.push("Picture: " + picture.join(", ")); }
+    if (st.videoDecoder) { lines.push("Video decoder: " + st.videoDecoder); }
+    var sound = "";
+    if (st.audioPath === "passthrough") {
+      sound = "sent to speakers untouched";
+    } else if (st.audioPath === "decoded") {
+      var ch = num(st.audioChannels);
+      sound = "decoded on the TV, " + (ch === 2 ? "mixed for TV speakers" : (ch ? ch + " channels out" : "mixed for the TV"));
+    }
+    if (st.audioLabel) { lines.push("Audio track: " + st.audioLabel); }
+    if (sound) { lines.push("Sound: " + sound); }
+    var jump = num(st.lastSeekMs);
+    lines.push("Last jump: " + (jump === null || jump < 0 ? "none yet" : (Math.round(jump / 100) / 10) + " s"));
+    lines.push("Dropped frames: " + (num(st.droppedFrames) || 0));
+    var ahead = num(st.bufferedAheadSeconds);
+    lines.push("Loaded ahead: " + (ahead === null ? 0 : Math.round(ahead)) + " s");
+    var mbps = num(st.bandwidthMbps);
+    if (mbps) { lines.push("Connection: about " + Math.round(mbps) + " Mbps"); }
+    var mem = num(st.memoryMb);
+    if (mem !== null) { lines.push("App memory: " + Math.round(mem) + " MB"); }
+    return lines;
+  }
+
   /* ---- phone gestures ----
    * tapAction decides what a finished tap means given the previous tap:
    *   "double-left" / "double-right"  second tap within DOUBLE_TAP_MS in the same half: skip back / ahead
@@ -97,6 +129,7 @@
     chapterTicks: chapterTicks,
     segmentAt: segmentAt,
     speedLabel: speedLabel,
+    infoLines: infoLines,
     nextSpeed: nextSpeed,
     halfOf: halfOf,
     tapAction: tapAction,
