@@ -228,6 +228,8 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
         runOnUiThread { if (pageTrusted) player.selectAudioByOrder(order) }
     }
 
+    override fun statsJson(): String = player.statsJson()
+
     override fun onSpeedRequested(rate: Double) {
         runOnUiThread { if (pageTrusted) player.setSpeed(rate) }
     }

@@ -388,8 +388,14 @@
    *   NorthernLightsNative.setAudioTrack(n) (version 5) select the n-th audio track of the file (0-based, file order = the server's
    *                                         audio_order) inside the playing stream, no reload. Only for kind "file" (the original); the
    *                                         play() json carries audioOrder for the first selection.
+   *   NorthernLightsNative.stats()          (version 6) JSON string for the info panel: {source: original|converted,
+   *                                         videoDecoder, width, height, hdr, droppedFrames, audioLabel, audioPath:
+   *                                         passthrough|decoded|"", audioChannels, bandwidthMbps, bufferedAheadSeconds,
+   *                                         lastSeekMs (-1 = none yet), memoryMb}
+   *   (version 6) play() subtitleTracks entries of kind "embedded" carry order = the track's position among the file's own
+   *                                         subtitle streams; setSubtitle(index) selects it and Media3 draws it (no url)
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
-   *   NorthernLightsNative.version()        "5" (v5 = v4 + setAudioTrack, audioOrder in play()), "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *   NorthernLightsNative.version()        "6" (v6 = v5 + stats and embedded subtitle tracks), "5" (v5 = v4 + setAudioTrack, audioOrder in play()), "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
    *                                         setSubtitle and with its own native controls: the web
    *                                         controls then stay hidden and seek() restarts the stream
    *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
@@ -421,6 +427,7 @@
     var v3 = Number(nativeVersion()) >= 3;
     var v4 = Number(nativeVersion()) >= 4;
     var v5 = Number(nativeVersion()) >= 5;
+    var v6 = Number(nativeVersion()) >= 6;
     var rate = 1;
     var listeners = {};
     var pos = 0;
@@ -573,7 +580,9 @@
           return { index: t.index, label: t.label || "", language: t.language || "", isDefault: !!t.is_default };
         }),
         subtitleTracks: (n.subtitleTracks || []).map(function (t) {
-          return { index: t.index, label: t.label || "", language: t.language || "", url: absolute(t.url), kind: t.kind || "text" };
+          var o = { index: t.index, label: t.label || "", language: t.language || "", url: absolute(t.url), kind: t.kind || "text" };
+          if (typeof t.order === "number") { o.order = t.order; }   // v6: an embedded (disc) track, by position in the file
+          return o;
         }),
         audioIndex: n.audioIndex === undefined ? null : n.audioIndex,
         audioOrder: v5 && typeof n.audioOrder === "number" ? n.audioOrder : null,
@@ -596,7 +605,7 @@
 
     return {
       native: true,
-      nativeVersion: v5 ? 5 : v4 ? 4 : (v3 ? 3 : (v2 ? 2 : 1)),
+      nativeVersion: v6 ? 6 : v5 ? 5 : v4 ? 4 : (v3 ? 3 : (v2 ? 2 : 1)),
       load: function (src) {
         lastSrc = src;
         dur = 0;
@@ -652,6 +661,14 @@
       canSwitchAudioInPlace: v5,
       setAudioOrder: function (order) {
         if (v5 && !closed && typeof order === "number" && order >= 0) { call("setAudioTrack", String(order)); }
+      },
+      // Bridge v6: picture subtitles inside the file are drawn by the app (chosen through showTextTrack like text ones),
+      // and stats() gives the info panel its numbers. Older apps: neither.
+      canDrawEmbeddedSubtitles: v6,
+      canShowStats: v6,
+      stats: function () {
+        if (!v6) { return null; }
+        try { return JSON.parse(global.NorthernLightsNative.stats()); } catch (e) { return null; }
       },
       setTextTracks: function () { /* the native player loads them from the play() json */ },
       showTextTrack: function (id) {

@@ -185,6 +185,7 @@
   var menu = $("nl-menu");
   var menuOpener = null;
   function closeMenu() {
+    stopInfoPanel();
     menu.hidden = true;
     menu.innerHTML = "";
     S.menuOpen = false;
@@ -194,6 +195,7 @@
     menuOpener = null;
   }
   function openMenu(title, items) {
+    stopInfoPanel();
     menuOpener = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
     menu.innerHTML = "";
     var h = document.createElement("div");
@@ -499,7 +501,43 @@
       items.push({ kind: "cycle", getLabel: function () { return "Picture size: " + FIT_LABELS[S.fit]; }, onSelect: cycleFit });
     }
     items.push({ kind: "action", label: "Quality: " + qualityLabelFor(qualityInfo().applied_kbps || null) + " …", onSelect: openQualityMenu });
+    if (isNative && player.canShowStats) {
+      items.push({ kind: "action", label: "Playback info…", onSelect: openInfoPanel });
+    }
     openMenu("Picture", items);
+  }
+
+  // TV (bridge v6): what the app is doing, in plain words, refreshed once a second while the panel is open.
+  // It is a menu like the others (D-pad focus on Close, Back closes) and the film keeps playing under it.
+  var infoTimer = null;
+  function stopInfoPanel() {
+    if (infoTimer) { clearInterval(infoTimer); infoTimer = null; }
+    menu.classList.remove("nl-menu-info");
+  }
+  function infoItems() {
+    return X.infoLines(player.stats()).map(function (text) { return { kind: "note", text: text }; });
+  }
+  function refreshInfoPanel() {
+    if (!S.menuOpen || !menu.classList.contains("nl-menu-info")) { stopInfoPanel(); return; }
+    var lines = X.infoLines(player.stats());
+    var notes = menu.querySelectorAll(".nl-menu-note");
+    if (notes.length === lines.length) {
+      lines.forEach(function (text, i) { if (notes[i].textContent !== text) { notes[i].textContent = text; } });
+      return;
+    }
+    var anchor = menu.querySelector("button");   // the lines changed in number: rebuild them above Close
+    Array.prototype.forEach.call(notes, function (n) { n.parentNode.removeChild(n); });
+    lines.forEach(function (text) {
+      var n = document.createElement("div");
+      n.className = "nl-menu-note";
+      n.textContent = text;
+      menu.insertBefore(n, anchor);
+    });
+  }
+  function openInfoPanel() {
+    openMenu("Playback info", infoItems().concat([{ kind: "action", label: "Close", onSelect: function () { /* closeMenu did it */ } }]));
+    menu.classList.add("nl-menu-info");
+    infoTimer = setInterval(refreshInfoPanel, 1000);
   }
   // A short, friendly line when Jellyfin is converting the stream (once per film, or again after a quality change).
   function noteConversion(stream) {
@@ -717,6 +755,13 @@
       player.showTextTrack(null);
       if (S.burnIndex >= 0) { reloadStream({ subtitle: -1 }); }
       toast("Subtitles off");
+    } else if (track.kind === "embedded") {
+      // A picture subtitle inside the file: the TV app draws it (bridge v6); nothing is burned in.
+      if (!player.canDrawEmbeddedSubtitles) { toast("This subtitle needs the newest TV app"); return; }
+      S.textIndex = index;
+      player.showTextTrack(index);
+      toast("Subtitles: " + track.label);
+      if (S.burnIndex >= 0) { reloadStream({ subtitle: -1 }); }
     } else if (track.kind === "image") {
       S.textIndex = null;
       player.showTextTrack(null);
@@ -1125,6 +1170,11 @@
       showError(err.message);
     }
   }
+  // The default track may be a disc (embedded) one, which only an app with bridge v6 can draw.
+  function defaultSubtitleUsable(stream) {
+    var t = (stream.subtitle_tracks || []).filter(function (x) { return x.index === stream.default_subtitle_index; })[0];
+    return !!t && (t.kind !== "embedded" || !!player.canDrawEmbeddedSubtitles);
+  }
   function begin(stream, at) {
     if (isNativeV1 && S.nextPromise) {
       // The old native player shows "Next: ..." from the label we hand it, so wait (briefly) for the lookup.
@@ -1133,8 +1183,8 @@
       Promise.race([pending, new Promise(function (resolve) { setTimeout(resolve, 1500); })]).then(function () { begin(stream, at); });
       return;
     }
-    // M4: the person's own default subtitles (a text track; picture subtitles were burned in by the server).
-    if (stream.default_subtitle_index >= 0 && !S.defaultSubDone) { S.textIndex = stream.default_subtitle_index; }
+    // M4: the person's own default subtitles (a text track, or on the TV a disc track the app draws; for the browser picture subtitles were burned in by the server).
+    if (stream.default_subtitle_index >= 0 && !S.defaultSubDone && defaultSubtitleUsable(stream)) { S.textIndex = stream.default_subtitle_index; }
     S.defaultSubDone = true;
     applyStream(stream, at);
     if (!casting()) { playNow(); }   // the Chromecast starts by itself when the load request arrives

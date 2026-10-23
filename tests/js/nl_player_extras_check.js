@@ -129,5 +129,21 @@ for (const v of [3, 2, 1]) {
   check("TV v" + v + " app: speed is hidden and setSpeed is never called", e.player.canChangeSpeed === false && !e.calls.some((c) => c[0] === "setSpeed"), e.calls);
 }
 
+// ---- TV info panel (bridge v6)
+const full = X.infoLines({ source: "original", width: 3840, height: 2160, hdr: "HDR10", videoDecoder: "c2.mtk.hevc.decoder",
+  audioLabel: "English · 7.1 · TrueHD", audioPath: "decoded", audioChannels: 2, lastSeekMs: 940, droppedFrames: 0,
+  bufferedAheadSeconds: 12.4, bandwidthMbps: 294.2, memoryMb: 310.4 });
+check("info: original file first", full[0] === "Original file", full);
+check("info: sound decoded and mixed for TV speakers", full.indexOf("Sound: decoded on the TV, mixed for TV speakers") >= 0, full);
+check("info: last jump in seconds with one decimal", full.indexOf("Last jump: 0.9 s") >= 0, full);
+check("info: dropped frames, loaded ahead, memory", full.indexOf("Dropped frames: 0") >= 0 && full.indexOf("Loaded ahead: 12 s") >= 0
+  && full.indexOf("App memory: 310 MB") >= 0, full);
+check("info: picture line", full.indexOf("Picture: 3840×2160, HDR10") >= 0, full);
+const pass = X.infoLines({ source: "converted", audioPath: "passthrough", lastSeekMs: -1 });
+check("info: passthrough and converted copy and no jump yet", pass[0].indexOf("Converted copy") === 0
+  && pass.indexOf("Sound: sent to speakers untouched") >= 0 && pass.indexOf("Last jump: none yet") >= 0, pass);
+check("info: 6 decoded channels", X.infoLines({ audioPath: "decoded", audioChannels: 6 }).indexOf("Sound: decoded on the TV, 6 channels out") >= 0);
+check("info: empty stats still give lines", X.infoLines(null).length >= 3);
+
 if (failed) { console.log(failed + " FAILED"); process.exit(1); }
 console.log("all player extras checks passed");
