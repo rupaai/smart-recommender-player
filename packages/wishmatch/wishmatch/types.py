@@ -92,3 +92,5 @@ class Pick:
     match: float
     taste: float
     reasons: List[str] = field(default_factory=list)
+    crowd: float = 0.0                         # -1..1, liked by fans of what the people liked
+    because: Any = None                        # the liked item that pulled this in most (crowd), if any

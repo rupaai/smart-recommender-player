@@ -9,7 +9,7 @@ Wishmatch: read the wish, choose candidates, score them, explain each pick.
 score = weights.match x fit to the wish
       + weights.taste x fit to the people's taste
       + weights.quality x the crowd's opinion
-      + weights.crowd x liked by similar people
+      + weights.crowd x liked by fans of what the people liked (crowd.py)
 """
 
 from __future__ import annotations
@@ -18,10 +18,11 @@ from typing import Any, Dict, List, Optional
 
 from . import candidates as cand
 from .explain import reasons as explain
+from .crowd import CrowdScores, crowd_scores, extra_candidates
 from .matcher import match
 from .profiles import Population, Taste, build_taste, combine
 from .settings import merged
-from .types import Item, Pick, Request, Wish
+from .types import Item, Pick, Reaction, Request, Wish
 from .wish import read_wish
 
 
@@ -61,13 +62,27 @@ class Wishmatch:
         settings = settings or self.settings()
         return read_wish(text, self.adapter.vocabulary(), settings["lexicon"])
 
-    def tastes(self, people: List[Any], pop: Population, settings: Dict[str, Any]) -> List[Taste]:
+    def tastes(self, people: List[Any], pop: Population, settings: Dict[str, Any],
+               reactions: Optional[Dict[Any, List[Reaction]]] = None) -> List[Taste]:
         out = []
         for person in people:
-            reactions = self.adapter.reactions(person)
-            described = self.adapter.describe([r.item_id for r in reactions]) if reactions else {}
-            out.append(build_taste(reactions, described, pop, settings))
+            person_reactions = (reactions or {}).get(person)
+            if person_reactions is None:
+                person_reactions = self.adapter.reactions(person)
+            described = self.adapter.describe([r.item_id for r in person_reactions]) if person_reactions else {}
+            out.append(build_taste(person_reactions, described, pop, settings))
         return out
+
+    def crowd(self, people: List[Any], reactions: Dict[Any, List[Reaction]], settings: Dict[str, Any]) -> List[CrowdScores]:
+        """Each person's crowd scores (empty when the adapter has no crowd data or the weight is 0)."""
+        if not float(settings["weights"]["crowd"]):
+            return []
+        reacted = sorted({r.item_id for p in people for r in reactions.get(p, [])}, key=str)
+        neighbours = self.adapter.crowd(reacted) if reacted else {}
+        if not neighbours:
+            return []
+        shrink = float(settings["crowd"]["shrink"])
+        return [crowd_scores(reactions.get(p, []), neighbours, shrink) for p in people]
 
     def recommend(self, request: Request, wish: Optional[Wish] = None) -> Dict[str, Any]:
         """{"picks": [Pick, ...], "wish": Wish, "candidates": {kind: count}}.
@@ -77,16 +92,36 @@ class Wishmatch:
         settings = self.settings()
         vocab = self.adapter.vocabulary()
         wish = wish or read_wish(request.text, vocab, settings["lexicon"])
-        pools = cand.choose(self.adapter.items(request), settings, kinds=request.kinds,
-                            hidden_gems=wish.hidden_gems, only_ids=request.only_ids is not None)
+        only = request.only_ids is not None
+        available = list(self.adapter.items(request))
+        pools = cand.choose(available, settings, kinds=request.kinds, hidden_gems=wish.hidden_gems, only_ids=only)
+
+        reactions = {p: self.adapter.reactions(p) for p in request.people}
+        crowds = self.crowd(request.people, reactions, settings)
+        crowd_added = 0
+        if crowds and not only:
+            # The crowd's strongest suggestions join the pool even when they missed the popularity cut.
+            cfg = settings["crowd"]
+            chosen = {it.id for pool in pools.values() for it in pool}
+            known = set(settings["candidates"]["hidden_gem_known" if wish.hidden_gems else "known"])
+            by_id = {it.id: it for it in available}
+            for item_id in extra_candidates(crowds, int(cfg["extra_candidates"]), float(cfg["min_score"])):
+                it = by_id.get(item_id)
+                if it is None or item_id in chosen or it.known not in known:
+                    continue
+                if request.kinds and it.kind not in request.kinds:
+                    continue
+                pools.setdefault(it.kind, []).append(it)
+                chosen.add(item_id)
+                crowd_added += 1
+
         items: List[Item] = [it for pool in pools.values() for it in pool]
         if not items:
-            return {"picks": [], "wish": wish, "candidates": {}}
+            return {"picks": [], "wish": wish, "candidates": {}, "crowd_added": 0}
 
         pop = Population.of(items)
-        tastes = self.tastes(request.people, pop, settings)
+        tastes = self.tastes(request.people, pop, settings, reactions)
         w = settings["weights"]
-        crowd = self.adapter.crowd([it.id for it in items]) if float(w["crowd"]) else {}
         max_reasons = int(settings["explain"]["max_reasons"])
         hidden = {t for g in settings["explain"].get("hide_groups") or [] for t in vocab.tags.get(g, [])}
 
@@ -97,12 +132,17 @@ class Wishmatch:
             taste = combine([s for s, _ in scored], request.together, settings)
             taste_words = scored[0][1] if scored and not request.together else \
                 [g for g in (scored[0][1] if scored else []) if all(g in words for _, words in scored)]
+            crowd_parts = [c.get(it.id) for c in crowds]
+            crowd = combine([v for v, _ in crowd_parts], request.together, settings) if crowd_parts else 0.0
+            because = crowd_parts[0][1] if crowd_parts and crowd > 0 else None
             score = (float(w["match"]) * fit + float(w["taste"]) * taste
-                     + float(w["quality"]) * it.quality + float(w["crowd"]) * float(crowd.get(it.id, 0.0)))
+                     + float(w["quality"]) * it.quality + float(w["crowd"]) * crowd)
             picks.append(Pick(item=it, score=round(score, 4), match=round(fit, 3), taste=round(taste, 3),
+                              crowd=round(crowd, 3), because=because,
                               reasons=explain([x for x in match_words if x not in hidden],
                                               [x for x in taste_words if x not in hidden], max_reasons)))
         picks.sort(key=lambda p: -p.score)
         if len(pools) > 1 and not request.kinds:
             picks = mix_kinds(picks, settings.get("mix") or {})
-        return {"picks": picks, "wish": wish, "candidates": {k: len(v) for k, v in pools.items()}}
+        return {"picks": picks, "wish": wish, "candidates": {k: len(v) for k, v in pools.items()},
+                "crowd_added": crowd_added}

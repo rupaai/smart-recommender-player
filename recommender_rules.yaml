@@ -313,10 +313,15 @@ wishmatch:
     match: 1.0
     taste: 0.6
     quality: 0.3
-    crowd: 0.0          # MovieLens, from build step 3
+    crowd: 0.4          # liked by MovieLens fans of what you liked (films only)
     trait: 1.0          # inside the match: a mood dial the wish names
     tag: 1.0            # inside the match: a feeling or occasion the wish names
     avoid_tag: 1.0      # inside the match: something the wish does not want
+  # MovieLens crowd (training/build_wishmatch_crowd.py builds it at Train time).
+  crowd:
+    shrink: 1.0             # similarity needed before a crowd score counts fully
+    extra_candidates: 300   # strongest crowd suggestions added beyond the 2,000 best-known titles
+    min_score: 0.3          # crowd score a title needs to be added that way
   people:
     other_weight: 0.2       # alone: the other person's taste counts this much
     together_dislike: 0.5   # together: push down by this x how much the less keen of you dislikes it

@@ -24,7 +24,7 @@ from services import vibe_vocab  # noqa: E402
 from services.generative_retriever import route_recommend  # noqa: E402
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService  # noqa: E402
 from services.wishmatch_movies import EngineSwitch, WishmatchMovies  # noqa: E402
-from services.wishmatch_movies.adapter import load_wishmatch_rules  # noqa: E402
+from services.wishmatch_movies.adapter import MovieAdapter, load_wishmatch_rules  # noqa: E402
 from services.wishmatch_movies.router import engine_name  # noqa: E402
 
 failures = []
@@ -105,7 +105,8 @@ def titles(out):
 def main():
     db = catalogue()
     ids = ids_by_title(db)
-    wm = WishmatchMovies(db, MOOD_MAPPINGS)
+    crowd_file = os.path.join(tempfile.mkdtemp(), "crowd.json")   # absent until section 9
+    wm = WishmatchMovies(db, MOOD_MAPPINGS, adapter=MovieAdapter(db, crowd_file=crowd_file))
 
     print("\n[1] Films and shows both appear when no type is chosen")
     out = wm.recommend(media_type=None, page_size=20)
@@ -213,6 +214,27 @@ def main():
     check("engine_name reads config and refuses unknown names",
           engine_name({"engine": "WishMatch"}) == "wishmatch" and engine_name({"engine": "x"}) == "legacy"
           and engine_name({}) == "legacy")
+
+    print("\n[9] The MovieLens crowd")
+    check("no crowd file: no crowd data, nothing breaks", wm.status()["crowd"]["films"] == 0, wm.status()["crowd"])
+    # Fans of Funny Film 0 (which 'me' loved) also loved Tense Film 11, an unlikely pick for a funny-film fan.
+    before = titles(wm.recommend(media_type="movie", profile="me", page_size=50))
+    with open(crowd_file, "w", encoding="utf-8") as f:
+        json.dump({"built_at": "2026-10-23", "neighbours": {str(ids["Funny Film 0"]): [[ids["Tense Film 11"], 0.9]]}}, f)
+    out = wm.recommend(media_type="movie", profile="me", page_size=50)
+    check("the crowd file is read when it appears", wm.status()["crowd"]["films"] == 1, wm.status()["crowd"])
+    by = {i["title"]: i for i in out["items"]}
+    tense11 = by.get("Tense Film 11") or {}
+    check("a film the crowd links to one you loved gets a crowd score", tense11.get("crowd_fit", 0) > 0, tense11)
+    check("its reason names the film you loved", "fans of Funny Film 0 loved it" in tense11.get("taste_reasons", []),
+          tense11.get("taste_reasons"))
+    check("and it moves up", titles(out).index("Tense Film 11") < before.index("Tense Film 11"),
+          (titles(out).index("Tense Film 11"), before.index("Tense Film 11")))
+    with open(crowd_file, "w", encoding="utf-8") as f:
+        f.write("not json")
+    os.utime(crowd_file, (1, 1))
+    check("a broken crowd file is ignored", wm.recommend(media_type="movie", profile="me")["items"]
+          and wm.status()["crowd"]["films"] == 0, wm.status()["crowd"])
 
     print("\n[8] The wishmatch: rules only use vocabulary words")
     rules = load_wishmatch_rules()

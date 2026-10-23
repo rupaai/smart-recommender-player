@@ -460,7 +460,7 @@ def test_recommend_only_ids_keeps_all_given():
 
 def test_recommend_no_items_returns_empty():
     result = Wishmatch(FakeAdapter()).recommend(Request(text="funny", only_ids=[]))
-    assert result == {"picks": [], "wish": result["wish"], "candidates": {}}
+    assert result["picks"] == [] and result["candidates"] == {}
 
 
 def test_recommend_accepts_prebuilt_wish():
@@ -531,6 +531,54 @@ def test_merged_non_dict_value_replaces_and_unknown_key_added():
     s = merged({"mix": {"movie": 1.0}, "extra": 5})
     assert s["mix"] == {"movie": 1.0}
     assert s["extra"] == 5
+
+
+# ---------------------------------------------------------------- 7. crowd
+
+def test_crowd_scores_follow_liked_and_disliked_neighbours():
+    from wishmatch.crowd import crowd_scores
+    nb = {"a": {"x": 0.9, "y": 0.2}, "b": {"y": 0.8}}
+    s = crowd_scores([Reaction("a", 1.0), Reaction("b", -1.0)], nb, shrink=1.0)
+    assert s.score["x"] > 0.4 and s.because["x"] == "a"
+    assert s.score["y"] < 0
+    assert s.get("z") == (0.0, None)
+
+
+def test_extra_candidates_best_first_above_floor():
+    from wishmatch.crowd import CrowdScores, extra_candidates
+    a = CrowdScores(score={"x": 0.9, "y": 0.2})
+    b = CrowdScores(score={"z": 0.5, "x": 0.1})
+    assert extra_candidates([a, b], limit=5, min_score=0.3) == ["x", "z"]
+    assert extra_candidates([a, b], limit=1, min_score=0.3) == ["x"]
+
+
+class CrowdAdapter(FakeAdapter):
+    """m3 is a crowd favourite of fans of m0; m12 is somewhat known and misses a tiny popularity cut."""
+    NB = {"m0": {"m3": 0.9, "m12": 0.9, "m19": 0.9}}
+
+    def crowd(self, item_ids):
+        return {i: self.NB[i] for i in item_ids if i in self.NB}
+
+
+def test_engine_uses_crowd_and_adds_crowd_candidates():
+    rules = merged(RULES)
+    rules["candidates"] = {**rules["candidates"], "total": 5, "kinds": {"movie": 1.0}}
+    rules["weights"] = {**rules["weights"], "crowd": 1.0}
+    ad = CrowdAdapter(rules=rules, reactions={1: [Reaction("m0", 1.0)]})
+    out = Wishmatch(ad).recommend(Request(people=[1], kinds=["movie"]))
+    ids = [p.item.id for p in out["picks"]]
+    assert "m12" in ids and out["crowd_added"] >= 1, ids        # pulled in past the popularity cut
+    assert "m19" not in ids                                       # "not" known: still left out
+    by = {p.item.id: p for p in out["picks"]}
+    assert by["m3"].crowd > 0 and by["m3"].because == "m0"
+    others = [p for p in out["picks"] if p.item.id not in ("m3", "m12")]
+    assert all(by["m3"].score > p.score for p in others if p.item.traits == by["m3"].item.traits)
+
+
+def test_engine_without_crowd_weight_skips_crowd():
+    ad = CrowdAdapter(reactions={1: [Reaction("m0", 1.0)]})
+    out = Wishmatch(ad).recommend(Request(people=[1], kinds=["movie"]))
+    assert out["crowd_added"] == 0 and all(p.crowd == 0.0 for p in out["picks"])
 
 
 if __name__ == "__main__":
