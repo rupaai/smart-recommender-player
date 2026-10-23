@@ -339,6 +339,10 @@ sudo ss -ltnp 'sport = :8096 or sport = :9696'
 
 To also remove the runner from GitHub, delete it under the repository's Settings, Actions, Runners. `/srv/couchcinema` still holds the old data; keep it until you have checked that the move worked.
 
+## Contributing
+
+Want to help? Start with [CONTRIBUTING.md](CONTRIBUTING.md). It covers GitHub setup, running the tests, and how to open a PR.
+
 ## 📄 License
 
 MIT License. Designed with privacy, zero cloud dependence, and efficiency in mind.
