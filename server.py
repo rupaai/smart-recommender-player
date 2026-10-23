@@ -547,10 +547,13 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
     if popup is not None:
         # "Show more" after the questions pop-up: page through the same
         # answered pool instead of starting over.
-        results = await asyncio.to_thread(
-            recommender_service.finalize, popup.ranked(), req.page, effective_page_size,
-            spread_exempt=_spread_exempt(popup))
-        results["engine"] = "legacy"
+        if hasattr(popup, "page"):     # a Wishmatch questions session keeps its own order
+            results = await asyncio.to_thread(popup.page, req.page, effective_page_size)
+        else:
+            results = await asyncio.to_thread(
+                recommender_service.finalize, popup.ranked(), req.page, effective_page_size,
+                spread_exempt=_spread_exempt(popup))
+            results["engine"] = "legacy"
     else:
         # Engine switch (recommender.engine): legacy / tiger / wishmatch, each falling back to the
         # untouched legacy recommender. Per-item exclusion is applied after routing so it works for all.
@@ -678,8 +681,12 @@ def _spread_exempt(popup: Any) -> set:
 
 
 def _popup_response(popup: Any, page_size: int, vibe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    results = recommender_service.finalize(popup.ranked(), 1, page_size, spread_exempt=_spread_exempt(popup))
-    results.update({"engine": "legacy", "session_id": popup.id, "question": popup.public_question()})
+    if hasattr(popup, "page"):         # Wishmatch questions session (step 5)
+        results = popup.page(1, page_size)
+    else:
+        results = recommender_service.finalize(popup.ranked(), 1, page_size, spread_exempt=_spread_exempt(popup))
+        results["engine"] = "legacy"
+    results.update({"session_id": popup.id, "question": popup.public_question()})
     moods = _mood_list(popup)
     if moods is not None:
         results["moods"] = moods
@@ -695,11 +702,35 @@ def _popup_response(popup: Any, page_size: int, vibe: Optional[Dict[str, Any]] =
     return results
 
 
+def _wishmatch_discover_start(req: DiscoverStartRequest, kwargs: Dict[str, Any], page_size: int) -> Dict[str, Any]:
+    """Discover with questions picked for this request (Wishmatch step 5)."""
+    session_id = db.create_discover_session(
+        profile=req.profile, media_type=req.media_type, query_text=req.query,
+        request=req.model_dump(exclude={"session_id", "exclude_ids", "page", "page_size", "top_n"}),
+        engine="wishmatch+questions",
+    )
+    popup = wishmatch_movies.session(session_id, {**kwargs, "explicit_genres": req.genres})
+    if req.ask:
+        popup.next_question()
+    popup.done = popup.current is None
+    popup_sessions.put(popup)
+    out = _popup_response(popup, page_size)
+    if req.ask:
+        out["question_skipped"] = None if popup.current is not None else (
+            "no_results" if not popup.picks else "picks_agree")
+    return out
+
+
 @app.post("/api/discover/start")
 async def discover_start(req: DiscoverStartRequest) -> Dict[str, Any]:
     """First results plus, when asking is on, the first question (always)."""
     page_size = req.top_n if req.top_n is not None else req.page_size
     kwargs = _recommend_kwargs(req, page_size)
+    if recommender.engine == "wishmatch":
+        try:
+            return await asyncio.to_thread(_wishmatch_discover_start, req, kwargs, page_size)
+        except Exception as e:  # noqa: BLE001 - fall back to the mood-map pop-up
+            print(f"[Router] Wishmatch questions failed ({e}); using the mood-map pop-up.", flush=True)
     res = await asyncio.to_thread(recommender_service.recommend, **{**kwargs, "page": 1}, return_pool=True)
     pool = res.get("pool") or []
     session_id = db.create_discover_session(

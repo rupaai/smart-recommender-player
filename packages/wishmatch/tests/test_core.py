@@ -668,6 +668,63 @@ def test_ollama_client_fails_quietly_without_a_server():
     assert c.status()["reachable"] is False
 
 
+# ---------------------------------------------------------------- 9. questions
+
+def _picks(items):
+    from wishmatch.types import Pick
+    return [Pick(item=it, score=1.0 - i * 0.01, match=0.0, taste=0.0) for i, it in enumerate(items)]
+
+
+def test_question_asks_about_a_trait_the_picks_split_on():
+    from wishmatch.questions import next_question
+    items = [mk(f"x{i}", traits={"humour": 0.9 if i % 2 else 0.1, "energy": 0.5}) for i in range(20)]
+    q = next_question(_picks(items), Wish(), VOCAB, merged(RULES), set())
+    assert q and q["id"] == "trait:humour" and [o["id"] for o in q["options"]] == ["low", "high"]
+    assert all(len(o["examples"]) == 2 for o in q["options"])
+
+
+def test_no_question_on_what_the_wish_already_says_or_when_picks_agree():
+    from wishmatch.questions import next_question
+    items = [mk(f"x{i}", traits={"humour": 0.9 if i % 2 else 0.1}) for i in range(20)]
+    assert next_question(_picks(items), Wish(traits={"humour": 0.9}), VOCAB, merged(RULES), set()) is None
+    same = [mk(f"y{i}", traits={"humour": 0.8}, tags={"cozy"}) for i in range(20)]
+    assert next_question(_picks(same), Wish(), VOCAB, merged(RULES), set()) is None
+
+
+def test_tag_question_offers_tags_that_split_the_picks():
+    from wishmatch.questions import next_question
+    items = [mk(f"z{i}", traits={"humour": 0.7}, tags={"silly"} if i % 2 else {"witty"}) for i in range(20)]
+    q = next_question(_picks(items), Wish(), VOCAB, merged(RULES), set())
+    assert q and q["kind"] == "tags" and {o["id"] for o in q["options"]} == {"silly", "witty"}
+
+
+def test_question_limit_and_asked_ones_are_respected():
+    from wishmatch.questions import next_question
+    items = [mk(f"x{i}", traits={"humour": 0.9 if i % 2 else 0.1}) for i in range(20)]
+    s = merged(RULES)
+    assert next_question(_picks(items), Wish(), VOCAB, s, {"trait:humour"}) is None
+    assert next_question(_picks(items), Wish(), VOCAB, s, {"a", "b"}) is None      # max 2 already asked
+
+
+def test_answer_narrows_the_wish_at_half_weight():
+    from wishmatch.questions import apply_answer, next_question
+    items = [mk(f"x{i}", traits={"humour": 0.9 if i % 2 else 0.1}) for i in range(20)]
+    q = next_question(_picks(items), Wish(), VOCAB, merged(RULES), set())
+    w = apply_answer(Wish(tags={"cozy"}, tag_sets=[{"cozy"}]), q, "high")
+    assert w.traits == {"humour": 0.8} and w.weights["humour"] == 0.5
+    assert apply_answer(w, q, "skip") is w
+    try:
+        apply_answer(w, q, "nope")
+        raise AssertionError("an unknown option must be refused")
+    except ValueError:
+        pass
+    # the typed phrase still counts twice as much as the answer
+    funny_not_cozy = mk("a", traits={"humour": 0.8})
+    cozy_not_funny = mk("b", traits={"humour": 0.1}, tags={"cozy"})
+    s = merged(RULES)
+    assert match(cozy_not_funny, w, s, VOCAB)[0] > match(funny_not_cozy, w, s, VOCAB)[0]
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     tests.sort(key=lambda p: p[1].__code__.co_firstlineno)
