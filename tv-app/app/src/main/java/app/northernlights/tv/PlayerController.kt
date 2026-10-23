@@ -268,7 +268,9 @@ class PlayerController(
         clearPendingSeek()
 
         val mediaSourceFactory = DefaultMediaSourceFactory(activity)
-            .setDataSourceFactory(PlaybackCache.dataSourceFactory(activity))
+            .setDataSourceFactory(
+                if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
+            )
         val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
