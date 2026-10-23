@@ -6,10 +6,12 @@ The package knows nothing about any one project. A project supplies an adapter
 
 from .adapter import Adapter
 from .engine import Wishmatch, mix_kinds
+from .llm import LLMWishReader, word_question
+from .ollama import OllamaClient
 from .settings import DEFAULTS, merged
 from .types import Item, Pick, Reaction, Request, Vocabulary, Wish
 from .wish import read_wish
 
-__all__ = ["Adapter", "Wishmatch", "mix_kinds", "DEFAULTS", "merged", "Item", "Pick", "Reaction",
+__all__ = ["Adapter", "Wishmatch", "mix_kinds", "LLMWishReader", "word_question", "OllamaClient", "DEFAULTS", "merged", "Item", "Pick", "Reaction",
            "Request", "Vocabulary", "Wish", "read_wish"]
 __version__ = "0.1.0"

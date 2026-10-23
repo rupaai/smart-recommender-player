@@ -52,15 +52,26 @@ def mix_kinds(ranked: List[Pick], shares: Dict[str, float]) -> List[Pick]:
 
 
 class Wishmatch:
-    def __init__(self, adapter: Any):
+    def __init__(self, adapter: Any, reader: Any = None):
+        """reader: an optional model-based wish reader (llm.LLMWishReader); without one, or when it
+        fails, wishes are read with the plain word lookup."""
         self.adapter = adapter
+        self.reader = reader
 
     def settings(self) -> Dict[str, Any]:
         return merged(self.adapter.rules())
 
     def read(self, text: str, settings: Optional[Dict[str, Any]] = None) -> Wish:
         settings = settings or self.settings()
-        return read_wish(text, self.adapter.vocabulary(), settings["lexicon"])
+        vocab = self.adapter.vocabulary()
+        lookup = read_wish(text, vocab, settings["lexicon"])
+        if self.reader is None or not (text or "").strip():
+            return lookup
+        try:
+            return self.reader.read(text, vocab, lookup)
+        except Exception as e:  # noqa: BLE001 - the model is optional; the lookup always answers
+            print(f"[Wishmatch] Model wish reader failed ({e}); using the word lookup.", flush=True)
+            return lookup
 
     def tastes(self, people: List[Any], pop: Population, settings: Dict[str, Any],
                reactions: Optional[Dict[Any, List[Reaction]]] = None) -> List[Taste]:
@@ -91,7 +102,7 @@ class Wishmatch:
         interleaved so each kind keeps its share (see mix_kinds). The caller slices the list."""
         settings = self.settings()
         vocab = self.adapter.vocabulary()
-        wish = wish or read_wish(request.text, vocab, settings["lexicon"])
+        wish = wish or self.read(request.text, settings)
         only = request.only_ids is not None
         available = list(self.adapter.items(request))
         pools = cand.choose(available, settings, kinds=request.kinds, hidden_gems=wish.hidden_gems, only_ids=only)

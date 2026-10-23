@@ -254,6 +254,15 @@ async def resume_downloads() -> None:
 
 
 @app.on_event("startup")
+async def start_wishmatch() -> None:
+    """Asks Ollama (if configured) to download Wishmatch's wish-reader model once, in the background."""
+    try:
+        wishmatch_movies.start()
+    except Exception as e:  # noqa: BLE001
+        print(f"[Wishmatch] Wish reader setup skipped ({e}); the word lookup still works.", flush=True)
+
+
+@app.on_event("startup")
 async def start_media_cleanup() -> None:
     """Once a day (the first time 10 minutes after start), when media_cleanup.enabled is on."""
     if not media_cleanup.public()["enabled"]:

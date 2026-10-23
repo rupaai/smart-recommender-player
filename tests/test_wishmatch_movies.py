@@ -236,6 +236,28 @@ def main():
     check("a broken crowd file is ignored", wm.recommend(media_type="movie", profile="me")["items"]
           and wm.status()["crowd"]["films"] == 0, wm.status()["crowd"])
 
+    print("\n[10] The wish reader (Ollama)")
+    os.environ.pop("OLLAMA_URL", None)
+    check("no OLLAMA_URL: word lookup only", wm.ollama is None and wm.status()["wish_reader"] == {"enabled": False},
+          wm.status()["wish_reader"])
+    os.environ["OLLAMA_URL"] = "http://127.0.0.1:9"       # nothing listens here
+    wm2 = WishmatchMovies(db, MOOD_MAPPINGS, adapter=MovieAdapter(db, crowd_file=crowd_file))
+    out = wm2.recommend(query="make me laugh", media_type="movie", page_size=5)
+    check("Ollama down: searches still answer, read by the lookup",
+          out["items"] and out["wish"]["source"] == "lookup", out["wish"])
+    check("status says Ollama can't be reached", wm2.status()["wish_reader"]["reachable"] is False,
+          wm2.status()["wish_reader"])
+    pulls = []
+    wm2.ollama.ensure_model = lambda background=True: pulls.append(1)
+    os.environ["HOMELAB_ENV"] = "dev"
+    wm2.start()
+    check("dev never downloads the model", pulls == [], pulls)
+    os.environ["HOMELAB_ENV"] = "prod"
+    wm2.start()
+    check("prod asks Ollama for the model once at start", pulls == [1], pulls)
+    os.environ.pop("HOMELAB_ENV", None)
+    os.environ.pop("OLLAMA_URL", None)
+
     print("\n[8] The wishmatch: rules only use vocabulary words")
     rules = load_wishmatch_rules()
     lex = rules.get("lexicon") or {}
