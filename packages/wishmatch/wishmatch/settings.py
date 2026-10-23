@@ -31,6 +31,12 @@ DEFAULTS: Dict[str, Any] = {
         "tag": 1.0,                  # inside the match: a tag the wish names
         "avoid_tag": 1.0,            # inside the match: a tag the wish does not want
     },
+    # The crowd (crowd.py): items that fans of what the people liked also liked.
+    "crowd": {
+        "shrink": 1.0,               # similarity needed before a crowd score counts fully
+        "extra_candidates": 300,     # strongest crowd suggestions added to the pool beyond the popularity cut
+        "min_score": 0.3,            # crowd score an item needs to be added that way
+    },
     # Whose taste counts and how much.
     "people": {
         "other_weight": 0.2,         # alone: the other person's taste at this weight

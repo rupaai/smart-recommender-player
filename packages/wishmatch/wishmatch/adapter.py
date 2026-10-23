@@ -28,8 +28,9 @@ class Adapter(Protocol):
     def reactions(self, person: Any) -> List[Reaction]:
         """What this person liked or disliked, -1..+1."""
 
-    def crowd(self, item_ids: List[Any]) -> Dict[Any, float]:
-        """Items liked by people with similar taste, scored 0..1. Return {} if there is no crowd data."""
+    def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
+        """For each of these items, the items its fans also liked: {item: {other item: similarity 0..1}}.
+        Return {} if there is no crowd data."""
 
     def rules(self) -> Dict[str, Any]:
         """The settings (weights, pool sizes, word lookup). See settings.DEFAULTS for the keys."""

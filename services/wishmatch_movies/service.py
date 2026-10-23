@@ -5,7 +5,7 @@ picks back into the result shape every screen already reads.
 `recommend(**kwargs)` takes the same arguments as the legacy
 RecommenderService.recommend, so it can stand in for it on any screen. Each
 returned item is the full catalogue row plus:
-  wishmatch_score, wish_match, taste_fit   the score and its two main parts
+  wishmatch_score, wish_match, taste_fit, crowd_fit   the score and its main parts
   taste_reasons                            the reason words (the cards already show this field)
   vibe                                     Haiku's one-line description
 """
@@ -72,15 +72,23 @@ class WishmatchMovies:
     def rows(self, picks: List[Any]) -> List[Dict[str, Any]]:
         """Full catalogue rows for these picks, in order, with the Wishmatch fields added."""
         ids = [p.item.id for p in picks]
-        rows = self.db.get_items_by_ids(ids) if ids else {}
+        because_ids = [p.because for p in picks if p.because is not None]
+        rows = self.db.get_items_by_ids(list(set(ids) | set(because_ids))) if ids else {}
+        max_reasons = int((self.adapter.rules().get("explain") or {}).get("max_reasons", 3))
         out = []
         for p in picks:
             row = dict(rows.get(p.item.id) or {"id": p.item.id, "media_type": p.item.kind})
+            reasons = list(p.reasons)
+            because = rows.get(p.because) if p.because is not None else None
+            if because and because.get("title"):
+                # The crowd's reason: fans of a film you loved also loved this one.
+                reasons = reasons[:max(0, max_reasons - 1)] + [f"fans of {because['title']} loved it"]
             row.update({
                 "wishmatch_score": p.score,
                 "wish_match": p.match,
                 "taste_fit": p.taste,
-                "taste_reasons": list(p.reasons),
+                "crowd_fit": p.crowd,
+                "taste_reasons": reasons,
                 "vibe": p.item.vibe,
             })
             out.append(row)
@@ -125,4 +133,4 @@ class WishmatchMovies:
         for item in catalogue.values():
             by_known = counts.setdefault(item.kind, {})
             by_known[item.known] = by_known.get(item.known, 0) + 1
-        return {"tagged_titles": len(catalogue), "by_type": counts}
+        return {"tagged_titles": len(catalogue), "by_type": counts, "crowd": self.adapter.crowd_status()}

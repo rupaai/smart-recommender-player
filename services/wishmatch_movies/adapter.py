@@ -6,6 +6,7 @@ The movie adapter: films and shows as Wishmatch items.
   filters: already seen, typed genre names ("comedy", "no horror"), a named place
   ("korean"), the foreign-title rule, genre chips, era, length, rating floor;
 - reactions: ratings and verdicts (rating_details.taste_score, else the 1-10 rating);
+- crowd: MovieLens neighbours (films their fans also liked), from <MODELS_DIR>/wishmatch/crowd.json;
 - rules: the wishmatch: section of recommender_rules.yaml.
 
 The tagged catalogue is read once and kept in memory; it is read again when the
@@ -15,6 +16,7 @@ number of tagged titles changes (checked at most every `refresh_seconds`).
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import threading
@@ -23,6 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 
 from wishmatch import Item, Reaction, Request, Vocabulary
 
+from services import paths as model_paths
 from services import vibe_vocab
 from services.recommender_rules import RULES, foreign_gate, passes_foreign_gate, rules_path, word_index
 from services.recommender_service import parse_origin_intent
@@ -57,9 +60,14 @@ def _genres(csv: Optional[str]) -> Set[str]:
 class MovieAdapter:
     """Wishmatch's view of the catalogue. `db` is the app's DatabaseManager."""
 
-    def __init__(self, db: Any, rules_file: Optional[str] = None, refresh_seconds: float = 300.0):
+    def __init__(self, db: Any, rules_file: Optional[str] = None, refresh_seconds: float = 300.0,
+                 crowd_file: Optional[str] = None):
         self.db = db
         self.rules_file = rules_file
+        self.crowd_file = crowd_file
+        self._crowd: Dict[int, Dict[int, float]] = {}
+        self._crowd_mtime: Optional[float] = None
+        self._crowd_built_at: Optional[str] = None
         self.refresh_seconds = refresh_seconds
         self._lock = threading.Lock()
         self._items: Dict[int, Item] = {}
@@ -167,8 +175,38 @@ class MovieAdapter:
             out.append(Reaction(item_id=int(r["id"]), score=max(-1.0, min(1.0, score))))
         return out
 
-    def crowd(self, item_ids: List[Any]) -> Dict[Any, float]:
-        return {}   # MovieLens comes in build step 3
+    def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
+        """Films that fans of these films also liked, from MovieLens (crowd.json in the model bundle,
+        built by training/build_wishmatch_crowd.py at Train time). No file = no crowd data."""
+        table = self._crowd_table()
+        return {i: table[i] for i in item_ids if i in table}
+
+    def crowd_status(self) -> Dict[str, Any]:
+        table = self._crowd_table()
+        return {"films": len(table), "path": self._crowd_path(), "built_at": self._crowd_built_at}
+
+    def _crowd_path(self) -> str:
+        return self.crowd_file or os.path.join(model_paths.models_dir(), "wishmatch", "crowd.json")
+
+    def _crowd_table(self) -> Dict[int, Dict[int, float]]:
+        path = self._crowd_path()
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            self._crowd, self._crowd_mtime, self._crowd_built_at = {}, None, None
+            return self._crowd
+        if mtime != self._crowd_mtime:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self._crowd = {int(k): {int(o): float(sim) for o, sim in v}
+                               for k, v in (data.get("neighbours") or {}).items()}
+                self._crowd_built_at = data.get("built_at")
+            except (OSError, ValueError, TypeError, AttributeError) as e:
+                print(f"[Wishmatch] Could not read {path} ({e}); running without crowd data.", flush=True)
+                self._crowd, self._crowd_built_at = {}, None
+            self._crowd_mtime = mtime
+        return self._crowd
 
     # --- this app's helpers --------------------------------------------------
     def people(self) -> List[int]:

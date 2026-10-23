@@ -152,6 +152,10 @@ if [ -n "$DO_TRAIN" ]; then
   DATABASE_PATH="$WORK/snapshot.db" uv run --with torch --with sentence-transformers --with onnx --with onnxscript \
     python training/build_vibe_index.py --out "$WORK/vibe" ${skip_export[@]+"${skip_export[@]}"} \
     || fail "train" "building the vibe index failed"
+  log "4. train: Wishmatch crowd (MovieLens)"
+  DATABASE_PATH="$WORK/snapshot.db" uv run python training/build_wishmatch_crowd.py \
+    --movielens training/data/ml-latest-small --db "$WORK/snapshot.db" --out "$WORK/wishmatch" \
+    || log "warning: the Wishmatch crowd build failed; Wishmatch works without crowd data"
 
   # ---- 5. evaluate ---------------------------------------------------------------
   log "5. evaluate"
@@ -168,9 +172,10 @@ if [ -n "$DO_TRAIN" ]; then
   log "5. evaluate: gate $GATE ($gate_msg)"
 
   # ---- 6. publish ------------------------------------------------------------------
+  wishmatch_arg=(); [ -f "$WORK/wishmatch/crowd.json" ] && wishmatch_arg=(--wishmatch "$WORK/wishmatch")
   BUNDLE="$BUNDLE_DIR/bundle-$TODAY-$(date +%H%M%S).tar.gz"
   "${CC[@]}" build-bundle "$BUNDLE" --metrics "$WORK/metrics.json" --tiger training/tiger --vibe "$WORK/vibe" \
-    --db-before "$WORK/snapshot.before.db" --db-after "$WORK/snapshot.db" --source-db "$WORK/snapshot.db" --gate "$GATE" \
+    ${wishmatch_arg[@]+"${wishmatch_arg[@]}"} --db-before "$WORK/snapshot.before.db" --db-after "$WORK/snapshot.db" --source-db "$WORK/snapshot.db" --gate "$GATE" \
     || fail "publish" "could not build the model bundle"
   bundles=("$BUNDLE_DIR"/bundle-*.tar.gz)   # names carry the date and time: keep the last 3
   if [ "${#bundles[@]}" -gt 3 ]; then rm -f "${bundles[@]:0:${#bundles[@]}-3}"; fi
