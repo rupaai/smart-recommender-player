@@ -15,6 +15,16 @@ class PlaybackLogicTest {
     }
 
     @Test
+    fun backBufferOnlyWhenMemoryAllows() {
+        val mb = 1024L * 1024L
+        // This TV with largeHeap: 384 MB cap, about 390 MB free before the buffer fills.
+        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES + BACK_BUFFER_BYTES, BACK_BUFFER_MS), bufferPlan(384 * mb, 390 * mb))
+        // Without largeHeap (192 MB) or with little free memory, Media3's defaults and no back buffer.
+        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES, 0), bufferPlan(192 * mb, 390 * mb))
+        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES, 0), bufferPlan(384 * mb, 150 * mb))
+    }
+
+    @Test
     fun sideLoadedIdsAreRecognised() {
         assertTrue(isSideLoadedSubtitleId("nlsub3"))
         assertTrue(isSideLoadedSubtitleId("1:nlsub3"))

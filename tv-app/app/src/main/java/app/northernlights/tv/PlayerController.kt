@@ -1,6 +1,8 @@
 package app.northernlights.tv
 
 import android.app.Activity
+import android.app.ActivityManager
+import android.content.Context
 import android.graphics.Color
 import android.net.Uri
 import android.system.Os
@@ -189,6 +191,11 @@ class PlayerController(
     /** Bridge v6 stats(): the last snapshot (refreshed every 500 ms) plus the app's resident memory, read now (cheap). */
     fun statsJson(): String = stats.toJson(residentMbFromStatm(readStatm(), Os.sysconf(OsConstants._SC_PAGESIZE)))
 
+    private fun availableMemoryBytes(): Long {
+        val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return 0L
+        return ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.availMem
+    }
+
     private fun readStatm(): String? = try {
         File("/proc/self/statm").readText()
     } catch (e: Exception) {
@@ -271,6 +278,7 @@ class PlayerController(
             .setDataSourceFactory(
                 if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
             )
+        val plan = bufferPlan(Runtime.getRuntime().maxMemory(), availableMemoryBytes())
         val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
@@ -281,7 +289,8 @@ class PlayerController(
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
-            // Start (and restart after a seek) with 1 s buffered instead of Media3's 2.5 s / 5 s.
+            // Start (and restart after a seek) with 1 s buffered instead of Media3's 2.5 s / 5 s, and keep the last
+            // 10 s in memory when the TV has room (a skip back then needs no download).
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(
@@ -290,6 +299,8 @@ class PlayerController(
                         START_BUFFER_MS,
                         REBUFFER_MS,
                     )
+                    .setTargetBufferBytes(plan.targetBytes)
+                    .setBackBuffer(plan.backBufferMs, true)
                     .build()
             )
             .build()
