@@ -22,11 +22,15 @@ import java.net.URL
  */
 object AppUpdater {
     private const val PREFS = "nl_tv"
-    private const val KEY_LAST_CHECK = "update_last_check"
+    private const val KEY_LATER_BUILD = "update_later_build"
 
     // Set while the viewer is in Android's "install unknown apps" screen, so Install carries on when they come back.
     @Volatile
     private var installWaitingForPermission = false
+
+    /** True from Install until Android reports a result, so the automatic prompt does not open on top. */
+    @Volatile
+    var installing = false
 
     fun installedBuild(context: Context): Long {
         val info = context.packageManager.getPackageInfo(context.packageName, 0)
@@ -34,14 +38,11 @@ object AppUpdater {
         return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
     }
 
-    /** True (and remembers now) when the automatic check is due. */
-    fun claimAutoCheck(context: Context): Boolean {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        if (!UpdateCheck.shouldCheck(prefs.getLong(KEY_LAST_CHECK, 0L), now)) return false
-        prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
-        return true
-    }
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** False when the viewer already pressed Later for this build (Settings > Check for updates still offers it). */
+    fun shouldOfferAutomatically(context: Context, build: Long): Boolean =
+        UpdateCheck.shouldOffer(build, prefs(context).getLong(KEY_LATER_BUILD, 0L))
 
     /** Blocking. The newer build number on GitHub, or null when there is none or GitHub can't be read. */
     fun findNewerBuild(context: Context): Long? {
@@ -125,14 +126,17 @@ object AppUpdater {
         }
     }
 
-    /** "Update available" dialog. Install starts the download; Later asks again at the next check. */
-    fun offer(activity: Activity, build: Long) {
-        if (activity.isFinishing || activity.isDestroyed) return
+    /** "Update available" dialog. Install starts the download; Later stops the automatic offer for this build. */
+    fun offer(activity: Activity, build: Long, onClosed: () -> Unit = {}) {
+        if (activity.isFinishing || activity.isDestroyed) return onClosed()
         AlertDialog.Builder(activity)
             .setTitle(R.string.update_title)
             .setMessage(activity.getString(R.string.update_message, "1.0.$build"))
             .setPositiveButton(R.string.update_install) { _, _ -> startInstall(activity) }
-            .setNegativeButton(R.string.update_later, null)
+            .setNegativeButton(R.string.update_later) { _, _ ->
+                prefs(activity).edit().putLong(KEY_LATER_BUILD, build).apply()
+            }
+            .setOnDismissListener { onClosed() }
             .show()
             .getButton(AlertDialog.BUTTON_POSITIVE)
             ?.requestFocus()
@@ -142,11 +146,13 @@ object AppUpdater {
     fun startInstall(activity: Activity) {
         if (!ensureInstallAllowed(activity)) return
         val app = activity.applicationContext
+        installing = true
         Toast.makeText(activity, R.string.update_downloading, Toast.LENGTH_LONG).show()
         thread(name = "nl-update") {
             try {
                 downloadAndInstall(app)
             } catch (e: Exception) {
+                installing = false
                 val why = e.message ?: e.javaClass.simpleName
                 activity.runOnUiThread {
                     Toast.makeText(app, app.getString(R.string.update_failed, why), Toast.LENGTH_LONG).show()
@@ -177,8 +183,9 @@ class UpdateResultReceiver : BroadcastReceiver() {
                 context.startActivity(confirm)
             }
             PackageInstaller.STATUS_SUCCESS -> Unit // Android restarts nothing; the viewer opens the app again.
-            PackageInstaller.STATUS_FAILURE_ABORTED -> Unit // the viewer pressed Cancel
+            PackageInstaller.STATUS_FAILURE_ABORTED -> AppUpdater.installing = false // the viewer pressed Cancel
             else -> {
+                AppUpdater.installing = false
                 val why = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "unknown error"
                 Toast.makeText(context, context.getString(R.string.update_failed, why), Toast.LENGTH_LONG).show()
             }

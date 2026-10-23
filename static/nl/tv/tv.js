@@ -700,6 +700,12 @@
     var fit = document.getElementById("tv-pref-fit");
     // The Android app draws the picture itself (behind this page), so the page cannot resize it: no picture size there.
     if (window.NorthernLightsNative && typeof window.NorthernLightsNative.play === "function") { document.getElementById("tv-pref-fit-row").hidden = true; }
+    // Only the Android app has a native settings screen (server address, Check for updates).
+    var native = window.NorthernLightsNative;
+    if (native && typeof native.openSettings === "function") {
+      document.getElementById("tv-app-settings-row").hidden = false;
+      document.getElementById("tv-app-settings").addEventListener("click", function () { native.openSettings(); });
+    }
     setStatus("");
     var vetoes = document.getElementById("tv-vetoes");
     if (vetoes && window.NLChoose) { window.NLChoose.vetoList(vetoes, true); }   // M9b: bring back what was vetoed

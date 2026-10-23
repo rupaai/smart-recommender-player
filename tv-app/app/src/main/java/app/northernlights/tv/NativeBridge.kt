@@ -23,6 +23,15 @@ class NativeBridge(private val host: Host) {
         fun onAudioTrackRequested(order: Int)
         /** Bridge v6: the info panel's numbers as JSON. May be called from any thread. */
         fun statsJson(): String
+        /** Opens the app's own settings screen (server address, Check for updates). Ignored during playback. */
+        fun onOpenSettingsRequested()
+    }
+
+    /** The TV me page shows "TV app: server address and updates" when this exists. */
+    @JavascriptInterface
+    fun openSettings() {
+        if (!host.isTrusted()) return
+        host.onOpenSettingsRequested()
     }
 
     @JavascriptInterface

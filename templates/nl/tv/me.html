@@ -16,6 +16,7 @@
     {% if people_configured %}
     <div class="tv-me-list" data-nl-row="me-switch"><a class="tv-btn tv-me-btn" data-nl-focus href="/nl/tv/who?next=%2Fnl%2Ftv%2F">{% if viewer.both %}Change who&rsquo;s watching{% else %}Not {{ viewer.label }}? Switch who&rsquo;s watching{% endif %}</a></div>
     {% endif %}
+    <div class="tv-me-list" id="tv-app-settings-row" data-nl-row="me-app" hidden><button id="tv-app-settings" class="tv-btn tv-me-btn" type="button" data-nl-focus>TV app: server address and updates</button></div>
     <p class="tv-hint" id="tv-pref-status" role="status">Press OK to change a setting.</p>
   </section>
   <section id="tv-vetoes" class="tv-section tv-me tv-vetoes" hidden></section>

@@ -364,6 +364,7 @@ def run(tmp):
     check("the TV me page has exactly two settings sections, Playback and Display", [h.split(": ")[-1] for h in headings if "tv-vetoes" not in h][:2] == ["Playback", "Display"] and len([h for h in headings if h.endswith("Playback") or h.endswith("Display")]) == 2, headings)
     check("every TV setting is a focusable row", all(f'id="tv-pref-{n}"' in tv for n in ("audio", "sub", "on", "skip", "autoplay", "quality", "fit", "spoilers")) and tv.count("data-nl-focus") >= 8)
     check("the TV me page has no admin link", "admin" not in tv.lower())
+    check("the TV me page has the app settings button, hidden until the app says it has one", 'id="tv-app-settings-row"' in tv and re.search(r'id="tv-app-settings-row"[^>]*hidden', tv) is not None)
     player = client.get(f"/nl/play/{alpha}").text
     check("the player has the Picture button", 'id="nl-picture"' in player)
     check("no key in any reply", SECRET not in me and SECRET not in tv and SECRET not in player and SECRET not in play().text)
@@ -381,9 +382,11 @@ def test_static():
     check("menu notes are text, not HTML", "nl-menu-note" in p and "n.textContent = it.text" in p)
     tv = read("static/nl/tv/tv.js")
     check("the TV me page cycles each setting and hides picture size in the app", "tv-pref-quality" in tv and "tv-pref-skip" in tv and "NorthernLightsNative" in tv and "tv-pref-fit-row" in tv)
+    check("the app settings button shows only when the TV app has openSettings", 'typeof native.openSettings === "function"' in tv and "tv-app-settings-row" in tv)
     check("the prefs script knows the new settings", all(k in read("static/nl/prefs.js") for k in ("skip_seconds", "autoplay", "quality_kbps", "picture_fit", "qualityChoices")))
     bridge = read("tv-app/app/src/main/java/app/northernlights/tv/NativeBridge.kt")
     check("the Kotlin bridge is documented as v6", "bridge v6" in bridge)
+    check("the Kotlin bridge can open the app's settings", "fun openSettings()" in bridge)
     check("the proxy allowlist is untouched", "videos/" in read("services/jellyfin_playback.py").lower() and "_IMAGE_PATH" in read("services/jellyfin_playback.py"))
 
 
