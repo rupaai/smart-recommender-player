@@ -460,6 +460,8 @@ class PlayerController(
         private const val SUB_ID_PREFIX = "nlsub"
         private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
-        private const val REBUFFER_MS = 2_000
+        // Buffered before playback resumes after a seek or a stall. The network measured 294 Mbps against a 92 Mbps film,
+        // so 1 s is quickly refilled and a jump starts about a second sooner. Other buffer sizes are Media3's.
+        private const val REBUFFER_MS = 1_000
     }
 }
