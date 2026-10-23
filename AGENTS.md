@@ -35,6 +35,7 @@ Try changes on a copy of the catalogue: `DATABASE_PATH=/tmp/copy.db`.
 ## Git rules
 
 - Never push to `main`. Work on a branch and open a PR with `gh pr create`.
+- PR titles start with `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`, `style:`, `refactor:` or `build:` (`feat!:` for a breaking change); the `PR title` workflow fails the rest.
 - Never merge a PR. Labiba reviews and merges.
 - Do not fork. Push branches to `rupaai/smart-recommender-player`.
 - Commit or push only when the person you work for asks.

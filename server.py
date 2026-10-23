@@ -16,6 +16,7 @@ from urllib.parse import quote, urlsplit
 
 # Secrets from Homelab (/run/secrets) go into the environment before anything reads it.
 from services import homelab_secrets
+from services.app_version import app_version, homelab_version
 
 homelab_secrets.load()
 
@@ -227,7 +228,7 @@ media_cleanup = MediaCleanup(
     [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
 )
 
-app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version="0.4.0")
+app = FastAPI(title="Smart Movie & TV Streamer & Recommender", version=app_version())
 
 # Mac -> server admin routes (export, catalogue patch, model bundles); 404 unless ADMIN_TOKEN is set.
 app.include_router(build_admin_router(lambda: db.db_path, reload_models))
@@ -473,7 +474,7 @@ def _model_bundle_id() -> Optional[str]:
 
 @app.get("/healthz")
 async def healthz() -> Any:
-    """Liveness/readiness: git SHA, model bundle, DB schema version. 503 if the DB cannot be read or written."""
+    """Liveness/readiness: git SHA, Homelab version, model bundle, DB schema version. 503 if the DB cannot be read or written."""
     try:
         with db.get_connection() as conn:
             # Rewriting the schema version in a transaction we roll back proves the file is writable.
@@ -488,6 +489,7 @@ async def healthz() -> Any:
     return {
         "ok": True,
         "git_sha": os.getenv("GIT_SHA", "dev"),
+        "version": homelab_version(),
         "model_bundle": _model_bundle_id(),
         "db_schema": schema,
     }

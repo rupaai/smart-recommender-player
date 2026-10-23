@@ -59,6 +59,28 @@ object ServerConfig {
         return "$scheme://$host:$port"
     }
 
+    private val VERSION_FIELD = Regex("\"version\"\\s*:\\s*\"([^\"]+)\"")
+
+    /** The "version" in a /healthz body (e.g. "v0.4.0"), or null when there is none (the server sends null before a promote). */
+    fun versionFrom(healthzBody: String): String? = VERSION_FIELD.find(healthzBody)?.groupValues?.get(1)
+
+    /** Blocking GET <address>/healthz for its version. Null when the server has none or can't be read. */
+    fun fetchVersion(address: String): String? {
+        return try {
+            val conn = URL("$address/healthz").openConnection() as HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            try {
+                if (conn.responseCode !in 200..299) null
+                else versionFrom(conn.inputStream.bufferedReader().use { it.readText() })
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** Blocking GET <address>/healthz. Returns null when OK, else a human-readable error. */
     fun testConnection(address: String): String? {
         return try {

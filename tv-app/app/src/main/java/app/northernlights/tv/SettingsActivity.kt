@@ -15,6 +15,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var address: EditText
     private lateinit var status: TextView
     private lateinit var save: Button
+    private lateinit var serverVersion: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,10 +23,21 @@ class SettingsActivity : AppCompatActivity() {
         address = findViewById(R.id.address)
         status = findViewById(R.id.status)
         save = findViewById(R.id.save)
+        serverVersion = findViewById(R.id.server_version)
 
         val existing = ServerConfig.load(this)
         address.setText(existing ?: ServerConfig.DEFAULT_PREFILL)
         address.setSelection(address.text.length)
+        if (existing != null) {
+            thread(name = "nl-version") {
+                val version = ServerConfig.fetchVersion(existing)
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed && version != null) {
+                        serverVersion.text = getString(R.string.server_version, version)
+                    }
+                }
+            }
+        }
 
         save.setOnClickListener { trySave() }
         address.setOnEditorActionListener { _, actionId, event ->

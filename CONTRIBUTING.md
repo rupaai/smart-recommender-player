@@ -148,5 +148,6 @@ You are still responsible for what you push. Read what the AI wrote before you c
 - **Mars.** Never run things on mars or change production without asking Labiba. Mars is the home box where the app runs.
 - **Fix causes and add tests.** Find why something broke and fix that. Do not hide the symptom. Add a test that would have caught it.
 - Never push to `main`. Always use a branch and a PR.
+- **PR titles** start with `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`, `style:`, `refactor:` or `build:` (`feat!:` for a breaking change). The PR title check fails otherwise.
 
 If you are stuck, ask Labiba. Small questions are fine.

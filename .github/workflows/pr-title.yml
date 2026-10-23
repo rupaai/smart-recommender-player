@@ -1,0 +1,25 @@
+name: PR title
+
+# A PR title must start with a type, e.g. "feat: add watch later" or "fix(tv): ...".
+# Use "feat!:" for a breaking change. The title goes in through env, never into the script.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the title starts with a type
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if printf '%s' "$TITLE" | grep -Eq '^(feat|fix|docs|chore|test|ci|style|refactor|build)(\([^)]*\))?!?: .+'; then
+            echo "PR title is fine."
+          else
+            echo "::error::PR title must start with feat:, fix:, docs:, chore:, test:, ci:, style:, refactor: or build: (feat!: for a breaking change)"
+            exit 1
+          fi

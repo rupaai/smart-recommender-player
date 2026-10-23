@@ -57,6 +57,7 @@ def test_healthz(tmp):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = db_file
     os.environ["GIT_SHA"] = "abc1234"
+    os.environ.pop("HOMELAB_VERSION", None)
     import server  # noqa: E402 - needs DATABASE_PATH set first
     from fastapi.testclient import TestClient
 
@@ -71,6 +72,13 @@ def test_healthz(tmp):
     check("db_schema matches PRAGMA user_version", body.get("db_schema") == user_version(db_file)
           and isinstance(body.get("db_schema"), int), body)
     check("model_bundle null without manifest", "model_bundle" in body and body["model_bundle"] is None, body)
+    check("version null without HOMELAB_VERSION", "version" in body and body["version"] is None, body)
+    check("API docs version falls back to dev", server.app.version == "dev", server.app.version)
+
+    os.environ["HOMELAB_VERSION"] = "v0.4.0-dev.2"
+    body = client.get("/healthz").json()
+    check("version from HOMELAB_VERSION", body.get("version") == "v0.4.0-dev.2", body)
+    del os.environ["HOMELAB_VERSION"]
 
     os.environ["MODELS_DIR"] = models
     body = client.get("/healthz").json()

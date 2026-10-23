@@ -2,6 +2,7 @@
     <string name="app_name">Northern Lights</string>
     <string name="settings_hint">Enter the address of your Northern Lights server, for example http://192.168.1.20:8000</string>
     <string name="save">Save</string>
+    <string name="server_version">Server %1$s</string>
     <string name="testing">Testing…</string>
     <string name="connected">Connected</string>
     <string name="error_title">Can\'t reach the server</string>
