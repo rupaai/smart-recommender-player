@@ -11,8 +11,10 @@ android {
         applicationId = "app.northernlights.tv"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // GitHub's run number, so each CI build is a newer version and Settings > Apps shows which one is installed.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "1.0.$build"
     }
 
     // A fixed debug key, committed on purpose: CI otherwise signs each build with a fresh random

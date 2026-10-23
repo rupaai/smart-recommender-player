@@ -39,8 +39,11 @@ jobs:
       - name: Lint
         run: ./gradlew --no-daemon lintDebug
         continue-on-error: true
+      # The run number in the file name tells one download from the next (the app shows it as version 1.0.<run>).
+      - name: Name the APK after the build
+        run: mv app/build/outputs/apk/debug/app-debug.apk "app/build/outputs/apk/debug/northern-lights-tv-${{ github.run_number }}.apk"
       - uses: actions/upload-artifact@v7
         with:
-          name: northern-lights-tv-debug
+          name: northern-lights-tv-${{ github.run_number }}
           path: tv-app/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
