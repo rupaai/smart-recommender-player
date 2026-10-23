@@ -185,9 +185,13 @@ def run_original_file(ctx):
     d = r.json()
     tracks = {t["index"]: t for t in d["subtitle_tracks"]}
     check("a text track in the viewer's language comes before the picture track", d["default_subtitle_index"] == 5, d["default_subtitle_index"])
-    check("embedded picture tracks count every subtitle stream inside the file, text ones too",
-          [tracks[i].get("order") for i in (3, 6, 8)] == [0, 2, 3] and tracks[5]["kind"] == "text" and "order" not in tracks[5],
+    check("every subtitle inside the file, text or picture, is embedded with its position in the file",
+          [tracks[i].get("order") for i in (3, 5, 6, 8)] == [0, 1, 2, 3] and all(tracks[i]["kind"] == "embedded" for i in (3, 5, 6, 8)),
           {i: (t["kind"], t.get("order")) for i, t in tracks.items()})
+    check("... and none of them makes Jellyfin extract a subtitle (no url)", all(tracks[i]["url"] is None for i in (3, 5, 6, 8)),
+          {i: t["url"] for i, t in tracks.items()})
+    check("... while picture says which are drawn from pictures", [tracks[i]["picture"] for i in (3, 5)] == [True, False],
+          {i: t["picture"] for i, t in tracks.items()})
     check("an external subtitle file is not inside the file: no order, keeps its url",
           tracks[7]["kind"] == "text" and "order" not in tracks[7] and tracks[7]["url"].endswith("Stream.vtt"), tracks[7])
     client.put("/api/nl/prefs", json={"subtitles_on": False})
