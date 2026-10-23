@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative (bridge v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v5 = v4 + setAudioTrack; v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -20,6 +20,7 @@ class NativeBridge(private val host: Host) {
         fun onSubtitleRequested(index: Int)
         fun onSubtitleStyleRequested(json: String)
         fun onSpeedRequested(rate: Double)
+        fun onAudioTrackRequested(order: Int)
     }
 
     @JavascriptInterface
@@ -84,11 +85,24 @@ class NativeBridge(private val host: Host) {
         host.onSpeedRequested(value)
     }
 
+    /**
+     * Bridge v5: select the [order]-th audio track of the playing file (0-based, file order) without reloading.
+     * The first selection comes with play() as audioOrder.
+     */
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "4" else ""
+    fun setAudioTrack(order: String?) {
+        if (!host.isTrusted()) return
+        val value = order?.toIntOrNull() ?: return
+        if (value < 0 || value > MAX_AUDIO_ORDER) return
+        host.onAudioTrackRequested(value)
+    }
+
+    @JavascriptInterface
+    fun version(): String = if (host.isTrusted()) "5" else ""
 
     companion object {
         private const val MIN_SPEED = 0.25
         private const val MAX_SPEED = 4.0
+        private const val MAX_AUDIO_ORDER = 63
     }
 }

@@ -24,6 +24,8 @@ data class PlayRequest(
     val audioTracks: List<AudioTrackInfo>,
     val subtitleTracks: List<SubtitleTrackInfo>,
     val audioIndex: Int,
+    /** Bridge v5: position of the chosen audio track among the file's audio tracks, -1 = leave Media3's choice. */
+    val audioOrder: Int,
     val subtitleIndex: Int,
     val nextUpLabel: String?,
 ) {
@@ -88,6 +90,7 @@ data class PlayRequest(
                 audioTracks = audio,
                 subtitleTracks = subs,
                 audioIndex = o.optInt("audioIndex", -1),
+                audioOrder = if (o.isNull("audioOrder")) -1 else o.optInt("audioOrder", -1),
                 subtitleIndex = o.optInt("subtitleIndex", -1),
                 nextUpLabel = next,
             )

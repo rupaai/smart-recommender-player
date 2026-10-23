@@ -149,8 +149,10 @@ def browser_profile(caps: Optional[Caps]) -> dict:
 
 # ---- TV profile (M3) --------------------------------------------------------------
 # The Android TV app plays through Media3/ExoPlayer, which decodes far more than a browser.
-# Chosen with `client=tv`; the page's `caps` are ignored. DTS and TrueHD are left out on
-# purpose (many TCL sets cannot decode them), so Jellyfin converts that audio. Media3 can
+# Chosen with `client=tv`; the page's `caps` are ignored. The TV always plays the original file:
+# the app decodes TrueHD / DTS itself (Media3 + Jellyfin's FFmpeg audio decoder) and switches audio
+# tracks inside the file, so the profile lists every audio codec and a 400 Mbps ceiling. The
+# conversion below is used only when the viewer chooses "Play a converted copy". Media3 can
 # draw picture subtitles (PGS, VobSub, DVB) only when they are embedded in the file, so they
 # are Embed for direct play and Encode (burned in) when Jellyfin transcodes.
 
@@ -158,15 +160,15 @@ TV_CLIENT = "tv"
 
 TV_PROFILE = {
     "Name": "Northern Lights (TV)",
-    "MaxStreamingBitrate": 120_000_000,  # LAN
-    "MaxStaticBitrate": 120_000_000,
+    "MaxStreamingBitrate": 400_000_000,  # LAN: the original file is never limited
+    "MaxStaticBitrate": 400_000_000,
     "MusicStreamingTranscodingBitrate": 192_000,
     "DirectPlayProfiles": [
         {
             "Container": "mkv,mp4,m4v,mov,webm,ts",
             "Type": "Video",
             "VideoCodec": "h264,hevc,vp9,av1",
-            "AudioCodec": "aac,mp3,ac3,eac3,opus,flac,vorbis",
+            "AudioCodec": "aac,mp3,ac3,eac3,opus,flac,vorbis,truehd,mlp,dts,dca,pcm_s16le,pcm_s24le,alac",
         },
     ],
     "TranscodingProfiles": [

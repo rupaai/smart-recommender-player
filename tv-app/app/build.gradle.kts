@@ -58,6 +58,10 @@ dependencies {
     implementation("androidx.media3:media3-database:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     implementation("androidx.media3:media3-session:$media3")
+    // Jellyfin's prebuilt FFmpeg audio decoder (TrueHD, DTS, ...). 1.5.0+1 is built for Media3 1.5.0 and is the newest
+    // release for the 1.5.x line; the module's classes are unchanged in 1.5.1. Maven Central.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    testImplementation("junit:junit:4.13.2")
 }

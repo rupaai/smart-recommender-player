@@ -78,6 +78,7 @@
     wasVisible: true,
     errors: 0,
     switching: false,
+    allowConversion: false,   // TV: the viewer chose "Play a converted copy" because the original cannot be played
     retry: null,
     progressTimer: null,
     hideTimer: null,
@@ -742,6 +743,15 @@
       return { label: t.label, selected: t.index === S.audioIndex, onSelect: function () {
         if (t.index === S.audioIndex) { return; }
         toast("Audio: " + t.label);
+        // The TV plays the original file and switches track inside it (bridge v5); everything else gets a new stream.
+        var order = (S.stream.audio_tracks || []).indexOf(t);
+        if (isNative && player.canSwitchAudioInPlace && S.stream.kind === "file" && typeof S.stream.audio_order === "number" && order >= 0) {
+          S.audioIndex = t.index;
+          S.stream.audio_index = t.index;
+          S.stream.audio_order = order;
+          player.setAudioOrder(order);
+          return;
+        }
         reloadStream({ audio: t.index });
       } };
     }));
@@ -930,6 +940,7 @@
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
     if (S.sourceId) { qs.push("source=" + encodeURIComponent(S.sourceId)); }
+    if (isNative && S.allowConversion) { qs.push("allow_conversion=1"); }
     if (!casting() && S.quality !== null) { qs.push("max_kbps=" + encodeURIComponent(S.quality)); }
     var url = (casting() ? "/api/nl/cast/play/" : "/api/nl/play/") + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
     return fetch(url).then(function (resp) {
@@ -937,6 +948,7 @@
         if (!resp.ok) {
           var err = new Error(body.detail || "Could not start playback.");
           err.detail = body.detail || "";
+          err.canConvert = !!body.can_convert;
           err.unreachable = resp.status === 503 || resp.status === 502 || resp.status === 504;
           throw err;
         }
@@ -985,6 +997,7 @@
   function nativeMeta(stream) {
     var epEl = $("nl-episode");
     return {
+      audioOrder: typeof stream.audio_order === "number" ? stream.audio_order : null,
       title: stream.title || "",
       subtitle: epEl.hidden ? "" : epEl.textContent,
       skipSeconds: S.skip,
@@ -1024,13 +1037,13 @@
       if (resume) { playNow(); }
     }).catch(function (err) {
       S.switching = false;
-      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "", err.canConvert);
     });
   }
 
   function startFirst(opts) {
     opts = opts || {};
-    if (opts.fromNext) { S.subDelay = 0; player.setSubtitleDelay(0); }   // the delay belongs to one file
+    if (opts.fromNext) { S.allowConversion = false; S.subDelay = 0; player.setSubtitleDelay(0); }   // the delay belongs to one file
     hideError();
     $("nl-buffering").hidden = false;
     S.retry = function () { startFirst(opts); };
@@ -1084,7 +1097,7 @@
     }).catch(function (err) {
       S.advancing = false;
       $("nl-buffering").hidden = true;
-      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "");
+      showError(err.unreachable ? UNREACHABLE : err.message, err.unreachable ? err.detail : "", err.canConvert);
     });
   }
   // Starts a loaded stream: straight away when the link already chose, else after the Resume question.
@@ -1204,8 +1217,9 @@
 
   /* ------------------------------------------------------------------ errors */
 
-  function showError(message, detail) {
+  function showError(message, detail, canConvert) {
     stopReporting(false);
+    $("nl-convert").hidden = !(canConvert && isNative);
     // The server's reason goes on a second line, so a setup problem isn't mistaken for "mars is off".
     $("nl-error-text").textContent = detail ? message + "\n" + detail : message;
     $("nl-error").hidden = false;
@@ -1213,6 +1227,12 @@
     $("nl-retry").focus();
   }
   function hideError() { $("nl-error").hidden = true; }
+  // TV: the original file cannot be played; the viewer may ask for a converted (lower quality) copy instead.
+  $("nl-convert").addEventListener("click", function () {
+    S.allowConversion = true;
+    $("nl-convert").hidden = true;
+    if (S.retry) { S.retry(); }
+  });
 
   player.on("error", function (e) {
     if (S.switching || !S.stream) { return; }

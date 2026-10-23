@@ -49,6 +49,10 @@ class PlayerController(
     private var subtitleStyleJson: String? = null
     private var speed = 1.0 // bridge v4: kept across streams, a new ExoPlayer would start at 1x
     private var selectedSubtitleIndex = -1 // the side-loaded track Media3 has selected, -1 = none
+    private var audioOrder = -1 // bridge v5: wanted audio track among the file's audio groups, -1 = Media3's choice
+    private var appliedAudioOrder = -1
+    private var frameRateHandled = false
+    private var previousDisplayModeId: Int? = null // set while we have asked the display for another mode
 
     val isActive: Boolean get() = player != null
 
@@ -129,6 +133,8 @@ class PlayerController(
         }
 
         override fun onTracksChanged(tracks: Tracks) {
+            applyAudioOrder()
+            matchFrameRate(tracks)
             val wanted = pendingSubtitleIndex ?: return
             if (wanted >= 0 && selectSubtitleLocally(wanted)) pendingSubtitleIndex = null
         }
@@ -138,6 +144,9 @@ class PlayerController(
         close(sendStopped = false, notifyClosed = false)
         startedSent = false
         pendingSubtitleIndex = req.subtitleIndex
+        audioOrder = if (req.kind == "file") req.audioOrder else -1
+        appliedAudioOrder = -1
+        frameRateHandled = false
         selectedSubtitleIndex = -1
         playerView.subtitleView?.visibility = View.VISIBLE
         ticks = 0
@@ -145,7 +154,7 @@ class PlayerController(
 
         val mediaSourceFactory = DefaultMediaSourceFactory(activity)
             .setDataSourceFactory(PlaybackCache.dataSourceFactory(activity))
-        val exo = ExoPlayer.Builder(activity)
+        val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -223,6 +232,7 @@ class PlayerController(
         session = null
         p.removeListener(listener)
         p.release()
+        restoreDisplayMode()
         if (notifyClosed) onClosed()
     }
 
@@ -247,6 +257,63 @@ class PlayerController(
         handler.removeCallbacks(seekCompletionCheck)
         p.seekTo(target)
         checkSeekCompletion()
+    }
+
+    /**
+     * Bridge v5: select the [order]-th audio track group of the playing file (file order), without reloading. Before the
+     * tracks are known the choice is kept and applied when they are.
+     */
+    fun selectAudioByOrder(order: Int) {
+        if (player == null) return
+        audioOrder = order
+        appliedAudioOrder = -1
+        applyAudioOrder()
+    }
+
+    private fun applyAudioOrder() {
+        val p = player ?: return
+        val wanted = audioOrder
+        if (wanted < 0 || wanted == appliedAudioOrder) return
+        val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        if (wanted >= groups.size) return
+        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+            .setOverrideForType(TrackSelectionOverride(groups[wanted].mediaTrackGroup, 0))
+            .build()
+        appliedAudioOrder = wanted
+    }
+
+    /** Ask the display for a mode whose refresh rate is a multiple of the film's frame rate (once per film). */
+    private fun matchFrameRate(tracks: Tracks) {
+        if (frameRateHandled) return
+        var frameRate = 0f
+        for (group in tracks.groups) {
+            if (group.type != C.TRACK_TYPE_VIDEO) continue
+            for (i in 0 until group.length) {
+                if (group.isTrackSelected(i)) frameRate = group.getTrackFormat(i).frameRate
+            }
+        }
+        if (frameRate <= 0f) return
+        frameRateHandled = true
+        @Suppress("DEPRECATION")
+        val display = activity.windowManager.defaultDisplay ?: return
+        val current = display.mode
+        val modes = display.supportedModes.map {
+            DisplayModeInfo(it.modeId, it.physicalWidth, it.physicalHeight, it.refreshRate)
+        }
+        val id = pickDisplayModeId(modes, current.physicalWidth, current.physicalHeight, frameRate) ?: return
+        val attrs = activity.window.attributes
+        if (attrs.preferredDisplayModeId == id) return
+        previousDisplayModeId = attrs.preferredDisplayModeId
+        attrs.preferredDisplayModeId = id
+        activity.window.attributes = attrs
+    }
+
+    private fun restoreDisplayMode() {
+        val previous = previousDisplayModeId ?: return
+        previousDisplayModeId = null
+        val attrs = activity.window.attributes
+        attrs.preferredDisplayModeId = previous
+        activity.window.attributes = attrs
     }
 
     /** Bridge v4: playback speed (0.75x .. 2x from the page's menu). Also applies to the streams that follow. */

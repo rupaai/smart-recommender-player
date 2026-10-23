@@ -224,6 +224,10 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
         runOnUiThread { if (pageTrusted) player.setSubtitleStyle(json) }
     }
 
+    override fun onAudioTrackRequested(order: Int) {
+        runOnUiThread { if (pageTrusted) player.selectAudioByOrder(order) }
+    }
+
     override fun onSpeedRequested(rate: Double) {
         runOnUiThread { if (pageTrusted) player.setSpeed(rate) }
     }
