@@ -29,12 +29,10 @@ class UpdateCheckTest {
     }
 
     @Test
-    fun checksAtMostEverySixHours() {
-        val six = UpdateCheck.CHECK_EVERY_MS
-        assertTrue(UpdateCheck.shouldCheck(0, 1_000_000_000))
-        assertFalse(UpdateCheck.shouldCheck(1_000, 1_000 + six - 1))
-        assertTrue(UpdateCheck.shouldCheck(1_000, 1_000 + six))
-        assertTrue(UpdateCheck.shouldCheck(5_000, 1_000)) // clock went backwards
+    fun laterSkipsOnlyThatBuild() {
+        assertTrue(UpdateCheck.shouldOffer(97, 0)) // never pressed Later
+        assertFalse(UpdateCheck.shouldOffer(97, 97))
+        assertTrue(UpdateCheck.shouldOffer(98, 97))
     }
 
     @Test

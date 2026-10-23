@@ -9,7 +9,7 @@ It only talks to our FastAPI server. It never holds or sends a Jellyfin key.
 
 ## Updates
 
-The app updates itself. Every merge to `main` that changes `tv-app/` puts the new APK on the GitHub release [`tv-app`](https://github.com/rupaai/smart-recommender-player/releases/tag/tv-app) (a pre-release that always holds the newest build, plus `version.json`). When the app comes to the front (at most every 6 hours, never during a film) it checks that release and asks "Update available". Install downloads it and Android shows its own "Update this app?" screen: press OK on the remote. Settings (Menu button) also has "Check for updates" and shows the installed version.
+The app updates itself. Every merge to `main` that changes `tv-app/` puts the new APK on the GitHub release [`tv-app`](https://github.com/rupaai/smart-recommender-player/releases/tag/tv-app) (a pre-release that always holds the newest build, plus `version.json`). When the app comes to the front (each time it opens, never during a film; Later skips that build until a newer one comes) it checks that release and asks "Update available". Install downloads it and Android shows its own "Update this app?" screen: press OK on the remote. The app's settings screen also has "Check for updates" and shows the installed version: open it from the person menu (top right) > "TV app: server address and updates", or the remote's Menu button, or hold Back on the home page.
 
 The first time, Android asks you to allow Northern Lights to install apps. Turn it on and press Back; the update carries on. Android does not let a normal app update without that one OK.
 

@@ -10,9 +10,6 @@ object UpdateCheck {
     const val VERSION_URL = "$BASE/version.json"
     const val APK_URL = "$BASE/northern-lights-tv.apk"
 
-    /** Ask GitHub at most this often when the app comes to the front (the Settings button always asks). */
-    const val CHECK_EVERY_MS = 6L * 60 * 60 * 1000
-
     private val VERSION_CODE = Regex("\"versionCode\"\\s*:\\s*(\\d+)")
 
     /** The versionCode in a version.json body, or null when it can't be read. */
@@ -22,7 +19,6 @@ object UpdateCheck {
     fun newerBuild(published: Long?, installed: Long): Long? =
         if (published != null && published > installed) published else null
 
-    /** True when the last automatic check is old enough (or the clock went backwards). */
-    fun shouldCheck(lastCheckAt: Long, now: Long): Boolean =
-        now < lastCheckAt || now - lastCheckAt >= CHECK_EVERY_MS
+    /** The automatic prompt skips a build the viewer pressed Later on; a newer build asks again. */
+    fun shouldOffer(build: Long, laterBuild: Long): Boolean = build > laterBuild
 }

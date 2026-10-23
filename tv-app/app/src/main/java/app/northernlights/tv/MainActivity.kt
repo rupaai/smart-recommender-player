@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
     private var errorShowing = false
     private var lastBackAt = 0L
     private var backLongHandled = false
+    private var updateDialogShowing = false
 
     private val settingsLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -231,6 +232,10 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
 
     override fun statsJson(): String = player.statsJson()
 
+    override fun onOpenSettingsRequested() {
+        runOnUiThread { if (pageTrusted && !player.isActive && !isFinishing) openSettings() }
+    }
+
     override fun onSpeedRequested(rate: Double) {
         runOnUiThread { if (pageTrusted) player.setSpeed(rate) }
     }
@@ -241,13 +246,17 @@ class MainActivity : AppCompatActivity(), NativeBridge.Host {
         checkForUpdate()
     }
 
-    /** At most every 6 hours, never during a film: ask GitHub for a newer build and offer it. */
+    /** Each time the app comes to the front, never during a film: ask GitHub for a newer build and offer it. */
     private fun checkForUpdate() {
-        if (player.isActive || !AppUpdater.claimAutoCheck(this)) return
+        if (player.isActive || updateDialogShowing || AppUpdater.installing) return
         thread(name = "nl-update-check") {
             val build = AppUpdater.findNewerBuild(applicationContext) ?: return@thread
+            if (!AppUpdater.shouldOfferAutomatically(applicationContext, build)) return@thread
             runOnUiThread {
-                if (!player.isActive && !isFinishing && !isDestroyed) AppUpdater.offer(this, build)
+                if (!player.isActive && !updateDialogShowing && !isFinishing && !isDestroyed) {
+                    updateDialogShowing = true
+                    AppUpdater.offer(this, build) { updateDialogShowing = false }
+                }
             }
         }
     }
