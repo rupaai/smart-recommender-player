@@ -572,7 +572,7 @@ class PlayerController(
      */
     private fun selectEmbeddedSubtitle(p: ExoPlayer, index: Int, order: Int): Boolean {
         val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-        val position = embeddedTextGroupPosition(groups.map { g -> if (g.length > 0) g.getFormat(0).id else null }, order)
+        val position = embeddedTextGroupPosition(groups.map { g -> if (g.length > 0) g.getTrackFormat(0).id else null }, order)
             ?: return false
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
