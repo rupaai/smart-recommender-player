@@ -19,6 +19,10 @@ environments: [dev, prod]
 data:
   - {name: data, path: /data}
   - {name: models, path: /models}
+# The catalogue database is the SQLite file the app already uses. Homelab's Databases screen
+# shows it, copies it, copies prod to dev and can restore it. Nothing moves (homelab #27).
+# DATABASE_PATH below stays the same path, for Homelab versions without this.
+database: {engine: sqlite, path: /data/catalogue_full.db}
 # The device's media folder (config.yaml on the device: folders: {media: ...}).
 folders:
   - {name: media, path: /media}
