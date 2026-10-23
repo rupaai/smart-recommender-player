@@ -378,7 +378,7 @@ def pick_subtitle_track(tracks: Iterable[Dict[str, Any]], lang: Optional[str]) -
     if not matches:
         return None
     matches.sort(key=lambda t: (
-        bool(t.get("is_forced")), t.get("kind") != "text", bool(t.get("is_hearing_impaired")), not t.get("is_default"),
+        bool(t.get("is_forced")), bool(t.get("picture", t.get("kind") == "image")), bool(t.get("is_hearing_impaired")), not t.get("is_default"),
     ))
     return matches[0]
 

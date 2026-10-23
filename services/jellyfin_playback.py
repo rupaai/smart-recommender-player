@@ -266,9 +266,12 @@ def _subtitle_url(stream: Dict[str, Any], jf_id: str, source_id: str) -> str:
 
 def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str, embedded: bool = False) -> Dict[str, list]:
     """Audio and subtitle tracks from MediaSources[n].MediaStreams, ready for the browser.
-    `embedded` (the TV, which plays the original file): a picture subtitle inside the file gets kind "embedded" and
-    `order`, its 0-based position among the file's own subtitle streams (external subtitle files do not count). The
-    app selects that track in Media3 and draws it; nothing is burned in. Text tracks keep their Stream.vtt URLs."""
+    `embedded` (the TV, which plays the original file): every subtitle inside the file, text or picture, gets kind
+    "embedded" and `order`, its 0-based position among the file's own subtitle streams (external subtitle files do not
+    count). The app selects that track in Media3, which reads it from the file it is already playing; nothing is burned
+    in, and Jellyfin never has to extract it (it extracts every subtitle at once, reading the whole film first, which
+    took hours on an 80 GB remux and timed the TV player out). External subtitle files keep their Stream.vtt URLs.
+    `picture` says whether a track is drawn from pictures (PGS, VobSub) rather than text."""
     audio, subs = [], []
     embedded_seen = 0
     for st in media_source.get("MediaStreams") or []:
@@ -295,12 +298,14 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str, emb
             image = _is_image_subtitle(st)
             track["label"] = subtitle_label(st)
             track["kind"] = "image" if image else "text"
-            track["url"] = None if image else _subtitle_url(st, jf_id, source_id)
+            track["picture"] = image
             if embedded and not st.get("IsExternal"):
-                if image:
-                    track["kind"] = "embedded"
-                    track["order"] = embedded_seen
+                track["kind"] = "embedded"
+                track["order"] = embedded_seen
+                track["url"] = None
                 embedded_seen += 1
+            else:
+                track["url"] = None if image else _subtitle_url(st, jf_id, source_id)
             subs.append(track)
     return {"audio_tracks": audio, "subtitle_tracks": subs}
 
@@ -315,7 +320,7 @@ def forced_subtitle_index(tracks: Dict[str, list], audio_index: Optional[int], l
     if audio is None or lang_key(audio.get("language")) in ("", want):
         return None
     forced = [t for t in tracks["subtitle_tracks"] if t.get("is_forced") and lang_key(t.get("language")) == want]
-    forced.sort(key=lambda t: t.get("kind") != "text")
+    forced.sort(key=lambda t: bool(t.get("picture", t.get("kind") == "image")))
     return forced[0]["index"] if forced else None
 
 

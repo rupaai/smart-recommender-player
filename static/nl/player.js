@@ -1293,6 +1293,9 @@
     S.errors += 1;
     if (S.errors <= 2) {
       reloadStream({});
+    } else if (isNative && e && e.message) {
+      // The TV player's own reason (a Media3 error code): mars answered, so "is mars on?" would send the viewer the wrong way.
+      showError("The TV player stopped.", e.message);
     } else {
       showError(e && e.format ? unplayableText() : UNREACHABLE);
     }
