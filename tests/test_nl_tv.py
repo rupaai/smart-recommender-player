@@ -80,6 +80,16 @@ TRUEHD_STREAMS = [
 ]
 
 
+MIXED_SUBTITLES = [
+    {"Type": "Subtitle", "Index": 3, "Codec": "PGSSUB", "Language": "eng", "IsGraphicalSubtitleStream": True, "DisplayTitle": "English - PGS"},
+    {"Type": "Subtitle", "Index": 5, "Codec": "subrip", "Language": "eng", "IsTextSubtitleStream": True, "DisplayTitle": "English - SRT"},
+    {"Type": "Subtitle", "Index": 6, "Codec": "PGSSUB", "Language": "ita", "IsGraphicalSubtitleStream": True, "DisplayTitle": "Italian - PGS"},
+    {"Type": "Subtitle", "Index": 7, "Codec": "subrip", "Language": "ita", "IsTextSubtitleStream": True, "IsExternal": True,
+     "DeliveryMethod": "External", "DeliveryUrl": "/Videos/1/ms/Subtitles/7/0/Stream.srt", "DisplayTitle": "Italian - external"},
+    {"Type": "Subtitle", "Index": 8, "Codec": "PGSSUB", "Language": "eng", "IsForced": True, "IsGraphicalSubtitleStream": True, "DisplayTitle": "English - PGS forced"},
+]
+
+
 class OriginalFileJellyfin(nl_fake.FakeJellyfin):
     """A TrueHD + Dolby Vision 7 + PGS file. `mode` "direct" offers the file itself; "convert" only an HLS conversion."""
 
@@ -87,6 +97,7 @@ class OriginalFileJellyfin(nl_fake.FakeJellyfin):
         super().__init__()
         self.mode = "direct"
         self.bodies = []
+        self.streams = TRUEHD_STREAMS
 
     def request(self, method, url, **kw):
         path = url.split("jellyfin.test:8096", 1)[1] if "jellyfin.test:8096" in url else url
@@ -95,7 +106,7 @@ class OriginalFileJellyfin(nl_fake.FakeJellyfin):
             self.bodies.append(body)
             jf = path.split("/")[2]
             base = {"Id": "ms-" + jf, "Container": "mkv", "RunTimeTicks": 50 * 60 * nl_fake.TICKS, "Bitrate": 92_000_000,
-                    "DefaultAudioStreamIndex": 1, "MediaStreams": TRUEHD_STREAMS}
+                    "DefaultAudioStreamIndex": 1, "MediaStreams": self.streams}
             wants_conversion = body.get("AudioStreamIndex") not in (None, 1) or (body.get("SubtitleStreamIndex") or -1) >= 0
             if self.mode == "direct" and not wants_conversion:
                 ms = {**base, "SupportsDirectPlay": True, "SupportsDirectStream": True}
@@ -148,6 +159,45 @@ def run_original_file(ctx):
     r = play(caps="v=h264.hevc;a=aac;h=h264.hevc.aac", audio=2)
     d = r.json()
     check("the browser still converts for a non-default audio track", r.status_code == 200 and d["kind"] == "hls" and "audio_order" not in d, r.text[:300])
+
+    print("Disc subtitles: drawn by the app, never burned in")
+    r = play(client="tv")
+    d = r.json()
+    check("a PGS-only film on the TV: one embedded track with order 0, no url",
+          d["subtitle_tracks"] and d["subtitle_tracks"][0]["kind"] == "embedded" and d["subtitle_tracks"][0]["order"] == 0
+          and d["subtitle_tracks"][0]["url"] is None, d["subtitle_tracks"])
+    check("... and a direct-play file URL", d["kind"] == "file" and d["play_method"] == "DirectPlay" and "static=true" in d["url"])
+    r = client.put("/api/nl/prefs", json={"audio_lang": "eng", "subtitle_lang": "eng", "subtitles_on": True})
+    check("prefs set (English, subtitles on)", r.status_code == 200, r.text[:200])
+    r = play(client="tv")
+    d = r.json()
+    check("subtitles on by default: the embedded picture track is the default, not burned in",
+          r.status_code == 200 and d["kind"] == "file" and d["default_subtitle_index"] == 3 and d["subtitle_index"] == -1
+          and all("SubtitleStreamIndex" not in b for b in fake.bodies), r.text[:300])
+    r = play(caps="v=h264.hevc;a=aac;h=h264.hevc.aac")
+    d = r.json()
+    check("the browser still burns the picture subtitle in",
+          r.status_code == 200 and d["kind"] == "hls" and d["subtitle_index"] == 3 and d["subtitle_tracks"][0]["kind"] == "image"
+          and "order" not in d["subtitle_tracks"][0], r.text[:300])
+
+    fake.streams = TRUEHD_STREAMS[:4] + MIXED_SUBTITLES
+    r = play(client="tv")
+    d = r.json()
+    tracks = {t["index"]: t for t in d["subtitle_tracks"]}
+    check("a text track in the viewer's language comes before the picture track", d["default_subtitle_index"] == 5, d["default_subtitle_index"])
+    check("embedded picture tracks count every subtitle stream inside the file, text ones too",
+          [tracks[i].get("order") for i in (3, 6, 8)] == [0, 2, 3] and tracks[5]["kind"] == "text" and "order" not in tracks[5],
+          {i: (t["kind"], t.get("order")) for i, t in tracks.items()})
+    check("an external subtitle file is not inside the file: no order, keeps its url",
+          tracks[7]["kind"] == "text" and "order" not in tracks[7] and tracks[7]["url"].endswith("Stream.vtt"), tracks[7])
+    client.put("/api/nl/prefs", json={"subtitles_on": False})
+    r = play(client="tv")
+    check("subtitles off by default and the audio is in the viewer's language: no forced track", r.json()["default_subtitle_index"] == -1, r.text[:200])
+    r = play(client="tv", audio=2)
+    check("the audio is Italian and the viewer is English: the forced English track switches on",
+          r.json()["default_subtitle_index"] == 8, r.json()["default_subtitle_index"])
+    client.put("/api/nl/prefs", json={"audio_lang": None, "subtitle_lang": None, "subtitles_on": None})
+    fake.streams = TRUEHD_STREAMS
 
     fake.mode = "convert"
     r = play(client="tv")
@@ -227,6 +277,11 @@ def run(tmp):
           all(n in r.text for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"')),
           [n for n in ('"pause"', '"resume"', '"seekTo"', '"setSubtitle"', "version()", 'case "time"') if n not in r.text])
     check("player-core.js drives bridge v5 (setAudioTrack, audioOrder)", all(n in r.text for n in ('"setAudioTrack"', "audioOrder")))
+    check("player-core.js drives bridge v6 (stats, embedded subtitle order)",
+          all(n in r.text for n in ("stats()", "canDrawEmbeddedSubtitles", "o.order = t.order", "nativeVersion: v6 ? 6")))
+    js_v6 = client.get("/static/nl/player.js").text
+    check("player.js: Playback info panel for the TV (v6 only), embedded subtitles chosen without a reload",
+          "Playback info" in js_v6 and "canShowStats" in js_v6 and 'track.kind === "embedded"' in js_v6 and "canDrawEmbeddedSubtitles" in js_v6)
     page = client.get(f"/nl/play/{alpha}?tv=1")
     check("the player page has the hidden converted-copy button", 'id="nl-convert"' in page.text and "Play a converted copy (lower quality)" in page.text, page.status_code)
     js = client.get("/static/nl/player.js").text

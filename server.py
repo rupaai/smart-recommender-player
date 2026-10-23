@@ -1112,7 +1112,7 @@ async def nl_cast_play(
 
 
 def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser", allow_conversion=False):
-    if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on")):
+    if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on") or prefer.get("subtitle_lang")):
         prefer = None
     if prefer:
         return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion)

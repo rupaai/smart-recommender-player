@@ -26,7 +26,7 @@ from urllib.parse import quote, unquote
 
 from services.device_profiles import BROWSER_PROFILE, TV_PROFILE
 from services import nl_picture, nl_settings
-from services.nl_people import pick_audio_index, pick_subtitle_track
+from services.nl_people import lang_key, pick_audio_index, pick_subtitle_track
 from services.jellyfin_service import JellyfinService
 
 PROXY_PREFIX = "/nl/jf/"
@@ -264,9 +264,13 @@ def _subtitle_url(stream: Dict[str, Any], jf_id: str, source_id: str) -> str:
     return proxy_url(f"Videos/{jf_id}/{source_id}/Subtitles/{stream.get('Index')}/0/Stream.vtt")
 
 
-def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str) -> Dict[str, list]:
-    """Audio and subtitle tracks from MediaSources[n].MediaStreams, ready for the browser."""
+def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str, embedded: bool = False) -> Dict[str, list]:
+    """Audio and subtitle tracks from MediaSources[n].MediaStreams, ready for the browser.
+    `embedded` (the TV, which plays the original file): a picture subtitle inside the file gets kind "embedded" and
+    `order`, its 0-based position among the file's own subtitle streams (external subtitle files do not count). The
+    app selects that track in Media3 and draws it; nothing is burned in. Text tracks keep their Stream.vtt URLs."""
     audio, subs = [], []
+    embedded_seen = 0
     for st in media_source.get("MediaStreams") or []:
         kind = st.get("Type")
         if kind not in ("Audio", "Subtitle") or st.get("Index") is None:
@@ -292,8 +296,27 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str) -> 
             track["label"] = subtitle_label(st)
             track["kind"] = "image" if image else "text"
             track["url"] = None if image else _subtitle_url(st, jf_id, source_id)
+            if embedded and not st.get("IsExternal"):
+                if image:
+                    track["kind"] = "embedded"
+                    track["order"] = embedded_seen
+                embedded_seen += 1
             subs.append(track)
     return {"audio_tracks": audio, "subtitle_tracks": subs}
+
+
+def forced_subtitle_index(tracks: Dict[str, list], audio_index: Optional[int], lang: Optional[str]) -> Optional[int]:
+    """TV: the forced subtitle track (foreign-language lines only) to switch on by itself, when the chosen audio is not
+    in the viewer's language. Text before picture. None when the languages match, or there is no such track."""
+    want = lang_key(lang)
+    if not want:
+        return None
+    audio = next((t for t in tracks["audio_tracks"] if t["index"] == audio_index), None)
+    if audio is None or lang_key(audio.get("language")) in ("", want):
+        return None
+    forced = [t for t in tracks["subtitle_tracks"] if t.get("is_forced") and lang_key(t.get("language")) == want]
+    forced.sort(key=lambda t: t.get("kind") != "text")
+    return forced[0]["index"] if forced else None
 
 
 # ------------------------------------------------------ remote subtitles (M5)
@@ -809,7 +832,7 @@ class JellyfinPlayback:
 
         default_subtitle_index = -1
         if prefer and (audio_index is None or subtitle_index is None):
-            first = extract_tracks(ms, jf_id, ms.get("Id") or jf_id)
+            first = extract_tracks(ms, jf_id, ms.get("Id") or jf_id, embedded=original_only)
             want_audio, want_sub = audio_index, subtitle_index
             if audio_index is None:
                 pick = pick_audio_index(first["audio_tracks"], prefer.get("audio_lang"))
@@ -874,7 +897,7 @@ class JellyfinPlayback:
         else:
             raise NotPlayable(self._cannot_play_message(jf_id, ms, "no stream offered", device))
 
-        tracks = extract_tracks(ms, jf_id, source_id)
+        tracks = extract_tracks(ms, jf_id, source_id, embedded=original_only)
         if audio_index is not None:
             selected_audio = audio_index
         elif default_audio is not None:
@@ -884,6 +907,11 @@ class JellyfinPlayback:
             selected_audio = defaults[0] if defaults else (
                 tracks["audio_tracks"][0]["index"] if tracks["audio_tracks"] else None
             )
+
+        if original_only and default_subtitle_index < 0 and prefer:
+            forced = forced_subtitle_index(tracks, selected_audio, prefer.get("subtitle_lang") or prefer.get("audio_lang"))
+            if forced is not None:
+                default_subtitle_index = forced
 
         details = self.item_details(jf_id)
         user_data = details.get("UserData") or {}
