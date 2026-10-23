@@ -12,6 +12,29 @@ fun residentMbFromStatm(statm: String?, pageBytes: Long = 4096L): Int {
     return (pages * pageBytes / (1024L * 1024L)).toInt()
 }
 
+private const val MB = 1024L * 1024L
+
+/** Media3's own memory buffer: 2000 + 200 segments of 64 KB (video + audio), about 15 s of a 92 Mbps remux. */
+const val DEFAULT_BUFFER_BYTES = 2_200 * 65_536
+
+/** Extra room for the back buffer: about 10 s of a 100 Mbps remux (lighter films keep 10 s in less). */
+const val BACK_BUFFER_BYTES = 128 * 1024 * 1024
+const val BACK_BUFFER_MS = 10_000
+
+/** How much the player may hold in memory: [targetBytes] in all, of which the last [backBufferMs] already played. */
+data class BufferPlan(val targetBytes: Int, val backBufferMs: Int)
+
+/**
+ * Keeps the last 10 s in memory (instant skip back) only when the app's heap cap ([maxHeapBytes], 384 MB with
+ * largeHeap) and the TV's free memory at the start of playback ([availBytes]) both have room for it; the forward
+ * buffer stays the size Media3 picks. Never more than 70% of the heap, so the rest of the app keeps its share.
+ */
+fun bufferPlan(maxHeapBytes: Long, availBytes: Long): BufferPlan {
+    val withBack = DEFAULT_BUFFER_BYTES.toLong() + BACK_BUFFER_BYTES
+    val fits = withBack <= maxHeapBytes * 7 / 10 && availBytes >= BACK_BUFFER_BYTES + 96 * MB
+    return if (fits) BufferPlan(withBack.toInt(), BACK_BUFFER_MS) else BufferPlan(DEFAULT_BUFFER_BYTES, 0)
+}
+
 /** Id prefix of the text tracks the page asks Media3 to side-load (see PlayerController). */
 const val SIDE_LOADED_SUBTITLE_PREFIX = "nlsub"
 
