@@ -36,6 +36,7 @@ Try changes on a copy of the catalogue: `DATABASE_PATH=/tmp/copy.db`.
 ## Git rules
 
 - Never push to `main`. Work on a branch and open a PR with `gh pr create`.
+- One branch per PR, named for what it does: `<type>/<short-topic>` with the PR title's type, e.g. `feat/wishmatch-imdb-ratings`, `fix/admin-token-trim`, `docs/branch-naming`. No random or session names (like `claude/project-thread-xxxx`), and don't reuse a branch for a second PR.
 - PR titles start with `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `ci:`, `style:`, `refactor:` or `build:` (`feat!:` for a breaking change); the `PR title` workflow fails the rest.
 - Never merge a PR. Labiba reviews and merges.
 - Do not fork. Push branches to `rupaai/smart-recommender-player`.
