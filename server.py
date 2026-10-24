@@ -20,6 +20,12 @@ from services.app_version import app_version, homelab_version
 
 homelab_secrets.load()
 
+# Python logging prints one JSON line per record, with levels, so Homelab's Logs can read it.
+# Needs no token. Called before anything else sets up logging.
+import homelab.logs
+
+homelab.logs.setup("INFO")
+
 import requests
 import uvicorn
 import yaml
@@ -2884,7 +2890,8 @@ def run_server(host: str = "0.0.0.0", port: int = 8000) -> None:
     print(f"💻 Access on your laptop:  http://localhost:{port}")
     print(f"📺 Jellyfin Server:        http://{get_local_ip()}:8096")
     print("=" * 65)
-    uvicorn.run("server:app", host=host, port=port, reload=False)
+    # log_config=None: uvicorn's own lines go through the JSON handler too, not its plain one.
+    uvicorn.run("server:app", host=host, port=port, reload=False, log_config=None)
 
 
 if __name__ == "__main__":
