@@ -14,7 +14,12 @@ WORKDIR /app
 
 # Dependencies first so this layer is cached until the lockfile changes.
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --frozen --no-dev --no-install-project
+# git is only needed to fetch the Homelab plugin (a git dependency); it is removed again.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && uv sync --frozen --no-dev --no-install-project \
+    && apt-get purge -y --auto-remove git \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY server.py database.py scanner.py enricher.py recommender_rules.yaml ./
 COPY services ./services

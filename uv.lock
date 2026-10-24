@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -379,6 +379,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/4d/59/b35106dfa71b6eef605dc88bd038fe99c7f86fb132a15b60d0bf2f235b2c/hf_xet-1.7.0-cp38-abi3-win_amd64.whl", hash = "sha256:2b7bb5727889b0f2436dbaaad8fc4c3e66b8240d992716989e0c086b4278b1bc", size = 3822644, upload-time = "2026-10-06T20:18:40.052Z" },
     { url = "https://files.pythonhosted.org/packages/48/cd/072313585f74fe9d441e2eb5e0a4703c30586cd709810ea369675f61b74e/hf_xet-1.7.0-cp38-abi3-win_arm64.whl", hash = "sha256:acc3851cf2576a8fb2ae926da863f4efabe21303cf292e9a44332802ab0dcc6a", size = 3662436, upload-time = "2026-10-06T20:18:42.205Z" },
 ]
+
+[[package]]
+name = "homelab-sdk"
+version = "0.1.0"
+source = { git = "https://github.com/rupaai/homelab?subdirectory=plugins%2Fpython&rev=a7cfc757be68dc2f84858d0c81b31a4be1c61bba#a7cfc757be68dc2f84858d0c81b31a4be1c61bba" }
 
 [[package]]
 name = "httpcore"
@@ -1397,6 +1402,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "guessit" },
+    { name = "homelab-sdk" },
     { name = "jinja2" },
     { name = "libtorrent" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1426,6 +1432,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'llm'", specifier = ">=1.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "guessit", specifier = ">=4.4.0" },
+    { name = "homelab-sdk", git = "https://github.com/rupaai/homelab?subdirectory=plugins%2Fpython&rev=a7cfc757be68dc2f84858d0c81b31a4be1c61bba" },
     { name = "jinja2", specifier = ">=3.1.3" },
     { name = "libtorrent", specifier = ">=2.1.1" },
     { name = "numpy", specifier = ">=1.24.0" },
