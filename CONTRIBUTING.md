@@ -5,7 +5,7 @@ You do not need to know GitHub yet. Go step by step.
 
 Labiba (GitHub: `rupaai`) owns this repo. Labiba reviews and merges every PR.
 
-Before you change code, read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md). It explains how the app works. [AGENTS.md](AGENTS.md) has the short rules for AI helpers.
+Before you change code, read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md). It explains how the app works. Also read the waiting notes in `handover/notes/`. [AGENTS.md](AGENTS.md) has the short rules for AI helpers.
 
 ## 1. Set up GitHub from zero
 
@@ -137,13 +137,13 @@ Example prompts:
 - "Read PROJECT_HANDOVER.md and explain in simple words how the Discover tab picks movies."
 - "Find where the download progress is shown and add a test for it. Run make check."
 - "I got this error when I ran make check. Explain what it means and suggest a fix." (Paste the error.)
-- "Look at my changes with git diff. Do I need to update PROJECT_HANDOVER.md? If yes, draft the line."
+- "Look at my changes with git diff. Do I need a handover note in handover/notes/? If yes, draft it."
 
 You are still responsible for what you push. Read what the AI wrote before you commit it.
 
 ## 6. Rules
 
-- **Keep the docs current.** Every PR that changes how something works must update [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) in the same PR.
+- **Keep the docs current.** Do not edit the feature blocks in [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md). Add a note in `handover/notes/<feature>/` (see [handover/README.md](handover/README.md)), and mark it `ready` when the feature is done. A bot folds it into PROJECT_HANDOVER.md.
 - **Secrets.** Only Labiba sees app secret values. Never ask for them, print them, log them, or commit them. This applies to you and to any AI helper.
 - **Mars.** Never run things on mars or change production without asking Labiba. Mars is the home box where the app runs.
 - **Fix causes and add tests.** Find why something broke and fix that. Do not hide the symptom. Add a test that would have caught it.
