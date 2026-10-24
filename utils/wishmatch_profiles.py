@@ -75,8 +75,9 @@ def system_prompt() -> str:
 
 
 def output_schema() -> Dict[str, Any]:
+    # The API's structured output refuses "maxItems"; the prompt asks for the limit and clean_words() enforces it.
     def words(cap: int) -> Dict[str, Any]:
-        return {"type": "array", "items": {"type": "string", "enum": WORDS}, "maxItems": cap}
+        return {"type": "array", "items": {"type": "string", "enum": WORDS}}
 
     return {
         "type": "object",
