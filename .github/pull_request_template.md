@@ -10,5 +10,6 @@
 
 - [ ] I added or updated tests.
 - [ ] `make check` passes.
-- [ ] I updated PROJECT_HANDOVER.md (or it is not needed because: ...).
+- [ ] I added a note in `handover/notes/<feature>/` (or it is not needed because: ...).
+- [ ] I marked the note `ready` if the feature is done.
 - [ ] No secrets in code, logs or screenshots.

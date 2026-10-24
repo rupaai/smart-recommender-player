@@ -7,6 +7,7 @@ People: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) first. It is the knowledge base for the project.
 Its section 6 ("Rules and conventions") also applies to you. Follow it. If this file and that section ever differ, ask Labiba.
+Also read the waiting notes in `handover/notes/`.
 
 ## Commands
 
@@ -29,7 +30,7 @@ Try changes on a copy of the catalogue: `DATABASE_PATH=/tmp/copy.db`.
 - Keep PRs small and about one thing.
 - Fix causes, not symptoms. Add a test for every fix and every new behavior.
 - Run `make check` before you say the work is done.
-- Keep the docs current. Every PR that changes how something works must update PROJECT_HANDOVER.md in the same PR. Keep it one short line per feature.
+- Keep the docs current. Do not edit the feature blocks in PROJECT_HANDOVER.md. Add a note in `handover/notes/<feature>/` (see handover/README.md), and mark it `ready` when the feature is done. A bot folds it into PROJECT_HANDOVER.md. Keep each note's line short.
 - Write plain, short text for users.
 
 ## Git rules
