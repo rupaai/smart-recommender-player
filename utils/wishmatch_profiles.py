@@ -2,24 +2,26 @@
 Written taste profiles (utils/wishmatch_profiles.py)
 
 For each person (row in `profiles`) this reads the titles they rated that have
-mood tags (media_items.vibe_tags), shows Claude Haiku the ones they loved most and
+mood tags (media_items.vibe_tags), shows a model the ones they loved most and
 disliked most, and stores a short written profile in wishmatch_profiles:
 a summary in plain second person, plus the mood words (services/vibe_vocab
 FEELS + GOOD_FOR) they like and avoid. Wishmatch counts those words when scoring
 (wishmatch.taste.declared_weight in recommender_rules.yaml). A profile somebody
 edited by hand (edited = 1) is never overwritten unless --overwrite-edited.
 
-Spends real API money (a few hundredths of a cent per person), so without --yes
-it only prints the estimated cost and the command to run, and calls nothing.
+By default the model is the open-weight one in the Mac's Ollama (wishmatch.tagging_model,
+the bake-off winner): free, about a minute per person. --haiku uses Claude Haiku instead,
+which spends real API money (about a tenth of a cent for two people), so with --haiku and
+without --yes it only prints the estimated cost and calls nothing.
 
-    uv run --extra llm python utils/wishmatch_profiles.py                  # estimate only
-    uv run --extra llm python utils/wishmatch_profiles.py --yes            # make and store profiles
-    uv run --extra llm python utils/wishmatch_profiles.py --yes --push http://server:8000
+    uv run python utils/wishmatch_profiles.py                          # free, Ollama
+    uv run python utils/wishmatch_profiles.py --push http://server:7101
         # also PUT each new profile to <URL>/api/rec/movies/profile/<person_id>
-        # (so the Mac, which has the API key and the ratings copy, can send them to the server)
+    uv run --extra llm python utils/wishmatch_profiles.py --haiku         # Haiku: estimate only
+    uv run --extra llm python utils/wishmatch_profiles.py --haiku --yes   # Haiku: make them (costs money)
 
-Needs ANTHROPIC_API_KEY in .env for --yes. DATABASE_PATH or --db picks the
-database (default: catalogue_full.db).
+OLLAMA_URL picks the Ollama server (default http://localhost:11434). --haiku needs
+ANTHROPIC_API_KEY in .env. DATABASE_PATH or --db picks the database (default: catalogue_full.db).
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import urllib.request
@@ -36,6 +39,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import DatabaseManager  # noqa: E402
 from services.vibe_vocab import FEELS, GOOD_FOR  # noqa: E402
 from utils import mood_tag  # noqa: E402
+from utils.mood_tag_ollama import rules_model  # noqa: E402
 
 MODEL = mood_tag.MODEL
 MAX_TOKENS = 600
@@ -165,6 +169,42 @@ def build_user_message(loved: List[Dict[str, Any]], disliked: List[Dict[str, Any
     return "\n".join(parts)
 
 
+def data_words(rated: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
+    """Liked and avoided mood words worked out from the ratings, no model needed: a word is liked when
+    it is more common among the titles they loved than among everything they rated (seen on 2+ of
+    them), and avoided when it is more common among the ones they disliked."""
+    def words(t: Dict[str, Any]) -> set:
+        return {w for w in (t["tags"].get("feels") or []) + (t["tags"].get("good_for") or []) if w in WORDS}
+
+    def lifted(group: List[Dict[str, Any]], cap: int) -> List[str]:
+        if not group or not rated:
+            return []
+        base = {w: sum(w in words(t) for t in rated) / len(rated) for w in WORDS}
+        counts = {w: sum(w in words(t) for t in group) for w in WORDS}
+        scored = [(counts[w] / len(group) - base[w], w) for w in WORDS if counts[w] >= 2]
+        return [w for lift, w in sorted(scored, reverse=True) if lift > 0][:cap]
+
+    loved = [t for t in rated if t["score"] > LOVED_ABOVE]
+    disliked = [t for t in rated if t["score"] < -LOVED_ABOVE]
+    likes = lifted(loved, LIKES_MAX)
+    return likes, [w for w in lifted(disliked, DISLIKES_MAX) if w not in likes]
+
+
+def summary_schema() -> Dict[str, Any]:
+    return {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}
+
+
+def summary_prompt(likes: List[str], dislikes: List[str]) -> str:
+    """For a small model: the words are worked out already, it only writes the summary."""
+    return (
+        f"\nTheir ratings show they are drawn to: {', '.join(likes) or 'nothing clear yet'}; "
+        f"and steer away from: {', '.join(dislikes) or 'nothing clear yet (no dislikes rated)'}.\n"
+        f"Write only `summary`: three short sentences, at most {SUMMARY_WORDS} words, second person ('You enjoy ...'), "
+        "no title names. "
+        "Answer only with the JSON object."
+    )
+
+
 def people(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     return [{"id": int(r["id"]), "name": r["name"]} for r in conn.execute("SELECT id, name FROM profiles ORDER BY id")]
 
@@ -205,17 +245,54 @@ def push(url: str, person_id: int, profile: Dict[str, Any]) -> bool:
 # Main
 # ---------------------------------------------------------------------------
 
-def main(argv: Optional[List[str]] = None, api: Any = None) -> int:
-    ap = argparse.ArgumentParser(description="Written taste profiles from ratings, made with Claude Haiku.")
+def ask_ollama(client: Any, message: str, rated: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Words from the ratings (data_words), and only the summary from the model: a small model
+    asked for the words too tended to copy the start of the word list."""
+    likes, dislikes = data_words(rated)
+    raw = client.generate(message + summary_prompt(likes, dislikes), schema=summary_schema(), system=system_prompt())
+    if not raw:
+        return None
+    try:
+        summary = (json.loads(raw) or {}).get("summary")
+    except (ValueError, AttributeError):
+        # A small model often runs past its length limit and the JSON is cut off: keep the text it wrote.
+        m = re.search(r'"summary"\s*:\s*"(.*)', raw, re.S)
+        summary = m.group(1).rstrip('"}\n ').replace('\\"', '"') if m else None
+    return {"summary": finish_sentence(summary), "likes": likes, "dislikes": dislikes}
+
+
+def finish_sentence(text: Any) -> str:
+    """At most SUMMARY_WORDS words, cut back to the last full sentence when there is one."""
+    cut = clean_summary(text)
+    end = max(cut.rfind(". "), cut.rfind("."), cut.rfind("!"))
+    return cut[:end + 1] if end > len(cut) // 2 else cut
+
+
+def ask_haiku(api: Any, message: str, usage: Dict[str, int]) -> Optional[Dict[str, Any]]:
+    msg = api.messages.create(**build_params(message))
+    usage["in"] += msg.usage.input_tokens
+    usage["out"] += msg.usage.output_tokens
+    if msg.stop_reason != "end_turn":
+        return None
+    try:
+        return json.loads(msg.content[0].text)
+    except (ValueError, IndexError, AttributeError):
+        return None
+
+
+def main(argv: Optional[List[str]] = None, api: Any = None, ollama: Any = None) -> int:
+    ap = argparse.ArgumentParser(description="Written taste profiles from ratings (Ollama by default, free).")
     ap.add_argument("--db", default=None, help="database (default: $DATABASE_PATH or catalogue_full.db)")
-    ap.add_argument("--yes", action="store_true", help="call the API and store the profiles (without it: estimate only)")
+    ap.add_argument("--model", default=None, help="Ollama model (default: wishmatch.tagging_model)")
+    ap.add_argument("--haiku", action="store_true", help="use Claude Haiku instead of Ollama (costs money)")
+    ap.add_argument("--yes", action="store_true", help="with --haiku: call the API (without it: estimate only)")
     ap.add_argument("--push", metavar="URL", default=None, help="also PUT each new profile to <URL>/api/rec/movies/profile/<id>")
     ap.add_argument("--overwrite-edited", action="store_true", help="also replace profiles that were edited by hand")
     args = ap.parse_args(argv)
 
     db_path = args.db or os.getenv("DATABASE_PATH") or "catalogue_full.db"
     db = DatabaseManager(db_path)
-    jobs = []      # (person, message)
+    jobs = []      # (person, message, rated titles)
     skipped = []
     with db.get_connection() as conn:
         for person in people(conn):
@@ -227,7 +304,7 @@ def main(argv: Optional[List[str]] = None, api: Any = None) -> int:
             if not loved and not disliked:
                 print(f"  {person['name']}: no rated titles with mood tags, skipped")
                 continue
-            jobs.append((person, build_user_message(loved, disliked)))
+            jobs.append((person, build_user_message(loved, disliked), rated_titles(conn, person["id"])))
     for person in skipped:
         print(f"  {person['name']}: profile was edited by hand, kept (--overwrite-edited replaces it)")
 
@@ -235,35 +312,44 @@ def main(argv: Optional[List[str]] = None, api: Any = None) -> int:
         print("Nothing to do.")
         return 0
 
-    chars = sum(len(system_prompt()) + len(m) for _, m in jobs)
-    tokens_in, tokens_out, estimate = estimate_cost(chars, len(jobs))
-    print(f"{len(jobs)} profile(s) with {MODEL}: about {tokens_in:,} input + {tokens_out:,} output tokens, "
-          f"estimated cost ${estimate:.4f} (standard, non-batch prices).")
-    if not args.yes:
-        command = "uv run --extra llm python utils/wishmatch_profiles.py"
-        if args.db:
-            command += f" --db {args.db}"
-        command += " --yes"
-        if args.push:
-            command += f" --push {args.push}"
-        if args.overwrite_edited:
-            command += " --overwrite-edited"
-        print(f"Nothing was sent. To make the profiles, run:\n    {command}")
-        return 0
+    usage = {"in": 0, "out": 0}
+    if args.haiku:
+        model = MODEL
+        chars = sum(len(system_prompt()) + len(m) for _, m, _ in jobs)
+        tokens_in, tokens_out, estimate = estimate_cost(chars, len(jobs))
+        print(f"{len(jobs)} profile(s) with {model}: about {tokens_in:,} input + {tokens_out:,} output tokens, "
+              f"estimated cost ${estimate:.4f} (standard, non-batch prices).")
+        if not args.yes:
+            command = "uv run --extra llm python utils/wishmatch_profiles.py --haiku"
+            if args.db:
+                command += f" --db {args.db}"
+            command += " --yes"
+            if args.push:
+                command += f" --push {args.push}"
+            if args.overwrite_edited:
+                command += " --overwrite-edited"
+            print(f"Nothing was sent. To make the profiles, run:\n    {command}")
+            return 0
+        api = api or mood_tag.client()
+        ask = lambda message, rated: ask_haiku(api, message, usage)  # noqa: E731
+    else:
+        model = args.model or rules_model()
+        if not model:
+            print("No Ollama model: set wishmatch.tagging_model or pass --model.")
+            return 1
+        if ollama is None:
+            from utils.mood_tag_ollama import client as ollama_client
+            ollama = ollama_client(model)
+            if not ollama.status().get("has_model"):
+                print(f"Ollama has no {model}; run `ollama pull {model}` first.")
+                return 1
+        print(f"{len(jobs)} profile(s) with {model} in Ollama (free).")
+        ask = lambda message, rated: ask_ollama(ollama, message, rated)  # noqa: E731
 
-    api = api or mood_tag.client()
-    total_in = total_out = 0
-    for person, message in jobs:
-        msg = api.messages.create(**build_params(message))
-        total_in += msg.usage.input_tokens
-        total_out += msg.usage.output_tokens
-        if msg.stop_reason != "end_turn":
-            print(f"  {person['name']}: the answer stopped early ({msg.stop_reason}), skipped")
-            continue
-        try:
-            raw = json.loads(msg.content[0].text)
-        except (ValueError, IndexError, AttributeError):
-            print(f"  {person['name']}: the answer was not JSON, skipped")
+    for person, message, rated in jobs:
+        raw = ask(message, rated)
+        if not isinstance(raw, dict):
+            print(f"  {person['name']}: the answer was not usable, skipped")
             continue
         summary = clean_summary(raw.get("summary"))
         likes = clean_words(raw.get("likes"), LIKES_MAX)
@@ -271,14 +357,14 @@ def main(argv: Optional[List[str]] = None, api: Any = None) -> int:
         if not summary:
             print(f"  {person['name']}: the answer had no summary, skipped")
             continue
-        db.set_wishmatch_profile(person["id"], summary, likes, dislikes, MODEL, edited=False)
+        db.set_wishmatch_profile(person["id"], summary, likes, dislikes, model, edited=False)
         print(f"  {person['name']}: {summary}\n    likes: {', '.join(likes) or '-'}  |  dislikes: {', '.join(dislikes) or '-'}")
         if args.push:
-            ok = push(args.push, person["id"], {"summary": summary, "likes": likes, "dislikes": dislikes, "model": MODEL})
+            ok = push(args.push, person["id"], {"summary": summary, "likes": likes, "dislikes": dislikes, "model": model})
             print(f"    pushed to {args.push}" if ok else "    NOT pushed")
-    print(f"Spent ${cost_of(total_in, total_out):.4f} ({total_in:,} input + {total_out:,} output tokens).")
+    if args.haiku:
+        print(f"Spent ${cost_of(usage['in'], usage['out']):.4f} ({usage['in']:,} input + {usage['out']:,} output tokens).")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

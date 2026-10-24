@@ -52,11 +52,20 @@ class FakeClient:
                                usage=SimpleNamespace(input_tokens=1000, output_tokens=200))
 
 
-def run(argv, api=None):
+def run(argv, api=None, ollama=None):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        code = wp.main(argv, api=api)
+        code = wp.main(argv, api=api, ollama=ollama)
     return code, buf.getvalue()
+
+
+class FakeOllama:
+    def __init__(self, answer):
+        self.answer, self.calls = answer, 0
+
+    def generate(self, prompt, schema=None, system=""):
+        self.calls += 1
+        return json.dumps(self.answer)
 
 
 def main():
@@ -88,7 +97,7 @@ def main():
         twm.rate(pdb, 1, pids[f"Tense Film {i}"], 3)
     twm.rate(pdb, 1, pids["Horror Film"], 1)
     api = FakeClient({"summary": "x", "likes": [], "dislikes": []})
-    code, out = run(["--db", pdb.db_path], api=api)
+    code, out = run(["--db", pdb.db_path, "--haiku"], api=api)
     check("exits 0 and calls nothing", code == 0 and not api.calls, (code, len(api.calls)))
     check("prints the command with --yes", "--yes" in out and "wishmatch_profiles.py" in out, out)
     cost = float(out.split("estimated cost $")[1].split(" ")[0])
@@ -99,7 +108,7 @@ def main():
     answer = {"summary": " ".join(["You enjoy light and funny films."] * 40),
               "likes": ["silly", "witty", "bogus", "silly", "tense"], "dislikes": ["tense", "dread", "nonsense"]}
     api = FakeClient(answer)
-    code, out = run(["--db", pdb.db_path, "--yes"], api=api)
+    code, out = run(["--db", pdb.db_path, "--haiku", "--yes"], api=api)
     check("one call, for the one person with ratings", code == 0 and len(api.calls) == 1, len(api.calls))
     call = api.calls[0]
     check("Haiku, thinking off, JSON schema, no batch",
@@ -121,9 +130,9 @@ def main():
     print("\n[4] Hand-edited profiles are kept")
     pdb.set_wishmatch_profile(1, "My own words.", ["cozy"], [], None, True)
     api = FakeClient(answer)
-    code, out = run(["--db", pdb.db_path, "--yes"], api=api)
+    code, out = run(["--db", pdb.db_path, "--haiku", "--yes"], api=api)
     check("no call and the edit is kept", not api.calls and pdb.get_wishmatch_profile(1)["summary"] == "My own words.", out)
-    code, out = run(["--db", pdb.db_path, "--yes", "--overwrite-edited"], api=FakeClient(answer))
+    code, out = run(["--db", pdb.db_path, "--haiku", "--yes", "--overwrite-edited"], api=FakeClient(answer))
     check("--overwrite-edited replaces it", pdb.get_wishmatch_profile(1)["edited"] is False, out)
 
     print("\n[5] A declared dislike moves a person with no ratings")
@@ -175,6 +184,32 @@ def main():
         check("GET returns what was stored", r.status_code == 200 and r.json()["summary"] == "You like quiet films.", r.text)
         check("an empty summary is refused", client.put("/api/rec/movies/profile/1", json={"summary": "  "}).status_code == 422)
         check("the server's own database has it", server.db.get_wishmatch_profile(2)["likes"] == ["silly"])
+
+    print("\n[Ollama] The default: the bake-off winner, free")
+    o_db = twm.catalogue()
+    o_ids = twm.ids_by_title(o_db)
+    for i in range(6):
+        twm.rate(o_db, 1, o_ids[f"Funny Film {i}"], 9)
+        twm.rate(o_db, 1, o_ids[f"Tense Film {i}"], 2)
+    fake = FakeOllama({"summary": "You like gentle comedies.", "likes": ["cozy"], "dislikes": []})
+    never = FakeClient({})
+    code, out = run(["--db", o_db.db_path, "--model", "gemma3:4b", "--overwrite-edited"], api=never, ollama=fake)
+    prof = o_db.get_wishmatch_profile(1)
+    check("without --haiku the profiles come from Ollama, no API call", code == 0 and fake.calls >= 1 and not never.calls, out)
+    check("the profile records the Ollama model", prof and prof["model"] == "gemma3:4b", prof)
+    check("liked and avoided words come from the ratings, not the model",
+          prof and set(prof["likes"]) <= {"silly", "witty"} and prof["likes"] and "tense" in prof["dislikes"]
+          and "cozy" not in prof["likes"], prof)
+    check("it says it is free", "free" in out, out)
+
+    class CutOff(FakeOllama):
+        def generate(self, prompt, schema=None, system=""):
+            return '{"summary": "You like silly films. You avoid tense ones. You also enjoy long'
+
+    run(["--db", o_db.db_path, "--model", "gemma3:4b", "--overwrite-edited"], ollama=CutOff({}))
+    prof = o_db.get_wishmatch_profile(1)
+    check("a cut-off answer keeps its full sentences", prof["summary"] == "You like silly films. You avoid tense ones.",
+          prof["summary"])
 
     schema_text = json.dumps(wp.output_schema())
     check("the Haiku schema uses no keywords the API refuses (maxItems, minItems)",
