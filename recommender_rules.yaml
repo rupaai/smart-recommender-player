@@ -314,6 +314,7 @@ wishmatch:
     taste: 0.6
     quality: 0.3
     crowd: 0.4          # liked by MovieLens fans of what you liked (films only)
+    genre_hint: 0.4     # the genre a word hints at ("scary" -> Horror, "laugh" -> Comedy; genre_hints above)
     trait: 1.0          # inside the match: a mood dial the wish names
     tag: 1.0            # inside the match: a feeling or occasion the wish names
     avoid_tag: 1.0      # inside the match: something the wish does not want
@@ -368,6 +369,15 @@ wishmatch:
   # TMDB rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
   quality_floor: 5.0
   quality_ceiling: 8.5
+  # ...times votes / (votes + this), so a rating from few votes counts less.
+  quality_votes: {movie: 1000, tv: 300}
+  # Extra genre hints for Wishmatch only (the legacy engine keeps genre_hints above).
+  genre_hints:
+    Drama: [tearjerker, tearjerkers, cry, crying, sad, moving, emotional]
+    Romance: [romantic, swoony, date]
+    Thriller: [tense, suspense, suspenseful, gripping, edge]
+    Science Fiction: [space, future, futuristic, aliens, robots]
+    Animation: [cartoon, cartoons]
   # Plain word lookup that turns a typed wish into mood words (build step 4 adds a
   # language model; this stays as its fallback). Phrases match longest first; a
   # "no" / "not" just before a phrase flips it. Every feeling and occasion word in

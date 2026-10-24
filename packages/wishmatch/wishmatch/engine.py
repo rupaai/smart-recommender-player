@@ -118,6 +118,8 @@ class Wishmatch:
                 for item_id in self.adapter.seen_by(person) or ():
                     seen[item_id] = seen.get(item_id, 0) + 1
         seen_penalty = float(settings["people"].get("seen_penalty", 0.0))
+        # Optional project-specific soft points (the movie adapter: genres the wish hints at).
+        bonus = self.adapter.bonus(request) if hasattr(self.adapter, "bonus") else None
         crowds = self.crowd(request.people, reactions, settings)
         crowd_added = 0
         if crowds and not only:
@@ -160,6 +162,8 @@ class Wishmatch:
                      + float(w["quality"]) * it.quality + float(w["crowd"]) * crowd)
             if it.id in seen:
                 score -= seen_penalty * seen[it.id] / len(request.people)
+            if bonus is not None:
+                score += float(bonus(it))
             picks.append(Pick(item=it, score=round(score, 4), match=round(fit, 3), taste=round(taste, 3),
                               crowd=round(crowd, 3), because=because,
                               reasons=explain([x for x in match_words if x not in hidden],

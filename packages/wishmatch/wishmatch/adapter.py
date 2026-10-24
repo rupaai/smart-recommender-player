@@ -36,6 +36,10 @@ class Adapter(Protocol):
         """OPTIONAL. Items this person has already seen. Watching together, an item some of
         the people have seen is pushed down by settings["people"]["seen_penalty"]."""
 
+    def bonus(self, request: Request) -> Any:
+        """OPTIONAL. A function item -> extra points for this request (or None): the project's own
+        soft rules, e.g. genres a typed word hints at."""
+
     def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
         """For each of these items, the items its fans also liked: {item: {other item: similarity 0..1}}.
         Return {} if there is no crowd data."""
