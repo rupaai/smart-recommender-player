@@ -2,14 +2,17 @@
 
 Read this first in a fresh session instead of reading the whole repo. It says what the project is, where things live, what state each part is in, and what is still open. History (build logs, per-task changelogs, verification notes, old branch lists) is in `docs/HANDOVER_ARCHIVE.md`; look there only when you need the detail of how something was built.
 
-**Keeping it current:** when you finish a feature, change its one line here (state, where it lives, what is still open) and update "Branches and open work". Do not add PR logs, dated changelogs or test-run notes; those belong in the PR. Section numbers are referenced from other docs (§10.6, §10.7, §10.8, §12, §13, §14), so keep them stable.
+**Keeping it current:** do not edit the text inside the `feature:` and `open:` markers (hidden HTML comments). Add a note in `handover/notes/<feature>/` instead (see `handover/README.md`). When the feature is done, mark the note `ready`. A bot then opens a `docs: fold handover notes` PR that copies the note into this file. Notes that are still waiting are part of the current state, so read `handover/notes/` too. Everything outside the markers can be edited directly. Do not add PR logs, dated changelogs or test-run notes; those belong in the PR. Section numbers are referenced from other docs (§10.6, §10.7, §10.8, §12, §13, §14), so keep them stable.
 
 ## Branches and open work
 - `main` (up to PR #96, 2026-10-21): the original app, the mood-based questions pop-up (§10.10), the Northern Lights player and TV app M0-M10c (§14), the Homelab deployment (§13), the bug-audit fixes B1-B15 (PRs #80-#91), watched cleanup (§13), the recommender rules file (§4 B1, PR #94), secrets as files (PR #95) and both Jellyfin users (PR #96). Schema **v20**. Jellyfin stays the media engine behind the new player (§14). New work branches off `main`.
+<!-- open:wishmatch -->
 - **Next: Wishmatch** (§17), a new recommender that runs beside the current ones. Design agreed 2026-10-21; steps 1-5 done (tags on `mars`; package + movie adapter; MovieLens crowd; Ollama wish reader; questions per request), switch still `legacy`; step 6 (taste profiles + model bake-off) next.
+<!-- /open:wishmatch -->
 - `northern-lights-player-app`: finished (merged into `main`); can be deleted.
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
 - `codex/decouple-household-server-routers` (2026-10-14, not merged, no PR here): splits `server.py` routes and household config; now far behind `main`. Ask Labiba before reviving or deleting it.
+<!-- new-open-work -->
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
 ## 1. What this is
@@ -33,12 +36,24 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Migrations are additive and idempotent. Tests that pin a schema number use "this version or newer".
 
 ## 4. Core subsystems
+<!-- feature:search-download -->
 - **A. Search and download** (`torrent_service.py`): providers Prowlarr (optional, `PROWLARR_URL`/`PROWLARR_API_KEY`) then YTS then Apibay. Downloads run as asyncio tasks tracked in the in-memory `downloads_store`; finished files are organised into Jellyfin's layout (`Movie (Year)/…`, `Show (Year)/Season XX/Show - SxxEyy`) and registered in `media_sources`. Healthy Prowlarr indexers: YTS, ThePirateBay, NyaaSi, Knaben (EZTV unreachable; 1337x and friends need FlareSolverr, left out). Disk guard: `torrent.max_media_gb`, `torrent.min_free_gb`.
+<!-- /feature:search-download -->
+<!-- feature:recommender -->
 - **B. Recommender** (`recommender_service.py`): SQL hard filters, a Bayesian quality cut (`shortlist_size`), personal taste scoring, the request's genres and words, vibe-search boost, MMR (`final_pool`). `route_recommend()` chooses legacy or TIGER (`recommender.engine_mode`: fallback / legacy_only / generative_only; generative after 5 rated items, and only for requests with no typed words). Profile modes me / partner / together; co-view tiers A/B/C.
+<!-- /feature:recommender -->
+<!-- feature:recommender-rules -->
 - **B1. Recommender rules** (`recommender_rules.yaml`, loaded by `services/recommender_rules.py`, `RECOMMENDER_RULES_PATH` overrides): the only place for word lists and personal choices. Genre names typed ("comedy") are a hard filter, "no X" a hard exclusion; genre hints ("laugh", "scary") pull hard (+2) and add that genre's best titles to the shortlist; tones ("relaxing", "cozy") pull softly and exclude what nothing else asks for; "less X" pushes down. Typed genres beat the mood card, whose genres then only pull. Foreign gate: a non-English title (`home_languages: [en]`) shows only at TMDB 7.8+ with 2,000+ votes (shows 500+), unless the request names a place or language, says "foreign", or ranks the library (`only_ids`). Also holds concept themes, mood cards, places, Choose-for-us defaults, profile mix, tiers, memory, taste and spread numbers. Funnel sizes, engine mode and the taste-model switch stay in `config.yaml`.
+<!-- /feature:recommender-rules -->
+<!-- feature:training -->
 - **C. Training** (`training/`): TIGER pipeline (`training/README.md` steps A-H, `retrain_tiger.sh`) and the vibe index (`build_vibe_index.py`). Needs torch: Mac only.
+<!-- /feature:training -->
+<!-- feature:jellyfin -->
 - **D. Jellyfin** (`jellyfin_service.py`): creates and repairs the Movies and Shows libraries, refreshes and checks visibility, diagnostics. The server boots fine when Jellyfin is down.
+<!-- /feature:jellyfin -->
+<!-- feature:tiger -->
 - **E. TIGER** (`generative_retriever.py`): semantic-ID generative retrieval, artifacts in `models/tiger/` (must be built from the same catalogue). The deployed model is still the old synthetic one until the Mac retrain runs.
+<!-- /feature:tiger -->
 
 ## 5. Running and testing
 - Run: `uv run python server.py` (or `uv run uvicorn server:app --host 0.0.0.0 --port 8000`), at `http://localhost:8000`. Northern Lights is under `/nl/` and `/nl/tv/`. Try changes on a COPY of the catalogue (`DATABASE_PATH=/tmp/copy.db`).
@@ -73,54 +88,124 @@ Train on the Mac, serve on `mars`. Vibe search = embeddings + clusters. LLM mood
 The app is **Northern Lights**. The original app's look is the ticket look (§6). `DESIGN.md` is still to be written from it. The variable font `static/fonts/Archivo-Variable.ttf` is committed; the CSS also asks for a `.woff2` that does not exist (a harmless 404).
 
 ## 10. Recommender v2 features (state)
+<!-- feature:mood-tags -->
 - **10.1 Mood tags + TMDB vibe backfill:** `utils/backfill_tmdb_vibe.py` (free) and `utils/mood_tag.py` (costs money). **Run on 2026-10-08 on the Mac's `catalogue_full.db`:** 48,260 titles tagged by Haiku for $5.30 (pilot + 5 batches, see `mood_tag_batches`, `reports/mood_tag_run.md`); `facets` there come from those tags. Confirmed on `mars` on 2026-10-21: `GET /api/vibe/status` reports 48,260 titles with mood tags out of 50,501 (50,497 with facets), the same count as the Mac, so no catalogue patch is needed. Only the questions pop-up, the off-by-default taste model and the vibe index read them; typed searches do not use them yet.
+<!-- /feature:mood-tags -->
+<!-- feature:search-to-rate -->
 - **10.2 Search to rate:** done (`services/catalogue_search.py`, Rate tab search, TMDB import).
+<!-- /feature:search-to-rate -->
+<!-- feature:feedback-logging -->
 - **10.3 Feedback logging:** done (`discover_sessions`, `discover_impressions`, outcomes shown < opened < dismissed < downloaded < played < rated).
+<!-- /feature:feedback-logging -->
+<!-- feature:vibe-documents -->
 - **10.4 Vibe documents:** done (`services/vibe_document.py`).
+<!-- /feature:vibe-documents -->
+<!-- feature:vibe-engine -->
 - **10.5 Vibe engine:** done (`training/build_vibe_index.py` on the Mac, `services/vibe_index.py` serves). Real-model build depends on the Mac run; rebuild after backfills.
+<!-- /feature:vibe-engine -->
+<!-- feature:questions-popup -->
 - **10.6 Questions pop-up:** done. It runs on the mood map (`MoodSession`, §10.10) and opens on every search while "Ask me a few questions first" is on; the old dial-based `PopupSession` is still in the repo. If it never opens, the serving catalogue has no facets or mood tags (`GET /api/vibe/status` shows `mood_data`).
+<!-- /feature:questions-popup -->
+<!-- feature:verdict-ratings -->
 - **10.7 Verdict ratings:** done. Five verdicts (rewatch, loved, liked, meh, not for me), chips, vibe-check questions, inferred verdicts for old 1-10 ratings, "Sort out my 7s".
+<!-- /feature:verdict-ratings -->
+<!-- feature:taste-model -->
 - **10.8 Taste model** (`facet_fit`, `cluster_affinity`): built, **off by default** (`recommender.taste_model.enabled`). The offline check did not beat the current ordering; turn on after more confirmed verdicts and re-run `utils/eval_taste_model.py`.
+<!-- /feature:taste-model -->
+<!-- feature:pairs -->
 - **10.8b "This or that" pairs:** done (`services/pairs.py`, Bradley-Terry nudge). Ranking does not read the pair nudge yet.
+<!-- /feature:pairs -->
+<!-- feature:season-verdicts -->
 - **10.9 Per-season TV verdicts:** done. `utils/backfill_season_counts.py` TMDB pass still to run on the Mac.
+<!-- /feature:season-verdicts -->
+<!-- feature:mood-map -->
 - **10.10 Mood map:** 30 night moods in 6 groups (`vibe_moods.py`), entropy question picker (`mood_questions.py`, `mood_popup.py`), ranking by mood mix (`recommender.mood_weight`, 3.0), "Tonight: …" line in results. Weights are first guesses; tune by playing it. No learning across nights yet.
+<!-- /feature:mood-map -->
+<!-- feature:variety -->
 - **10.11 Variety and animation balance** (2026-10-14, PR #70): the candidate pool is now capped at 500 and up to 200 are shown (`shortlist_size`, `final_pool`); mood re-ranking can only reorder the candidates in that capped pool. Discover remembers what it showed: a title shown and not opened loses 1 point per showing, fading over 14 days and capped at 3. "Not this one" is pushed out for 30 days, and a series shares the penalty (`_apply_memory`, `get_shown_memory`). Genre spread allows at most 2 of any 10 picks from one shelf (animation, horror, documentary, music, war, western, family) unless asked (`apply_genre_spread`). "Grown-up" pushes animation and family down (option `avoid`), and animation weight is cut in Cosy, Brain off, Adventure and Background. Taste is averaged (`build_taste_affinity`): how much more you liked a genre than your average, shrunk, then averaged over the film's genres, with keywords added. Leave-one-out on Labiba's 85 ratings gives rank correlation +0.15, against 0 for the old capped sum (`utils/eval_taste_formula.py`). The signal is weak, so re-check as ratings grow. On her Mac copy, the same search on 6 nights gave 60 different top-10 films (10 before), and animation is at most 2 in any top 10.
+<!-- /feature:variety -->
 - **Not built:** Phase 5 learning (weight fitting, `p(option)`, `usefulness(q)`), co-view predictor (movies only), Watch later as a ranking signal.
+<!-- new-features -->
 
 ## 11. Download tab and "Best match" sort
+<!-- feature:download-tab -->
 Done. Downloads start only from the Download tab ("Choose a copy" on Discover jumps there with the catalogue link). `services/torrent_ranking.py` scores quality × seeder health × size fit × scope match; tuning numbers in `config.yaml` `torrent_ranking:`. Numbers were tuned on sample lists only; tune from real results.
 Each result's download slot is keyed by the torrent's info hash (`downloadSlotId` in `static/app.js`), never by its position in the list, so re-sorting or searching again keeps progress, Cancel and Play on the copy that was picked; the same torrent listed twice is drawn once (`tests/js/direct_download_slots_check.js`).
+<!-- /feature:download-tab -->
 
 ## 12. Watch later
+<!-- feature:watch-later -->
 Done (schema v11). One shared list, one row per person per title (`watch_later`), "I'm …" switch in the header, bookmark on Discover / Rate / search, the Later tab, auto-done on rating or finishing. Northern Lights M6 adds "Just me" rows and yes / maybe / pass answers (§14).
+<!-- /feature:watch-later -->
 
 ## 13. Deployment
+<!-- feature:deployment -->
 Live on `mars` under Homelab (`homelab.yaml`; Jellyfin and Prowlarr are Homelab services). CI (`.github/workflows/ci.yml`) runs `make check` and pushes a linux/amd64 image `ghcr.io/rupaai/smart-recommender-player:sha-<sha>` for every push to `main`; Homelab puts it on dev, and prod waits for Promote. Prod also answers on port 8000 (the TV app's and the Mac's address). Secrets (`TMDB_API_KEY`, `JELLYFIN_API_KEY`, ...) are set in the Homelab companion and arrive as files in `/run/secrets` (`secrets_as: files`; `services/homelab_secrets.py` copies them into the environment at start-up, older Homelab still uses env vars); `ADMIN_TOKEN` is made by Homelab (`generate_secrets`; copy it from Apps -> Northern Lights -> Secrets), and the cast secret is kept by the app in `/data`. Running downloads are stored in SQLite and start again after a restart. The old couchcinema deploy scripts are gone; README.md has the steps to remove what is left on `mars`. Admin API under `/admin` (Bearer `ADMIN_TOKEN`) for exports, catalogue patches and model bundles. Mac training run, no schedule (Labiba's choice, 2026-10-19: the Mac is off at night): the **Train CouchCinema** button (`ops/mac/train-now.sh`, put in `~/Applications` by `ops/mac/install.sh`, which also removes the old launchd job) checks `/healthz`, then runs `ops/mac/nightly.sh`: backup, catalogue refresh, TIGER retrain, vibe index build, eval gate, publish bundle; catalogue refresh when `~/.couchcinema/last-catalogue` is a week old. Full steps: `ops/mac/README.md`.
+<!-- /feature:deployment -->
+<!-- feature:watched-cleanup -->
 - **Watched cleanup** (`services/media_cleanup.py`, `media_cleanup:` in `homelab/config.yaml`): once a day, deletes a movie or episode that every configured person watched, the last of them over 7 days ago, unless it or its show is a Jellyfin favorite. Only under Movies and Shows; subtitles and empty folders go too. Ships in **dry run** (admin page and log list what would go); set `dry_run: false` to delete. Media cap on `mars`: `torrent.max_media_gb: 500`.
+<!-- /feature:watched-cleanup -->
+<!-- feature:version -->
 - **Version** (`services/app_version.py`): Homelab's `HOMELAB_VERSION` (e.g. `v0.4.0`, `v0.4.0-dev.2`; unset locally) shows in `/healthz` as `version` (null when unset) and as the API docs version (`dev` when unset); the TV app's settings screen shows `Server <version>` when the server sends one. `pyproject.toml` version is only the starting value for Homelab.
-- **JSON logs** (`server.py`, `tests/test_homelab_logs.py`): start-up calls `homelab.logs.setup("INFO")` from the `homelab-sdk` plugin (pinned git commit in `pyproject.toml`), so logging prints one JSON line with a level per record for Homelab Logs; no token needed. The Dockerfile installs git only to fetch it.
+<!-- /feature:version -->
 - Known gap: titles added by the catalogue refresh get no TIGER semantic code until the prepare / RQ-VAE steps are re-run by hand.
 
 ## 14. Northern Lights player and TV app
 Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H, D) are in `docs/northern-lights/`. Pages: web `/nl/…`, TV `/nl/tv/…`, player `/nl/play/{id}` (`?source=` for an episode, `?tv=1` for the remote).
+<!-- feature:nl-player -->
 - **M0-M1 Player** (merged): `jellyfin_playback.py`, `device_profiles.py` (browser profile from probed codecs), `static/nl/player-core.js` (the only file touching hls.js, the `<video>` or the native bridge), `player.js`. Audio and subtitle menus, resume, skip-length chip, progress reports.
+<!-- /feature:nl-player -->
+<!-- feature:nl-browse -->
 - **M2 Browse** (merged): `nl_browse.py`, home with Continue Watching, Movies, Shows, title and show pages, search, next-episode card and per-show autoplay. Titles whose files are gone are hidden.
+<!-- /feature:nl-browse -->
+<!-- feature:nl-tv -->
 - **M3 TV** (merged): TV pages with `static/nl/tv/focus.js`; the TV bar is Home, Downloads, Search, with the person as a round initial in the top-right corner (Watchlist and Choose pages still exist at `/nl/tv/watchlist`, `/nl/tv/choose` but are not in the bar); Android app in `tv-app/` (WebView in front of a headless Media3 player, bridge `window.NorthernLightsNative`, now **v6**; Media3 keeps a disk cache for converted (HLS) streams, `PlaybackCache.kt`; the original file streams straight to memory since 2026-10-23, because writing ~90 Mbps to the TV's flash can hold loading to the film's own bitrate and wears it; memory buffer: `largeHeap` is on (heap cap 192 MB to 384 MB on the TCL TV, which has 1.8 GB RAM and ~245 MB free while playing), and `bufferPlan()` in `PlaybackLogic.kt` adds a 10 s back buffer (128 MB on top of Media3's ~144 MB forward buffer) only when the heap and the TV's free memory have room, so a skip back needs no download; a 30 s back + 30 s ahead buffer (~700 MB at 92 Mbps) does not fit this TV. The menu page is not running during playback: the player is its own page (`/nl/play/...`), so there is nothing extra to put to sleep); APK built by `.github/workflows/tv-app.yml`, debug-signed with the committed keystore; versionCode is the CI run number (version 1.0.<run> in the TV's Settings > Apps, artifact and file `northern-lights-tv-<run>`), so you can tell which build is installed. **Self-update** (2026-10-23): CI's `publish` job puts each `main` build on the fixed pre-release `tv-app` (`northern-lights-tv.apk` + `version.json` with `versionCode`); the app (`UpdateCheck.kt`, `AppUpdater.kt`) checks it on every resume (never during playback; Later skips that build) and from Settings > Check for updates, downloads into a `PackageInstaller` session, and Android asks the viewer for OK; the first time it asks to allow installs from Northern Lights. Homelab's release tool ignores the tag (not semver). The TV me page shows "TV app: server address and updates" when the bridge has `openSettings()`, because the Menu key and long Back were not reachable on the TCL remote.
+<!-- /feature:nl-tv -->
+<!-- feature:nl-subtitles -->
 - **M5 Subtitles** (merged): search and download through Jellyfin's OpenSubtitles plugin, appearance (size, background, position), delay (web only). Text subtitle URLs always end in `Stream.vtt` (Jellyfin converts; the TV app only reads WebVTT, so `.srt` DeliveryUrls showed nothing). TV: subtitle menus and the finder pause the film while open; "off" hides Media3's subtitle view instead of re-selecting tracks; text tracks are fetched once 8 s after a stream starts so Jellyfin has them extracted. The finder is a right-hand sheet on the TV (cleaned release names, one plain meta line, no Close button: Back closes).
+<!-- /feature:nl-subtitles -->
+<!-- feature:nl-whos-watching -->
 - **M4 Who's watching** (merged, switched on in `homelab/config.yaml`: Labiba = Jellyfin user `rupaai`, Gabriele = `gabstevens`, by name since prod's users were re-created on 2026-10-21): people in `northern_lights.people` config, cookie `nl_viewer` (a person or "Both of us"), per-person Jellyfin user, progress written for each viewer, per-person prefs (`/api/nl/prefs`), finishes rated to the right profiles.
+<!-- /feature:nl-whos-watching -->
+<!-- feature:nl-picks -->
 - **M6 Picks for two** (merged, `nl_picks.py`): watchlist with shared and "Just me" titles, yes / maybe / pass, a "For both of us" row from the existing recommender, runtime chips.
+<!-- /feature:nl-picks -->
+<!-- feature:nl-player-polish -->
 - **M7a Player polish** (merged, `nl_player_extras.py`): trickplay thumbnails, chapters, skip intro / credits, phone gestures, speed.
+<!-- /feature:nl-player-polish -->
+<!-- feature:nl-browse-polish -->
 - **M7b Browse polish** (merged, `nl_polish_b.py`): Recently added / watched, Unwatched only, hide from home, cast and crew, trailer, tech details, More like this.
+<!-- /feature:nl-browse-polish -->
+<!-- feature:nl-casting -->
 - **M8 Casting**: M8a (merged, `nl_cast.py`): Chromecast sender, receiver page, cast profile, signed stream tokens, hand-back to the phone. M8b (merged, `nl_type.py`): type TV searches on the phone via a code and QR.
+<!-- /feature:nl-casting -->
+<!-- feature:nl-together -->
 - **M9a Together** (merged, `nl_together.py`): seen-together marks, watch-together pact, mark unwatched for one person.
+<!-- /feature:nl-together -->
+<!-- feature:nl-choosing -->
 - **M9b Choosing** (merged, `nl_choose.py`): Choose for us, weekday and time-of-day defaults, Not tonight / Never vetoes, rotating chooser.
+<!-- /feature:nl-choosing -->
+<!-- feature:nl-reactions -->
 - **M9c Reactions and spoilers** (merged, `nl_reactions.py`): "How was it?" after a film or a show's last episode (writes verdicts), spoiler-hidden episode lists.
+<!-- /feature:nl-reactions -->
+<!-- feature:nl-downloads -->
 - **M10a Downloads** (merged, `nl_downloads.py`): download states, plain-words errors, Retry.
+<!-- /feature:nl-downloads -->
+<!-- feature:nl-status-admin -->
 - **M10b Status and admin** (merged, `nl_health.py`): header status (Jellyfin, disk, queue), web-only `/nl/admin`.
+<!-- /feature:nl-status-admin -->
+<!-- feature:nl-settings -->
 - **M10c Settings and picture** (merged, `nl_settings.py`, `nl_picture.py`): per-person skip length, autoplay, quality cap, picture size; conversion notes; audio-description labels.
+<!-- /feature:nl-settings -->
+<!-- feature:remux-design -->
 - **Lossless remux playback (design only, 2026-10-22, not built)**: doc https://claude.ai/artifact/HWVh6jzVzRbtJXwCBYUWTS. Gist: a slow link pauses, it never smears (TCP); smearing comes from server conversion or Dolby Vision profile 7 handling. The TV's 100 Mbps port (~94 real) is enough when a film's average is under ~85 Mbps and the app reads ahead past heavy scenes; today Media3 holds only ~130 MB in memory and `PlaybackCache` does not read ahead. Proposed: app always asks for the original file (never let `TV_PROFILE` trigger conversion), per-film bitrate map made on arrival, disk read-ahead via `CacheWriter` only when needed, TrueHD/DTS-HD passed through or decoded on the TV with Media3's FFmpeg audio add-on (so no E-AC-3 fallback track), PGS drawn by Media3 (no OCR), profile 7 played as HDR10 base or an optional `dovi_tool` 8.1 copy. Results 2026-10-22: the TV is on Wi-Fi, which measured 294 Mbps from mars (OpenSpeedTest); "Michael (2026)" averages 92 Mbps, peaks 112, so no dongle is needed and the network did not cause the smearing. Test 3 (VLC on the TV streaming the original file): clean picture, so the smear came from the Jellyfin path. "Michael" is Dolby Vision 7 with an HDR10 base (compat id 6). Sound is TV speakers now; own speakers later, must stay lossless. Build plan (steps 1-3 built 2026-10-23, see next bullet): https://claude.ai/artifact/RAhPJmpN9RQcDbGnz1xeNk. Steps: 1 server always sends the original to the TV (`TV_PROFILE` + `stream_for`), 2 Media3 FFmpeg audio add-on built in CI, passthrough when the output takes it, own stereo downmix for TV speakers, 3 DV7 to the HEVC decoder + frame-rate matching, 4 embedded PGS drawn by Media3, 5 playback info panel. Rust rewrite advised against; measure memory, then sleep the WebView during playback.
+<!-- /feature:remux-design -->
+<!-- feature:tv-original-file -->
 - **Original file only on the TV (2026-10-23, built, not yet run on the real TV)**: steps 1-3 of the plan above. Server: `TV_PROFILE` lists truehd, mlp, dts, dca, pcm and alac and allows 400 Mbps; `stream_for()` for the TV never converts: it returns the static file URL plus `audio_order` (0-based position of the chosen audio track in the file), ignores the viewer's quality cap and never burns in picture subtitles (subtitle work is a later PR). If Jellyfin cannot give the original, `/api/nl/play` answers 415 `{detail, can_convert: true}` and the TV player page shows the reason with the button "Play a converted copy (lower quality)" (a normal D-pad-focusable button on the error card); it repeats the request with `allow_conversion=1`, which brings back the old conversion path (Labiba chose this, 2026-10-22). Browser and Chromecast unchanged. App: **bridge v5** adds `setAudioTrack(order)` (select the n-th audio track group, no reload; `play()` json carries `audioOrder`; v4 calls still work and player-core.js uses it only when `version() >= 5` on a `file` stream). Sound: Media3 `DefaultRenderersFactory` with `EXTENSION_RENDERER_MODE_ON` (platform decoders and HDMI passthrough first, FFmpeg after) in `NlRenderersFactory.kt`; when the output is stereo, 5.1/7.1 PCM is downmixed by `AudioDownmix.kt` (BS.775, centre 1.0, surrounds 0.707, LFE dropped, then the whole mix at -3 dB so dialogue sits at 0.707; rare full-scale peaks are clamped by Media3's 16-bit mixer). FFmpeg decoder: `org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1` from Maven Central (newest release for Media3 1.5.x; its .so contains the truehd, mlp, dca, ac3, eac3, flac and alac decoders). Video: `VideoSupport.kt` plays Dolby Vision profile 7 on the HEVC decoders (HDR10 base layer; other profiles untouched) and `PlayerController` asks the display for a mode whose refresh rate is a multiple of the film's frame rate, restoring the old mode when playback stops. JUnit tests for the three pure functions are in `tv-app/app/src/test`, run by CI (`testDebugUnitTest`). Not done: disk read-ahead.
+<!-- /feature:tv-original-file -->
+<!-- feature:disc-subtitles -->
 - **Disc subtitles, info panel, quicker seeks (2026-10-23, built, not yet run on the real TV)**: steps 4-5 of the plan. **Bridge v6** (v5 calls still work; the page uses the new behaviour only when `version() >= 6`). (1) Picture subtitles (PGS, DVD, DVB) are drawn by the app, never burned in on the TV: `stream_for()` for the TV marks a picture track inside the file as kind `"embedded"` with `order` = its 0-based position among the file's own subtitle streams in file order (text ones count too; external subtitle files do not, so they get no order); text tracks keep their `Stream.vtt` URLs. The page picks it like any track (`setSubtitle(index)`); the app finds the `order`-th text group that is not side-loaded (ids starting `nlsub`, see `embeddedTextGroupPosition` in `PlaybackLogic.kt`) and selects it with a `TrackSelectionOverride`; "off" still hides the SubtitleView. Default when subtitles are on: a text track in the viewer's language first, else the embedded picture track in that language (`pick_subtitle_track`). Forced tracks (`IsForced`) in the viewer's language switch on by themselves when the chosen audio is in another language (`forced_subtitle_index`, TV only; `_stream_for_viewer` now keeps the prefs when only `subtitle_lang` is set). An old v5 app shows "This subtitle needs the newest TV app" for an embedded track. The browser keeps burn-in. (2) Playback info: bridge `stats()` returns JSON (source original/converted, video decoder, size, HDR type, dropped frames since this film started, audio track, audio path passthrough/decoded + output channels, bandwidth estimate, seconds buffered ahead, last jump in ms, app memory from `Debug.getPss`), built from an `AnalyticsListener` and refreshed every 500 ms; the page's Picture menu has "Playback info…" (TV app v6 only), a panel of plain lines (`NLPlayerExtras.infoLines`) refreshed once a second, Close or Back closes, the film keeps playing. "Last jump" is the time from `seekTo` to the player being ready again (`SeekTimer`). (3) `REBUFFER_MS` (buffer needed to resume after a seek or stall) lowered 2000 to 1000 because the Wi-Fi measured 294 Mbps against a 92 Mbps film; the other buffer sizes are Media3's. A jump inside the buffered range is served from the buffer by Media3; nothing in `seekTo` flushes it. (4) Fix after the first real-TV run (2026-10-23): Jellyfin answered "ContainerBitrateExceedsLimit" for every remux because `playback_info()` sent a fixed 20 Mbps request-level `MaxStreamingBitrate` (Jellyfin checks that as well as the profile's); it now sends the profile's own ceiling (400 Mbps for the TV, 20 Mbps for browser and cast). (5) Second real-TV run (2026-10-23): "Michael" started, then failed after 3 s. The app side-loaded the film's in-file text subtitles as `Stream.vtt`, and for any of them Jellyfin extracts every subtitle at once by reading the whole 80 GB file (0.43x real time on the external drive), so Media3 timed out. Now, on the TV, every subtitle inside the file (text too) is kind `"embedded"` with `order` and no url; Media3 reads it from the file it is playing and Jellyfin extracts nothing. Tracks carry `picture` (true for PGS/VobSub), used where text is preferred over pictures. Only external subtitle files keep `Stream.vtt`. The TV error card now shows the player's own error after two retries instead of "Can't reach the movie server". (6) The page's `player` is cast.js's local/Chromecast switch even on the TV, and it forwards only the names in its `METHODS`/`PROPS` lists; the bridge v5/v6 features (`canSwitchAudioInPlace`, `setAudioOrder`, `canDrawEmbeddedSubtitles`, `canShowStats`, `stats`) were missing, so the TV never showed Playback info, said "needs the newest TV app" for embedded subtitles and reloaded on audio changes. Fixed 2026-10-23; `tests/js/nl_cast_check.js` now fails if player.js uses a name the switch does not forward.
+<!-- /feature:disc-subtitles -->
 - Nothing in M0-M10 has been checked against a real Jellyfin with two users, a real TV running the current APK, or a real Chromecast; each milestone was checked in headless Chromium with a fake Jellyfin.
 
 ## 15. Waiting on Labiba (by hand)
@@ -140,6 +225,7 @@ Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H,
 4. `GET /api/nl/picks` reports `engine: recommender` (else the image lacks the model and the row falls back).
 
 ## 17. Wishmatch (being built; switch still on legacy)
+<!-- feature:wishmatch -->
 The new recommender Labiba chose on 2026-10-21 after the legacy engine's picks disappointed. Plan: https://claude.ai/artifact/NppvUxq4ADjSns3kthJrPi ("Wishmatch: the plan"); the build prompt is `/mnt/project-files/wishmatch/new-thread-prompt.md`. Read both before building.
 - What it does: reads the typed request (the "wish"), turns it into the mood words of `services/vibe_vocab.py`, takes about 2,000 well-known candidates (separate film and show pools), asks at most two questions where those candidates really differ, scores them against the 2026-10-08 Haiku mood tags (§10.1) and both tastes, and shows each pick with its reason words.
 - Rules: runs beside legacy and TIGER, picked by `recommender.engine: wishmatch | legacy | tiger`; old engines untouched. Reusable core in `packages/wishmatch/` with no app imports (Labiba will lift it out for other projects); movie and TV parts in `services/wishmatch_movies/`. Every weight in a `wishmatch:` section of `recommender_rules.yaml`. Solo = own taste plus the partner's at 0.2; together = both equally, pushing down what either would dislike.
@@ -149,3 +235,4 @@ The new recommender Labiba chose on 2026-10-21 after the legacy engine's picks d
 - Step 4 (wish reader): Ollama runs as a Homelab service (`homelab.yaml`, `ollama/ollama:0.40.1`, no ports, 3 GB cap, `OLLAMA_URL=http://ollama:11434` for the app). Idle it sleeps; the model loads on a search and unloads after 5 minutes. Dev gets its own empty copy (Homelab services can't be prod-only), but only prod downloads the model at start (`wish_reader.pull_in: [prod]`, Qwen 2.5 3B, about 1.9 GB), so dev uses the word lookup. The package's `llm.py` asks the model to pick vocabulary words only (no dials: every word it writes costs time on `mars`'s processor); its words are laid over the word lookup's reading as one phrase, its "ruled out" words count only for content warnings and only when the wish says no/not/without. A search waits `wait_seconds: 8`; a slower answer is kept for Show more and repeats. `word_question()` words questions for step 5 (template fallback). On the Mac (gemma3:4b) a reading took 4-8 s; **not yet measured on `mars`**: check `GET /api/rec/status` (`wish_reader.last_seconds`) after deploy and tune `wait_seconds` / the model.
 - Step 5 (questions): with `engine: wishmatch`, `/api/discover/start` makes a `WishmatchSession` (`services/wishmatch_movies/session.py`, same methods as `MoodSession`; the mood-map pop-up stays for legacy and as the fallback). The package's `questions.py` looks at the top 40 picks and asks about the mood dial they spread on most (low / high end) or the 2-3 feelings or occasions that split them (silly / witty), never about what the wish already said, at most 2, none when the picks agree. Options carry two example titles each; the model words the question (6 s limit, else "Which feels right: A or B?"). An answer counts half as much as a typed word (`questions.answer_weight`), via `Wish.weights`. The fantasy dial ("grounded realism or another world") wins often; watch it in step 7.
 - Next: step 6 (taste profiles with Haiku at Train time, open-weight tagging model bake-off). One PR per step, in the plan's order.
+<!-- /feature:wishmatch -->

@@ -1,0 +1,73 @@
+name: Handover
+
+# Handover notes keep PRs from editing the same lines of PROJECT_HANDOVER.md. See handover/README.md.
+# On a PR: check the notes. On main (and weekly): fold ready notes into PROJECT_HANDOVER.md through a PR.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: handover-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the notes
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          NO_NOTE: ${{ contains(github.event.pull_request.labels.*.name, 'no-note') }}
+        run: |
+          args=(--base "origin/$BASE_REF" --title "$PR_TITLE")
+          if [ "$NO_NOTE" = "true" ]; then args+=(--skip); fi
+          # The fold PR is the only one allowed to change feature blocks.
+          if [ "$HEAD_REF" = "handover-fold" ]; then export HANDOVER_FOLD=1; fi
+          python3 scripts/handover.py check "${args[@]}"
+
+  fold:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fold ready notes
+        run: python3 scripts/handover.py fold | tee "$RUNNER_TEMP/fold.txt"
+      - name: Open or update the fold PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then echo "Nothing changed."; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B handover-fold
+          git add -A
+          git commit -m "docs: fold handover notes"
+          # Rebuilt from main every time, so a force push is right here.
+          git push --force origin handover-fold
+          body="$(printf 'Copies the ready handover notes into the doc and deletes them.\n\n%s\n' "$(cat "$RUNNER_TEMP/fold.txt")")"
+          if gh pr list --head handover-fold --state open --json number --jq '.[0].number' | grep -q .; then
+            gh pr edit handover-fold --body "$body"
+          else
+            gh pr create --head handover-fold --base main --title "docs: fold handover notes" --body "$body"
+          fi
