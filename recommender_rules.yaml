@@ -325,10 +325,13 @@ wishmatch:
   people:
     other_weight: 0.2       # alone: the other person's taste counts this much
     together_dislike: 0.5   # together: push down by this x how much the less keen of you dislikes it
+    seen_penalty: 1.5       # together: a title one of you has seen drops by this x the share who saw it
+                            # (alone, anything you've seen is left out; together, what you've both seen is)
   taste:
     shrink: 5.0             # ratings needed before a taste counts fully
     tag_shrink: 3.0
     trait_weight: 0.5       # half the taste score from mood dials, half from feelings
+    declared_weight: 0.3    # a feeling in your written profile's likes / dislikes moves its affinity by this much
   explain:
     max_reasons: 3
     hide_groups: [flags]    # content warnings (infidelity, animal harm) are never shown as reasons
@@ -360,7 +363,8 @@ wishmatch:
     threads: 4                # of mars's 6 cores, so Jellyfin keeps room
     max_tokens: 80
     avoid_groups: [flags]     # the model may only rule out content warnings ("the dog can't die")
-  tagging_model: ""         # open-weight Ollama model for new titles, picked by the bake-off (step 6)
+  tagging_model: gemma3:4b  # tags new titles on the Mac at Train time (free). Won the 2026-10-24 bake-off
+                            # (reports/mood_tag_bakeoff.json on the Mac): closest to Haiku on feelings, 3.4 GB, ~40-60 s a title
   # TMDB rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
   quality_floor: 5.0
   quality_ceiling: 8.5

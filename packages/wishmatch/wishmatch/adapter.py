@@ -7,7 +7,7 @@ calls nothing else, so the package never imports project code.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Protocol
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Set
 
 from .types import Item, Reaction, Request, Vocabulary
 
@@ -27,6 +27,14 @@ class Adapter(Protocol):
 
     def reactions(self, person: Any) -> List[Reaction]:
         """What this person liked or disliked, -1..+1."""
+
+    def profile(self, person: Any) -> Optional[Dict[str, Any]]:
+        """OPTIONAL. What this person says they like and avoid: {"likes": [tag words], "dislikes": [tag words]},
+        or None. Counts at settings["taste"]["declared_weight"] even before they have any reactions."""
+
+    def seen_by(self, person: Any) -> Set[Any]:
+        """OPTIONAL. Items this person has already seen. Watching together, an item some of
+        the people have seen is pushed down by settings["people"]["seen_penalty"]."""
 
     def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
         """For each of these items, the items its fans also liked: {item: {other item: similarity 0..1}}.

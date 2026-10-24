@@ -25,10 +25,10 @@ _lock = threading.Lock()   # one bundle install / rollback at a time
 
 
 def require_admin(request: Request) -> None:
-    token = os.environ.get("ADMIN_TOKEN", "")
+    token = os.environ.get("ADMIN_TOKEN", "").strip()
     if not token:
         raise HTTPException(status_code=404, detail="Not Found")
-    given = request.headers.get("authorization", "")
+    given = request.headers.get("authorization", "").strip()
     expected = f"Bearer {token}"
     if not hmac.compare_digest(given.encode(), expected.encode()):
         raise HTTPException(status_code=401, detail="Bad admin token")

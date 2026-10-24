@@ -52,12 +52,14 @@ DEFAULTS: Dict[str, Any] = {
     "people": {
         "other_weight": 0.2,         # alone: the other person's taste at this weight
         "together_dislike": 0.5,     # together: push down by this x how much the least keen person dislikes it
+        "seen_penalty": 0.0,         # together: push down by this x the share of people who have seen it
     },
     # Taste profile from reactions.
     "taste": {
         "shrink": 5.0,               # reactions needed before a taste counts fully
         "tag_shrink": 3.0,           # reactions with a tag needed before that tag counts fully
         "trait_weight": 0.5,         # share of the taste score from traits (the rest from tags)
+        "declared_weight": 0.3,      # a declared like adds this to a tag's affinity, a declared dislike subtracts it
     },
     # Reason words shown under each pick.
     "explain": {"max_reasons": 3, "hide_groups": []},   # hide_groups: vocabulary tag groups never shown as reasons
