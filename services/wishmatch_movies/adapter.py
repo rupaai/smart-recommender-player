@@ -57,6 +57,16 @@ def _genres(csv: Optional[str]) -> Set[str]:
     return {g.strip().lower() for g in str(csv or "").split(",") if g.strip()}
 
 
+def typed_decade(text: str) -> Optional[tuple]:
+    """A decade typed in the wish ("80s", "1980s", "the 90s", "2000s") as (first year, last year)."""
+    m = re.search(r"\b(19|20)?([0-9])0'?s\b", (text or "").lower())
+    if not m:
+        return None
+    century = m.group(1) or ("20" if m.group(2) in "012" else "19")
+    start = int(century + m.group(2) + "0")
+    return start, start + 9
+
+
 class MovieAdapter:
     """Wishmatch's view of the catalogue. `db` is the app's DatabaseManager."""
 
@@ -110,6 +120,7 @@ class MovieAdapter:
                             & {str(w).lower() for w in (RULES.get("foreign_titles") or {}).get("any_language_words") or []})
         gates = {k: foreign_gate(RULES, k) for k in ("movie", "tv")}
         era, duration = f.get("era"), f.get("duration")
+        decade = typed_decade(text)
         min_rating = f.get("min_rating")
 
         for iid, item in catalogue.items():
@@ -134,6 +145,8 @@ class MovieAdapter:
                 row = {"original_language": x["language"], "rating": x["rating"], "vote_count": item.popularity}
                 if not passes_foreign_gate(row, item.kind, gates.get(item.kind)):
                     continue
+            if decade and not (decade[0] <= (x["year"] or 0) <= decade[1]):
+                continue
             if era == "modern" and (x["year"] or 0) < 2015:
                 continue
             if era == "2000s" and not (2000 <= (x["year"] or 0) <= 2014):
@@ -185,6 +198,24 @@ class MovieAdapter:
             return None
         return {"likes": stored["likes"], "dislikes": stored["dislikes"]}
 
+    def bonus(self, request: Request) -> Any:
+        """A soft pull towards genres the wish hints at without naming them ("scary" -> Horror,
+        "laugh" -> Comedy; genre_hints in recommender_rules.yaml): item -> points, or None."""
+        merged_hints: Dict[str, List[str]] = {g: list(w) for g, w in (RULES.get("genre_hints") or {}).items()}
+        for g, words in (self.rules().get("genre_hints") or {}).items():     # Wishmatch's own extra hints
+            merged_hints.setdefault(g, []).extend(words or [])
+        hints = word_index(merged_hints)
+        toks = re.findall(r"[a-z0-9]+", (request.text or "").lower())
+        hinted: Set[str] = set()
+        for i, t in enumerate(toks):
+            if any(w in NEGATORS for w in toks[max(0, i - 3):i]):
+                continue
+            hinted.update(g.lower() for g in hints.get(t, []))
+        points = float(((self.rules().get("weights") or {}).get("genre_hint", 0.0)))
+        if not hinted or not points:
+            return None
+        return lambda item: points if any(self._has_genre(item.extra["genres"], g, item.kind) for g in hinted) else 0.0
+
     def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
         """Films that fans of these films also liked, from MovieLens (crowd.json in the model bundle,
         built by training/build_wishmatch_crowd.py at Train time). No file = no crowd data."""
@@ -226,7 +257,7 @@ class MovieAdapter:
     def typed_genres(self, text: str) -> tuple:
         """Genre names typed in the wish ("comedy", "no horror"), as (wanted, avoided) lowercase names."""
         index = word_index(RULES.get("genre_names") or {})
-        toks = _TOKEN.findall((text or "").lower())
+        toks = re.findall(r"[a-z0-9]+", (text or "").lower().replace("sci-fi", "scifi"))
         want: Set[str] = set()
         avoid: Set[str] = set()
         for i, t in enumerate(toks):
@@ -311,6 +342,9 @@ class MovieAdapter:
                 if isinstance(value, list):
                     words.extend(str(w) for w in value)
             rating = float(r["rating"] or 0.0)
+            votes = float(r["vote_count"] or 0)
+            # A rating from few votes counts less (a 9.0 from 40 votes is not a 9.0 from 40,000).
+            confidence = votes / (votes + float(cfg.get("quality_votes", {}).get(str(r["media_type"]), 300)))
             out[int(r["id"])] = Item(
                 id=int(r["id"]),
                 kind=sys.intern(str(r["media_type"] or "movie")),
@@ -319,7 +353,7 @@ class MovieAdapter:
                 vibe=str(tags.get("vibe") or ""),
                 known=sys.intern(str(tags.get("known") or "not")),
                 popularity=float(r["vote_count"] or 0),
-                quality=max(0.0, min(1.0, (rating - floor) / span)),
+                quality=max(0.0, min(1.0, (rating - floor) / span)) * confidence,
                 extra={
                     "genres": _intern_set(_genres(r["genres"])),
                     "countries": _intern_set(c.strip().upper() for c in str(r["origin_country"] or "").split(",")),

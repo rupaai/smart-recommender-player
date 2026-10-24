@@ -283,6 +283,22 @@ def main():
     check("no question when the picks already agree", sess2.next_question() is None, sess2.current)
     check("log fields are JSON", json.loads(sess.log_fields()["belief_json"])["weights"], sess.log_fields())
 
+    print("\n[12] Decades, 'sci-fi' and genre hints (step 7 fixes)")
+    from services.wishmatch_movies.adapter import typed_decade
+    check("decades are read", typed_decade("an 80s classic") == (1980, 1989) and typed_decade("1990s thriller") == (1990, 1999)
+          and typed_decade("2000s") == (2000, 2009) and typed_decade("something fun") is None,
+          [typed_decade(x) for x in ("an 80s classic", "1990s thriller", "2000s")])
+    check("'sci-fi' is the Science Fiction genre", "science fiction" in wm.adapter.typed_genres("a sci-fi film")[0],
+          wm.adapter.typed_genres("a sci-fi film"))
+    from wishmatch import Request as WRequest
+    bonus = wm.adapter.bonus(WRequest(text="something scary"))
+    horror = wm.adapter.catalogue()[ids["Horror Film"]]
+    funny = wm.adapter.catalogue()[ids["Funny Film 1"]]
+    check("'scary' pulls towards horror", bonus is not None and bonus(horror) > 0 and bonus(funny) == 0)
+    check("'not scary' pulls nothing", wm.adapter.bonus(WRequest(text="not scary")) is None)
+    obscure = wm.adapter.catalogue()[ids["Obscure Funny Film"]]
+    check("a rating from few votes counts less", obscure.quality < funny.quality, (obscure.quality, funny.quality))
+
     print("\n[8] The wishmatch: rules only use vocabulary words")
     rules = load_wishmatch_rules()
     lex = rules.get("lexicon") or {}
