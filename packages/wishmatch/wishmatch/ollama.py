@@ -18,12 +18,13 @@ from typing import Any, Dict, Optional
 
 class OllamaClient:
     def __init__(self, url: str, model: str, *, timeout: float = 20.0, keep_alive: str = "5m",
-                 options: Optional[Dict[str, Any]] = None):
+                 options: Optional[Dict[str, Any]] = None, think: Optional[bool] = False):
         self.url = url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.keep_alive = keep_alive
         self.options = dict(options or {})
+        self.think = think          # False: models that "think out loud" first (Qwen 3) answer straight away
         self.last_error: Optional[str] = None
         self.last_seconds: Optional[float] = None
         self._pulling = False
@@ -42,6 +43,8 @@ class OllamaClient:
         """The model's answer, or None when Ollama can't be reached, times out or lacks the model."""
         body: Dict[str, Any] = {"model": self.model, "prompt": prompt, "stream": False,
                                 "keep_alive": self.keep_alive, "options": self.options}
+        if self.think is not None:
+            body["think"] = self.think
         if system:
             body["system"] = system
         if schema:

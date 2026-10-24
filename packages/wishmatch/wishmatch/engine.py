@@ -81,7 +81,9 @@ class Wishmatch:
             if person_reactions is None:
                 person_reactions = self.adapter.reactions(person)
             described = self.adapter.describe([r.item_id for r in person_reactions]) if person_reactions else {}
-            out.append(build_taste(person_reactions, described, pop, settings))
+            declare = getattr(self.adapter, "profile", None)
+            declared = declare(person) if callable(declare) else None
+            out.append(build_taste(person_reactions, described, pop, settings, declared))
         return out
 
     def crowd(self, people: List[Any], reactions: Dict[Any, List[Reaction]], settings: Dict[str, Any]) -> List[CrowdScores]:
@@ -108,6 +110,14 @@ class Wishmatch:
         pools = cand.choose(available, settings, kinds=request.kinds, hidden_gems=wish.hidden_gems, only_ids=only)
 
         reactions = {p: self.adapter.reactions(p) for p in request.people}
+        # Together: something one of you has already seen is pushed down, not removed
+        # (the adapter removes what everyone has seen, and what the viewer has seen when alone).
+        seen: Dict[Any, int] = {}
+        if request.together and len(request.people) > 1 and hasattr(self.adapter, "seen_by"):
+            for person in request.people:
+                for item_id in self.adapter.seen_by(person) or ():
+                    seen[item_id] = seen.get(item_id, 0) + 1
+        seen_penalty = float(settings["people"].get("seen_penalty", 0.0))
         crowds = self.crowd(request.people, reactions, settings)
         crowd_added = 0
         if crowds and not only:
@@ -148,6 +158,8 @@ class Wishmatch:
             because = crowd_parts[0][1] if crowd_parts and crowd > 0 else None
             score = (float(w["match"]) * fit + float(w["taste"]) * taste
                      + float(w["quality"]) * it.quality + float(w["crowd"]) * crowd)
+            if it.id in seen:
+                score -= seen_penalty * seen[it.id] / len(request.people)
             picks.append(Pick(item=it, score=round(score, 4), match=round(fit, 3), taste=round(taste, 3),
                               crowd=round(crowd, 3), because=because,
                               reasons=explain([x for x in match_words if x not in hidden],

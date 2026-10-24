@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote, urlsplit
 
 # Secrets from Homelab (/run/secrets) go into the environment before anything reads it.
-from services import homelab_secrets
+from services import homelab_secrets, vibe_vocab
 from services.app_version import app_version, homelab_version
 
 homelab_secrets.load()
@@ -859,6 +859,44 @@ async def rec_recommend(domain: str, req: RecRequest) -> Dict[str, Any]:
 async def rec_wish(domain: str, req: WishRequest) -> Dict[str, Any]:
     """How Wishmatch read these words: mood dials, feelings, what to avoid, words it did not know."""
     return _rec_domain(domain).read_wish(req.text)
+
+
+class ProfileBody(BaseModel):
+    summary: str
+    likes: List[str] = []
+    dislikes: List[str] = []
+    model: Optional[str] = None
+    edited: Optional[bool] = None
+
+
+@app.get("/api/rec/{domain}/profile/{person_id}")
+async def rec_profile_get(domain: str, person_id: int) -> Dict[str, Any]:
+    """A person's written taste profile: {summary, likes, dislikes, model, edited, updated_at}. 404 if none."""
+    _rec_domain(domain)
+    profile = await asyncio.to_thread(db.get_wishmatch_profile, person_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="No taste profile for this person yet.")
+    return profile
+
+
+@app.put("/api/rec/{domain}/profile/{person_id}")
+async def rec_profile_put(domain: str, person_id: int, body: ProfileBody) -> Dict[str, Any]:
+    """Store a person's written taste profile. likes / dislikes keep only words from services/vibe_vocab.
+    `edited` says whether a person wrote it: by default true for a hand edit, false when `model` is given
+    (utils/wishmatch_profiles.py --push). Returns the stored profile."""
+    _rec_domain(domain)
+    summary = body.summary.strip()
+    if not summary:
+        raise HTTPException(status_code=422, detail="summary must not be empty.")
+    allowed = set(vibe_vocab.FEELS) | set(vibe_vocab.GOOD_FOR)
+
+    def keep(words: List[str]) -> List[str]:
+        return list(dict.fromkeys(w.strip().lower() for w in words if w.strip().lower() in allowed))
+
+    edited = body.edited if body.edited is not None else not body.model
+    await asyncio.to_thread(db.set_wishmatch_profile, person_id, summary, keep(body.likes), keep(body.dislikes),
+                            body.model, edited)
+    return await asyncio.to_thread(db.get_wishmatch_profile, person_id)
 
 
 @app.get("/api/rec/status")

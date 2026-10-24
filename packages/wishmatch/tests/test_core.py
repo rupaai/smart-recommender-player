@@ -725,6 +725,68 @@ def test_answer_narrows_the_wish_at_half_weight():
     assert match(cozy_not_funny, w, s, VOCAB)[0] > match(funny_not_cozy, w, s, VOCAB)[0]
 
 
+# ---------------------------------------------------------------- declared likes / dislikes
+
+def test_declared_tags_move_taste_without_reactions():
+    pop, described = _pop_and_described()
+    s = merged(RULES)
+    assert s["taste"]["declared_weight"] == 0.3
+    taste = build_taste([], described, pop, s, {"likes": ["cozy"], "dislikes": ["tense"]})
+    assert taste.count == 0                      # count stays the number of reactions
+    cozy, why = taste.score(described["m0"], pop)    # cozy, witty, silly, a bad day
+    tense, _ = taste.score(described["m1"], pop)     # tense, eerie
+    assert cozy > 0 > tense and "cozy" in why
+    assert approx(taste.tags["cozy"], 0.3) and approx(taste.tags["tense"], -0.3)
+    # nothing declared and nothing reacted to still scores zero
+    assert build_taste([], described, pop, s, {"likes": [], "dislikes": []}).score(described["m0"], pop) == (0.0, [])
+
+
+def test_declared_tags_add_to_reaction_affinity_and_clamp():
+    pop, described = _pop_and_described()
+    s = merged(RULES)
+    plain = build_taste(REACTIONS[1], described, pop, s)
+    with_dislike = build_taste(REACTIONS[1], described, pop, s, {"dislikes": ["cozy"]})
+    assert with_dislike.tags["cozy"] < plain.tags["cozy"]
+    assert approx(plain.tags["cozy"] - with_dislike.tags["cozy"], 0.3) or with_dislike.tags["cozy"] == -1.0
+    s2 = merged({**RULES, "taste": {"declared_weight": 5.0}})
+    loud = build_taste([], described, pop, s2, {"likes": ["cozy"], "dislikes": ["tense"]})
+    assert loud.tags["cozy"] == 1.0 and loud.tags["tense"] == -1.0
+    off = build_taste([], described, pop, merged({**RULES, "taste": {"declared_weight": 0.0}}), {"likes": ["cozy"]})
+    assert off.score(described["m0"], pop) == (0.0, [])
+
+
+def test_adapter_profile_is_optional_and_changes_ranking():
+    # an adapter without profile() works as before
+    plain = Wishmatch(FakeAdapter()).recommend(Request(text="", people=[1], kinds=["movie"]))
+    assert all(p.taste == 0 for p in plain["picks"])
+
+    class WithProfile(FakeAdapter):
+        def profile(self, person):
+            return {"likes": ["cozy"], "dislikes": ["tense"]} if person == 1 else None
+
+    result = Wishmatch(WithProfile()).recommend(Request(text="", people=[1], kinds=["movie"]))
+    by_id = {p.item.id: p for p in result["picks"]}
+    assert by_id["m12"].taste > 0 > by_id["m13"].taste        # unrated cozy vs unrated tense
+    assert by_id["m12"].score > by_id["m13"].score
+    other = Wishmatch(WithProfile()).recommend(Request(text="", people=[2], kinds=["movie"]))
+    assert all(p.taste == 0 for p in other["picks"])          # person 2 declared nothing
+
+
+
+class SeenAdapter(FakeAdapter):
+    def seen_by(self, person):
+        return {"m0"} if person == 1 else set()
+
+
+def test_together_pushes_down_what_one_person_has_seen():
+    rules = merged(RULES)
+    rules["people"] = {**rules["people"], "seen_penalty": 5.0}
+    out = Wishmatch(SeenAdapter(rules=rules)).recommend(Request(people=[1, 2], together=True, kinds=["movie"]))
+    ids = [p.item.id for p in out["picks"]]
+    assert ids[-1] == "m0", ids
+    alone = Wishmatch(SeenAdapter(rules=rules)).recommend(Request(people=[1, 2], kinds=["movie"]))
+    assert [p.item.id for p in alone["picks"]][-1] != "m0"     # alone: the adapter's filter's job, no penalty here
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     tests.sort(key=lambda p: p[1].__code__.co_firstlineno)

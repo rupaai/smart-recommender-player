@@ -27,6 +27,7 @@ def load(directory: str = SECRETS_DIR) -> list[str]:
             continue
         if path.name in os.environ:
             continue
-        os.environ[path.name] = path.read_text(encoding="utf-8")
+        # A secret file often ends with a line break; kept, it made every correct ADMIN_TOKEN fail.
+        os.environ[path.name] = path.read_text(encoding="utf-8").strip()
         loaded.append(path.name)
     return loaded

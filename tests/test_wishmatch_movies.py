@@ -166,6 +166,10 @@ def main():
     out = wm.recommend(media_type="movie", profile="together", page_size=50)
     t = titles(out)
     check("together, a film only one of you saw stays", "Funny Film 0" in t, t)
+    seen_by_one = {f"Funny Film {i}" for i in range(7)} | {f"Tense Film {i}" for i in range(7)}
+    check("together, films one of you has seen are never on top", not (set(t[:10]) & seen_by_one), t[:10])
+    check("together, they come after every unseen film",
+          max(t.index(x) for x in t if x not in seen_by_one) < min(t.index(x) for x in t if x in seen_by_one), t)
     me_alone = wm.recommend(media_type="movie", profile="me", page_size=50)["items"]
     tog = out["items"]
     worst_alone = {i["title"]: i["taste_fit"] for i in me_alone}

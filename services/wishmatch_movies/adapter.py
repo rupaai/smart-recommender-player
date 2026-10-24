@@ -175,6 +175,16 @@ class MovieAdapter:
             out.append(Reaction(item_id=int(r["id"]), score=max(-1.0, min(1.0, score))))
         return out
 
+    def profile(self, person: Any) -> Optional[Dict[str, Any]]:
+        """The written taste profile's liked / disliked words (utils/wishmatch_profiles.py), or None."""
+        try:
+            stored = self.db.get_wishmatch_profile(int(person))
+        except (TypeError, ValueError):
+            return None
+        if not stored or not (stored["likes"] or stored["dislikes"]):
+            return None
+        return {"likes": stored["likes"], "dislikes": stored["dislikes"]}
+
     def crowd(self, item_ids: List[Any]) -> Dict[Any, Dict[Any, float]]:
         """Films that fans of these films also liked, from MovieLens (crowd.json in the model bundle,
         built by training/build_wishmatch_crowd.py at Train time). No file = no crowd data."""
@@ -233,6 +243,14 @@ class MovieAdapter:
             aliases = (RULES.get("tv_genre_aliases") or {}).get(genre) or []
             return any(a.lower() in item_genres for a in aliases)
         return False
+
+    def seen_by(self, person: Any) -> Set[int]:
+        """Titles this person has marked as seen."""
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT media_item_id FROM watch_history WHERE profile_id = ? AND status = 'seen'", (person,)
+            ).fetchall()
+        return {int(r[0]) for r in rows}
 
     def _seen_to_exclude(self, request: Request) -> Set[int]:
         """Alone: what the viewer has seen. Together: what everyone at the screen has seen."""

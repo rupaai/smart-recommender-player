@@ -12,7 +12,7 @@ import re
 import sqlite3
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 
@@ -150,6 +150,7 @@ class DatabaseManager:
             self._migrate_v19_nl_spoilers(cursor)
             self._migrate_v20_nl_settings(cursor)
             self._migrate_v21_download_requests(cursor)
+            self._migrate_v22_wishmatch_profiles(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -961,6 +962,62 @@ class DatabaseManager:
         if version < 21:
             cursor.execute("PRAGMA user_version = 21;")
             print("[Database] Migration v21 applied: download_requests added.")
+
+    def _migrate_v22_wishmatch_profiles(self, cursor: sqlite3.Cursor) -> None:
+        """Written taste profiles (a short summary plus liked / disliked mood words per person), made at Train
+        time by utils/wishmatch_profiles.py and editable over HTTP. `edited` = 1 once a person changed it by hand.
+        Additive only."""
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wishmatch_profiles (
+                person_id INTEGER PRIMARY KEY,
+                summary TEXT NOT NULL,
+                likes_json TEXT NOT NULL DEFAULT '[]',
+                dislikes_json TEXT NOT NULL DEFAULT '[]',
+                model TEXT,
+                edited INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+            """
+        )
+        if version < 22:
+            cursor.execute("PRAGMA user_version = 22;")
+            print("[Database] Migration v22 applied: wishmatch_profiles added.")
+
+    def get_wishmatch_profile(self, person_id: int) -> Optional[Dict[str, Any]]:
+        """The written taste profile of a person, or None. likes / dislikes come back as lists."""
+        with self.get_connection() as conn:
+            row = conn.execute("SELECT * FROM wishmatch_profiles WHERE person_id = ?", (person_id,)).fetchone()
+        if not row:
+            return None
+
+        def words(raw: Any) -> List[str]:
+            try:
+                value = json.loads(raw or "[]")
+            except (TypeError, ValueError):
+                return []
+            return [str(w) for w in value] if isinstance(value, list) else []
+
+        return {"person_id": row["person_id"], "summary": row["summary"], "likes": words(row["likes_json"]),
+                "dislikes": words(row["dislikes_json"]), "model": row["model"], "edited": bool(row["edited"]),
+                "updated_at": row["updated_at"]}
+
+    def set_wishmatch_profile(self, person_id: int, summary: str, likes: List[str], dislikes: List[str],
+                              model: Optional[str], edited: bool) -> None:
+        """Insert or replace a person's written taste profile."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO wishmatch_profiles (person_id, summary, likes_json, dislikes_json, model, edited, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(person_id) DO UPDATE SET summary = excluded.summary, likes_json = excluded.likes_json,
+                    dislikes_json = excluded.dislikes_json, model = excluded.model, edited = excluded.edited,
+                    updated_at = excluded.updated_at
+                """,
+                (person_id, summary, json.dumps(list(likes)), json.dumps(list(dislikes)), model, 1 if edited else 0,
+                 datetime.now(timezone.utc).isoformat(timespec="seconds")),
+            )
 
     def register_source_file(
         self,
