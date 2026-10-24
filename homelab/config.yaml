@@ -50,7 +50,7 @@ recommender:
   # Which engine answers on every screen: legacy (today's rules engine, with TIGER per
   # engine_mode below), tiger (TIGER first) or wishmatch (PROJECT_HANDOVER.md §17; its
   # settings are in recommender_rules.yaml, wishmatch:). Each falls back to legacy.
-  engine: legacy
+  engine: wishmatch
 
   # Recommendation engine router for the TIGER generative retrieval engine
   # (parallel engine — the legacy SQL/taste recommender is never modified):
