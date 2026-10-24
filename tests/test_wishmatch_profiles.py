@@ -176,6 +176,10 @@ def main():
         check("an empty summary is refused", client.put("/api/rec/movies/profile/1", json={"summary": "  "}).status_code == 422)
         check("the server's own database has it", server.db.get_wishmatch_profile(2)["likes"] == ["silly"])
 
+    schema_text = json.dumps(wp.output_schema())
+    check("the Haiku schema uses no keywords the API refuses (maxItems, minItems)",
+          "maxItems" not in schema_text and "minItems" not in schema_text, schema_text[:200])
+
     if failures:
         print(f"\n{len(failures)} check(s) failed")
         sys.exit(1)
