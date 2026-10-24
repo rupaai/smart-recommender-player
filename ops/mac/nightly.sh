@@ -160,11 +160,10 @@ if [ -n "$DO_TRAIN" ]; then
   DATABASE_PATH="$WORK/snapshot.db" uv run python utils/mood_tag_ollama.py --db "$WORK/snapshot.db" tag \
     --max-minutes "$("${PL[@]}" setting nightly.mood_tag_minutes 60)" \
     || log "warning: tagging new titles failed or no tagging model is set; they are tagged next time"
-  # Written taste profiles cost a little Anthropic money (under 1 cent), so they are off until
-  # config.yaml says nightly.wishmatch_profiles: true.
-  if [ "$("${PL[@]}" setting nightly.wishmatch_profiles false)" = "true" ]; then
-    log "4. train: Wishmatch taste profiles (Haiku, under 1 cent)"
-    uv run --extra llm python utils/wishmatch_profiles.py --db "$WORK/snapshot.db" --yes \
+  # Written taste profiles with the Mac's Ollama model (free); nightly.wishmatch_profiles: false turns them off.
+  if [ "$("${PL[@]}" setting nightly.wishmatch_profiles true)" = "true" ]; then
+    log "4. train: Wishmatch taste profiles (Ollama, free)"
+    uv run python utils/wishmatch_profiles.py --db "$WORK/snapshot.db" \
       --push "${CC_SERVER:-$(env_value CC_SERVER)}" \
       || log "warning: the taste profiles could not be made; the old ones stay"
   fi
