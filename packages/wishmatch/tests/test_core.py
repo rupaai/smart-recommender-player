@@ -641,6 +641,61 @@ def test_slow_or_failing_model_falls_back_to_lookup():
     assert broken.read("make me laugh", VOCAB, lookup).source == "lookup"
 
 
+def test_understood_wish_does_not_wait_for_the_model():
+    import threading
+    import time
+    from wishmatch.llm import LLMWishReader
+    gate = threading.Event()
+
+    def slow(*a, **k):
+        gate.wait(2)
+        return '{"w": ["cozy"], "a": []}'
+
+    r = LLMWishReader(slow, wait_seconds=1.5, skip_when_understood=True)
+    understood = read_wish("make me laugh", VOCAB, LEX)
+    assert understood.words_used and not understood.words_unknown
+    start = time.time()
+    assert r.read("make me laugh", VOCAB, understood).source == "lookup"
+    assert time.time() - start < 0.5                       # answered at once
+    unknown = read_wish("make me laugh with pirates", VOCAB, LEX)
+    assert unknown.words_unknown
+    start = time.time()
+    r.read("make me laugh with pirates", VOCAB, unknown)
+    assert time.time() - start >= 1.4                      # an unknown word: waits for the model
+    gate.set()
+    for _ in range(100):
+        if r.cached("make me laugh"):
+            break
+        threading.Event().wait(0.02)
+    assert "cozy" in r.read("make me laugh", VOCAB, understood).tags   # read in the background for next time
+
+
+def test_wish_readings_survive_a_restart():
+    import tempfile
+    from wishmatch.llm import AnswerFile, LLMWishReader
+    calls = []
+
+    def model(*a, **k):
+        calls.append(1)
+        return '{"w": ["cozy"], "a": []}'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/answers.json"
+        lookup = read_wish("make me laugh", VOCAB, LEX)
+        LLMWishReader(model, store=AnswerFile(path, tag="m1")).read("make me laugh", VOCAB, lookup)
+        again = LLMWishReader(model, store=AnswerFile(path, tag="m1"))       # a new server start
+        assert "cozy" in again.read("Make me  laugh", VOCAB, lookup).tags
+        assert len(calls) == 1
+        other = LLMWishReader(model, store=AnswerFile(path, tag="m2"))       # another model: asked afresh
+        other.read("make me laugh", VOCAB, lookup)
+        assert len(calls) == 2
+        small = AnswerFile(f"{tmp}/small.json", limit=2)
+        for k in ("a", "b", "c"):
+            small.add(k, "{}")
+        assert list(small.load()) == ["b", "c"]                            # oldest go first
+        assert AnswerFile(f"{tmp}/missing.json").load() == {}
+
+
 def test_engine_uses_reader_and_survives_its_errors():
     class Boom:
         def read(self, *a):

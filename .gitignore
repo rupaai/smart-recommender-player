@@ -51,3 +51,4 @@ tv-app/.idea/
 
 # Cast link secret made by the app next to its database
 nl_cast_secret
+wishmatch_wishes.json*

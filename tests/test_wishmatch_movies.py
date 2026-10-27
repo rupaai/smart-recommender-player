@@ -259,6 +259,12 @@ def main():
     os.environ["HOMELAB_ENV"] = "prod"
     wm2.start()
     check("prod asks Ollama for the model once at start", pulls == [1], pulls)
+    store = wm2.engine.reader.store
+    check("the model's wish readings are kept next to the database",
+          store is not None and store.path == os.path.join(os.path.dirname(os.path.abspath(db.db_path)),
+                                                           "wishmatch_wishes.json") and store.tag == "qwen2.5:3b",
+          store and store.path)
+    check("an understood wish does not wait for the model", wm2.engine.reader.skip_when_understood)
     os.environ.pop("HOMELAB_ENV", None)
     os.environ.pop("OLLAMA_URL", None)
 

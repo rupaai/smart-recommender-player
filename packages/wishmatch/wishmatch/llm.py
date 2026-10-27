@@ -14,6 +14,7 @@ is slow, missing or confused, the lookup's reading is used on its own.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional
@@ -101,6 +102,43 @@ def merge(lookup: Wish, model: Optional[Wish]) -> Wish:
     return out
 
 
+class AnswerFile:
+    """Remembers model answers in a JSON file, so they survive a restart. Each answer is kept as
+    the model wrote it and read again with today's vocabulary. `tag` names the model: answers
+    written by another model are ignored. At most `limit` answers are kept (oldest go first)."""
+
+    def __init__(self, path: str, tag: str = "", limit: int = 5000):
+        self.path = path
+        self.tag = tag
+        self.limit = limit
+        self._lock = threading.Lock()
+
+    def load(self) -> Dict[str, str]:
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict) or data.get("tag") != self.tag or not isinstance(data.get("answers"), dict):
+            return {}
+        return {str(k): str(v) for k, v in data["answers"].items()}
+
+    def add(self, key: str, raw: str) -> None:
+        with self._lock:
+            answers = self.load()
+            answers.pop(key, None)
+            answers[key] = raw
+            while len(answers) > self.limit:
+                answers.pop(next(iter(answers)))
+            tmp = f"{self.path}.tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump({"tag": self.tag, "answers": answers}, f)
+                os.replace(tmp, self.path)
+            except OSError as e:
+                print(f"[Wishmatch] Could not save a wish reading to {self.path} ({e}).", flush=True)
+
+
 class LLMWishReader:
     """Reads wishes with a model, remembering the last `cache_size` answers (paging and repeats are instant).
 
@@ -108,31 +146,48 @@ class LLMWishReader:
     background and remembered, so that search answers with the word lookup now and with the model's
     reading next time (Show more, the same words again). None = always wait.
     avoid_groups: the vocabulary groups the model may put in "a" (things ruled out); small models
-    like to rule out moods nobody mentioned, so this is best kept to content warnings."""
+    like to rule out moods nobody mentioned, so this is best kept to content warnings.
+    skip_when_understood: when the word lookup understood every typed word, don't wait for the
+    model (it still reads the wish in the background for next time).
+    store: an AnswerFile (or anything with load() and add(key, raw)) that keeps answers across restarts."""
 
     def __init__(self, complete: Complete, noun: str = "items", cache_size: int = 256,
-                 wait_seconds: Optional[float] = None, avoid_groups: Optional[List[str]] = None):
+                 wait_seconds: Optional[float] = None, avoid_groups: Optional[List[str]] = None,
+                 skip_when_understood: bool = False, store: Any = None):
         self.complete = complete
         self.noun = noun
         self.cache_size = cache_size
         self.wait_seconds = wait_seconds
         self.avoid_groups = avoid_groups
+        self.skip_when_understood = skip_when_understood
+        self.store = store
         self._cache: "OrderedDict[str, Optional[Wish]]" = OrderedDict()
+        self._stored: Dict[str, str] = dict(store.load()) if store is not None else {}
         self._pending: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
+
+    def _parse(self, raw: Optional[str], vocab: Vocabulary) -> Optional[Wish]:
+        model = parse_answer(raw, vocab)
+        if model is not None and self.avoid_groups is not None:
+            allowed = {t for g in self.avoid_groups for t in vocab.tags.get(g, [])}
+            model.avoid_tags &= allowed
+        return model
+
+    def _remember(self, key: str, model: Wish) -> None:
+        self._cache[key] = model
+        while len(self._cache) > self.cache_size:
+            self._cache.popitem(last=False)
 
     def _ask(self, key: str, text: str, vocab: Vocabulary) -> None:
         try:
             raw = self.complete(wish_prompt(text), _schema(vocab, self.avoid_groups), wish_system(vocab, self.noun))
-            model = parse_answer(raw, vocab)
-            if model is not None and self.avoid_groups is not None:
-                allowed = {t for g in self.avoid_groups for t in vocab.tags.get(g, [])}
-                model.avoid_tags &= allowed
+            model = self._parse(raw, vocab)
             if model is not None:            # a failure is retried next time, not remembered
                 with self._lock:
-                    self._cache[key] = model
-                    while len(self._cache) > self.cache_size:
-                        self._cache.popitem(last=False)
+                    self._remember(key, model)
+                    self._stored[key] = str(raw)
+                if self.store is not None:
+                    self.store.add(key, str(raw))
         finally:
             with self._lock:
                 self._pending.pop(key, None)
@@ -142,6 +197,10 @@ class LLMWishReader:
         if not key:
             return lookup
         with self._lock:
+            if key not in self._cache and key in self._stored:
+                model = self._parse(self._stored[key], vocab)
+                if model is not None:
+                    self._remember(key, model)
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return merge(lookup, self._cache[key])
@@ -151,7 +210,8 @@ class LLMWishReader:
                                           name="wishmatch-wish-reader")
                 self._pending[key] = worker
                 worker.start()
-        worker.join(self.wait_seconds)
+        understood = bool(lookup.words_used) and not lookup.words_unknown
+        worker.join(0 if self.skip_when_understood and understood else self.wait_seconds)
         with self._lock:
             model = self._cache.get(key)
         return merge(lookup, model)
