@@ -186,3 +186,52 @@ def word_question(about: str, options: List[str], complete: Optional[Complete] =
     if not q or len(opts) != len(options) or not all(opts):
         return fallback
     return {"question": q, "options": opts, "source": "model"}
+
+
+class QuestionWorder:
+    """Words questions with a model, remembering each wording (the same choice is never worded twice).
+
+    The questions come from a small fixed set (a mood dial, or a few feeling words), so after a few
+    searches nearly every question is already worded and answers at once. A question not worded yet
+    waits up to `wait_seconds` for the model; a slower answer is still collected in the background and
+    remembered, and this time the fixed sentence is used. Only the model's wordings are remembered."""
+
+    def __init__(self, complete: Complete, noun: str = "items", wait_seconds: Optional[float] = None,
+                 cache_size: int = 512):
+        self.complete = complete
+        self.noun = noun
+        self.wait_seconds = wait_seconds
+        self.cache_size = cache_size
+        self._cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
+        self._pending: Dict[tuple, threading.Thread] = {}
+        self._lock = threading.Lock()
+
+    def _ask(self, key: tuple) -> None:
+        try:
+            worded = word_question(key[0], list(key[1]), self.complete, self.noun)
+            if worded.get("source") == "model":
+                with self._lock:
+                    self._cache[key] = worded
+                    while len(self._cache) > self.cache_size:
+                        self._cache.popitem(last=False)
+        finally:
+            with self._lock:
+                self._pending.pop(key, None)
+
+    def word(self, about: str, options: List[str]) -> Dict[str, Any]:
+        key = (about, tuple(options))
+        if not options:
+            return word_question(about, list(options))
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return dict(self._cache[key])
+            worker = self._pending.get(key)
+            if worker is None:
+                worker = threading.Thread(target=self._ask, args=(key,), daemon=True, name="wishmatch-question-worder")
+                self._pending[key] = worker
+                worker.start()
+        worker.join(self.wait_seconds)
+        with self._lock:
+            worded = self._cache.get(key)
+        return dict(worded) if worded else word_question(about, list(options))

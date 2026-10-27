@@ -864,7 +864,8 @@ async def rec_recommend(domain: str, req: RecRequest) -> Dict[str, Any]:
 @app.post("/api/rec/{domain}/wish")
 async def rec_wish(domain: str, req: WishRequest) -> Dict[str, Any]:
     """How Wishmatch read these words: mood dials, feelings, what to avoid, words it did not know."""
-    return _rec_domain(domain).read_wish(req.text)
+    # In a worker thread: the wish reader can wait seconds on Ollama and must not stall other requests.
+    return await asyncio.to_thread(_rec_domain(domain).read_wish, req.text)
 
 
 class ProfileBody(BaseModel):
