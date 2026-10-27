@@ -260,3 +260,18 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 
 /* TV playback info panel: the lines sit tight, like a read-out. */
 .nl-menu-info .nl-menu-note { padding-top: 2px; padding-bottom: 2px; color: var(--nl-ink); }
+
+/* ---- Laptop app (/player/play): the TV look with a mouse and the web keys. Everything the TV hides because it has no
+   pointer comes back, at big-screen sizes; a clicked button does not get the remote's focus glow (keyboard Tab still does). */
+.tv.laptop .nl-center, .tv.laptop #nl-mute, .tv.laptop #nl-fs { display: flex; }
+.tv.laptop #nl-volume { display: block; }
+.tv.laptop .nl-center { width: 7rem; height: 7rem; margin: -3.5rem 0 0 -3.5rem; }
+.tv.laptop .nl-center svg { width: 3.5rem; height: 3.5rem; }
+.tv.laptop .nl-volume { width: 11rem; }
+.tv.laptop .nl-btn:focus:not(:focus-visible), .tv.laptop .nl-chip:focus:not(:focus-visible) {
+  background: transparent; color: inherit; transform: none; box-shadow: none; }
+.tv.laptop .nl-chip:focus:not(:focus-visible) { background: rgba(255, 255, 255, 0.08); }
+.tv.laptop .nl-btn:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.12); }
+.tv.laptop .nl-chip:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.18); }
+.tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-thumb { transform: none; box-shadow: none; }
+.tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-runnable-track { box-shadow: none; }

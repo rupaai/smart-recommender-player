@@ -158,6 +158,13 @@ def test_js():
             failures.append("laptop links: " + line.strip())
     check("laptop link checks pass", out.returncode == 0, (out.stdout + out.stderr)[-800:])
 
+    print("laptop controls (node)")
+    out = subprocess.run([node, os.path.join(ROOT, "tests", "js", "nl_laptop_controls_check.js")], capture_output=True, text=True, timeout=120)
+    for line in out.stdout.splitlines():
+        if line.strip().startswith("FAIL"):
+            failures.append("laptop controls: " + line.strip())
+    check("laptop controls checks pass", out.returncode == 0, (out.stdout + out.stderr)[-800:])
+
 
 def main():
     tmp = tempfile.mkdtemp(prefix="nl_laptop_test_")
