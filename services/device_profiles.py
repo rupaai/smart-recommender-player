@@ -159,9 +159,14 @@ def browser_profile(caps: Optional[Caps]) -> dict:
 
 LAPTOP_CLIENT = "laptop"
 LAPTOP_MAX_BITRATE = 400_000_000
-# Dynamic ranges a browser shows correctly. Dolby Vision types are left out: a profile 5 / 7 / 8 stream
-# needs a DV decoder or it looks purple, so those count as "needs conversion" until checked on the real server.
-LAPTOP_VIDEO_RANGES = "SDR|HDR10|HDR10Plus|HLG"
+# Dynamic ranges a browser shows correctly. Dolby Vision with a normal base layer (profile 7 = DOVIWithEL, 8.1 =
+# DOVIWithHDR10, 8.2 / 8.4 = DOVIWithSDR / DOVIWithHLG) is listed: the browser decodes the HDR10 / SDR / HLG base and
+# ignores the Dolby Vision layer. Without these Jellyfin 10.11 reports VideoRangeTypeNotSupported for "Michael (2026)"
+# and re-encodes it (checked on mars, 2026-10-27). Jellyfin tags the copy hvc1 unless the exact type "DOVI" is listed,
+# so "DOVI" (profile 5, no base layer: purple without a DV decoder) and "DOVIInvalid" stay out and still convert.
+LAPTOP_VIDEO_RANGES = (
+    "SDR|HDR10|HDR10Plus|HLG|DOVIWithHDR10|DOVIWithHLG|DOVIWithSDR|DOVIWithEL|DOVIWithHDR10Plus|DOVIWithELHDR10Plus"
+)
 
 
 def laptop_profile(caps: Optional[Caps]) -> dict:
