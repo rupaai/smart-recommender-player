@@ -49,7 +49,14 @@
   // An old app (v1) draws its own controls: the page then hides its own and is only the shell.
   var isNativeV2 = isNative && Number(NLPlayerCore.nativeVersion()) >= 2;
   var isNativeV1 = isNative && !isNativeV2;
-  var isTv = isNative || query.get("tv") === "1";
+  var surface = document.body.getAttribute("data-surface") || "web";   // web, tv or laptop (the server decides)
+  var isLaptop = surface === "laptop";
+  // For now the laptop looks and works like the TV; a later change splits the look from the remote input.
+  var isTv = isNative || query.get("tv") === "1" || isLaptop;
+  if (isLaptop) {
+    document.documentElement.classList.add("laptop");
+    root.classList.add("laptop");
+  }
   if (isTv) {
     document.documentElement.classList.add("tv");
     root.classList.add("tv");
@@ -59,7 +66,8 @@
     root.classList.add("native");
   }
   if (isNativeV1) { root.classList.add("native-v1"); }
-  var TV_ROOT = "/nl/tv/";
+  // Where this app's title and show pages live: /nl/, /nl/tv/ (also in the Android app) or /player/.
+  var PAGE_ROOT = NLPlayerExtras.pageRoot(surface, document.body.getAttribute("data-root"), isTv);
   // M8 casting: `player` is the <video> adapter, or the Chromecast while one is connected (cast.js swaps it).
   // Phones and laptops only; the TV app never casts.
   var castKit = window.NLCast ? NLCast.attach(window, localPlayer, !isTv) : null;
@@ -88,7 +96,7 @@
     next: null,           // {source_id, code, name, autoplay} while a next episode exists
     nextCancelled: false, // Cancel pressed for this episode
     advancing: false,     // already switching to the next episode
-    backHref: isTv ? "/nl/tv/" : "/nl/",
+    backHref: PAGE_ROOT,
     nextPromise: null,    // the next-episode lookup in flight (the native player wants the label up front)
     subStyle: { size: "M", background: "box", raise: 0 },   // P15, saved in the person's prefs (NLPrefs; localStorage is the fallback)
     subDelay: 0,          // P16, seconds; per file, so never saved
@@ -1097,7 +1105,7 @@
       document.title = (stream.title ? stream.title + " - " : "") + "Northern Lights";
       $("nl-title").textContent = stream.title || "";
       if (stream.source_id) { S.sourceId = stream.media_type === "tv" ? stream.source_id : null; }
-      S.backHref = (isTv ? TV_ROOT : "/nl/") + (stream.media_type === "tv" ? "show/" : "title/") + encodeURIComponent(itemId);
+      S.backHref = PAGE_ROOT + (stream.media_type === "tv" ? "show/" : "title/") + encodeURIComponent(itemId);
       $("nl-error-back").setAttribute("href", S.backHref);
       var ep = stream.episode;
       if (ep && (ep.season || ep.episode || ep.name)) {
@@ -1236,7 +1244,7 @@
     stopReporting(false);
     S.sourceId = n.source_id;
     S.next = null;
-    try { window.history.replaceState(null, "", "/nl/play/" + encodeURIComponent(itemId) + "?source=" + encodeURIComponent(n.source_id) + (isTv ? "&tv=1" : "")); } catch (e) { /* ignore */ }
+    try { window.history.replaceState(null, "", NLPlayerExtras.playUrl(surface, isTv, itemId, n.source_id)); } catch (e) { /* ignore */ }
     startFirst({ fromNext: true });
   }
   function cancelNext() {
@@ -1394,7 +1402,7 @@
       var cameFromTv = false;
       try {
         var ref = document.referrer ? new URL(document.referrer) : null;
-        cameFromTv = !!ref && ref.origin === window.location.origin && ref.pathname.indexOf(TV_ROOT) === 0;
+        cameFromTv = !!ref && ref.origin === window.location.origin && ref.pathname.indexOf(PAGE_ROOT) === 0;
       } catch (e) { /* no referrer */ }
       if (cameFromTv && window.history.length > 1) { window.history.back(); } else { window.location.replace(S.backHref); }
       return;

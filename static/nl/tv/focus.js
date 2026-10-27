@@ -96,6 +96,14 @@
     saveSpot(row, col);
   });
 
+  /* Laptop browser: pointing at something puts the focus on it (no scrolling), so the mouse gets the same look. */
+  document.addEventListener("mouseover", function (e) {
+    if (!document.documentElement.classList.contains("laptop") || !e.target.closest) { return; }
+    var el = e.target.closest("[data-nl-focus]");
+    if (!el || el === document.activeElement || el.hasAttribute("data-nl-input") || !visible(el)) { return; }
+    try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+  });
+
   /* ------------------------------------------------------------------ movement */
 
   function centerX(el) { var r = el.getBoundingClientRect(); return r.left + r.width / 2; }

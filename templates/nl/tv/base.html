@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{% if surface == 'laptop' %} class="laptop"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,16 +9,16 @@
   <link rel="stylesheet" href="/static/nl/subtitles.css">
   {% block head %}{% endblock %}
 </head>
-<body class="tv-page-{{ page }}" data-page="{{ page }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
+<body class="tv-page-{{ page }}" data-page="{{ page }}" data-root="{{ root }}" data-surface="{{ surface }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
   <header class="tv-bar">
-    <a class="tv-brand" href="/nl/tv/" aria-label="Northern Lights home">Northern Lights</a>
+    <a class="tv-brand" href="{{ root }}" aria-label="Northern Lights home">Northern Lights</a>
     {% if page != 'who' %}<div class="tv-bar-row" data-nl-row="nav" data-nl-skip-initial>
       <nav class="tv-nav" aria-label="Sections">
-        <a class="tv-pill" data-nl-focus href="/nl/tv/">Home</a>
-        <a class="tv-pill" data-nl-focus href="/nl/tv/downloads">Downloads</a>
-        <a class="tv-pill" data-nl-focus href="/nl/tv/search">Search</a>
+        <a class="tv-pill" data-nl-focus href="{{ root }}">Home</a>
+        <a class="tv-pill" data-nl-focus href="{{ root }}downloads">Downloads</a>
+        <a class="tv-pill" data-nl-focus href="{{ root }}search">Search</a>
       </nav>
-      {% if people_configured and viewer %}<a class="tv-account" data-nl-focus href="/nl/tv/me" aria-label="{{ viewer.label }}: profile, languages and who's watching">
+      {% if people_configured and viewer %}<a class="tv-account" data-nl-focus href="{{ root }}me" aria-label="{{ viewer.label }}: profile, languages and who's watching">
         <span class="tv-account-avatar" aria-hidden="true">{{ '&' if viewer.both else viewer.label[:1] }}</span>
         <span class="tv-account-name">{{ viewer.label }}</span>
       </a>{% endif %}

@@ -192,10 +192,10 @@ def cookie_value(cookie_header: Optional[str], name: str = COOKIE_NAME) -> Optio
 
 
 def safe_next(target: Optional[str], default: str) -> str:
-    """Where to go after choosing: only a path inside /nl/ (no scheme, host, backslash or control characters)."""
+    """Where to go after choosing: only a path inside /nl/ or /player/ (no scheme, host, backslash or control characters)."""
     t = (target or "").strip()
     if (
-        t.startswith("/nl/") or t == "/nl"
+        t.startswith(("/nl/", "/player/")) or t in ("/nl", "/player")
     ) and not t.startswith("//") and "\\" not in t and not re.search(r"[\x00-\x1f\x7f]", t) and "://" not in t:
         return t
     return default
