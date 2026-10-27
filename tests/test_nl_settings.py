@@ -385,7 +385,7 @@ def test_static():
     check("the app settings button shows only when the TV app has openSettings", 'typeof native.openSettings === "function"' in tv and "tv-app-settings-row" in tv)
     check("the prefs script knows the new settings", all(k in read("static/nl/prefs.js") for k in ("skip_seconds", "autoplay", "quality_kbps", "picture_fit", "qualityChoices")))
     bridge = read("tv-app/app/src/main/java/app/northernlights/tv/NativeBridge.kt")
-    check("the Kotlin bridge is documented as v6", "bridge v6" in bridge)
+    check("the Kotlin bridge is documented as v7", "bridge v7" in bridge)
     check("the Kotlin bridge can open the app's settings", "fun openSettings()" in bridge)
     check("the proxy allowlist is untouched", "videos/" in read("services/jellyfin_playback.py").lower() and "_IMAGE_PATH" in read("services/jellyfin_playback.py"))
 

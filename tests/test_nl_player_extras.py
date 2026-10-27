@@ -376,8 +376,8 @@ def test_static():
     bridge = read("tv-app/app/src/main/java/app/northernlights/tv/NativeBridge.kt")
     ctl = read("tv-app/app/src/main/java/app/northernlights/tv/PlayerController.kt")
     main_kt = read("tv-app/app/src/main/java/app/northernlights/tv/MainActivity.kt")
-    check("bridge: setSpeed(String?) is a JavascriptInterface method and version() says 6 (v6 keeps setSpeed)",
-          "@JavascriptInterface\n    fun setSpeed(rate: String?)" in bridge and 'if (host.isTrusted()) "6" else ""' in bridge)
+    check("bridge: setSpeed(String?) is a JavascriptInterface method and version() says 7 (v7 keeps setSpeed)",
+          "@JavascriptInterface\n    fun setSpeed(rate: String?)" in bridge and 'if (host.isTrusted()) "7" else ""' in bridge)
     check("bridge: speed is range-checked and only for trusted pages", "MIN_SPEED" in bridge and "MAX_SPEED" in bridge and "!host.isTrusted()" in bridge.split("fun setSpeed")[1].split("fun version")[0])
     check("bridge: the older methods are all still there", all(f"fun {n}(" in bridge for n in ("play", "stop", "pause", "resume", "seekTo", "setSubtitle", "setSubtitleStyle")))
     check("Host has onSpeedRequested and MainActivity hops to the UI thread for it",

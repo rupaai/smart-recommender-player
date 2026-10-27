@@ -3,7 +3,7 @@ package app.northernlights.tv
 import android.webkit.JavascriptInterface
 
 /**
- * window.NorthernLightsNative (bridge v6 = v5 + stats() and embedded subtitle tracks (kind "embedded" + order in play()'s subtitleTracks, chosen with setSubtitle); v5 = v4 + setAudioTrack; v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
+ * window.NorthernLightsNative (bridge v7 = v6 + setSubtitleDelay; v6 = v5 + stats() and embedded subtitle tracks (kind "embedded" + order in play()'s subtitleTracks, chosen with setSubtitle); v5 = v4 + setAudioTrack; v4 = v3 + setSpeed; v3 = v2 + setSubtitleStyle). Methods run on a WebView background thread; each one re-checks
  * that the page is on the saved server origin ([isTrusted]) and then hands over to the
  * main thread via [host].
  */
@@ -19,6 +19,7 @@ class NativeBridge(private val host: Host) {
         fun onSeekRequested(seconds: Double)
         fun onSubtitleRequested(index: Int)
         fun onSubtitleStyleRequested(json: String)
+        fun onSubtitleDelayRequested(seconds: Double)
         fun onSpeedRequested(rate: Double)
         fun onAudioTrackRequested(order: Int)
         /** Bridge v6: the info panel's numbers as JSON. May be called from any thread. */
@@ -75,13 +76,24 @@ class NativeBridge(private val host: Host) {
 
     /**
      * Bridge v3: how the subtitles Media3 draws look. [json] is {size: S|M|L|XL, background: none|shadow|box,
-     * raise: 0|1|2}. Safe to call before or during playback. There is deliberately no delay call:
-     * Media3 1.5.1 has no subtitle offset, so the page hides its delay control on the TV.
+     * raise: 0|1|2}. Safe to call before or during playback. Picture subtitles follow size, box and position too (v7).
      */
     @JavascriptInterface
     fun setSubtitleStyle(json: String?) {
         if (json == null || !host.isTrusted()) return
         host.onSubtitleStyleRequested(json)
+    }
+
+    /**
+     * Bridge v7: subtitle delay in seconds ("-1.25"; positive = later), for the playing stream only: play() sets it
+     * back to 0, so the page sends it again after play(). Unparsable values are ignored; the player clamps to +-60 s.
+     */
+    @JavascriptInterface
+    fun setSubtitleDelay(seconds: String?) {
+        if (!host.isTrusted()) return
+        val value = seconds?.toDoubleOrNull() ?: return
+        if (value.isNaN() || value.isInfinite()) return
+        host.onSubtitleDelayRequested(value)
     }
 
     /**
@@ -117,7 +129,7 @@ class NativeBridge(private val host: Host) {
     fun stats(): String = if (host.isTrusted()) host.statsJson() else "{}"
 
     @JavascriptInterface
-    fun version(): String = if (host.isTrusted()) "6" else ""
+    fun version(): String = if (host.isTrusted()) "7" else ""
 
     companion object {
         private const val MIN_SPEED = 0.25

@@ -1019,6 +1019,7 @@
       cast: casting() ? stream : undefined });
     applyTextTracks();
     applySubStyle();
+    if (S.subDelay) { player.setSubtitleDelay(S.subDelay); }   // the TV app starts every stream at 0
     applySpeed();
     applyFit();
     noteConversion(stream);

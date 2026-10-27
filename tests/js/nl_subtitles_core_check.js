@@ -106,7 +106,7 @@ function nativeCore(version) {
   w.window = w;
   w.NorthernLightsNative = {
     version: () => version, play() {}, pause() {}, resume() {}, seekTo() {}, stop() {},
-    setSubtitle() {}, setSubtitleStyle: (j) => calls.push(j)
+    setSubtitle() {}, setSubtitleStyle: (j) => calls.push(j), setSubtitleDelay: (d) => calls.push("delay " + d)
   };
   const c = vm.createContext(w);
   vm.runInContext(src, c);
@@ -118,6 +118,12 @@ v3.player.setSubtitleStyle({ size: "L", background: "box", raise: 1 });
 check("v3 TV: the style goes to the bridge as JSON", v3.calls.length === 1 && JSON.parse(v3.calls[0]).size === "L", v3.calls);
 v3.player.setSubtitleDelay(1);
 check("v3 TV: setSubtitleDelay is a harmless no-op", v3.player.subtitleDelay === 0 && v3.calls.length === 1);
+const v7 = nativeCore("7");
+check("v7 TV: styling and delay", v7.player.canStyleSubtitles === true && v7.player.canDelaySubtitles === true);
+v7.player.setSubtitleDelay(-1.25);
+check("v7 TV: the delay goes to the bridge as a string", v7.calls.length === 1 && v7.calls[0] === "delay -1.25" && v7.player.subtitleDelay === -1.25, v7.calls);
+v7.player.setSubtitleDelay(NaN);
+check("v7 TV: an unusable delay is sent as 0", v7.calls[1] === "delay 0" && v7.player.subtitleDelay === 0, v7.calls);
 const v2 = nativeCore("2");
 v2.player.setSubtitleStyle({ size: "L" });
 check("v2 TV app: no style call, no style or delay controls", v2.calls.length === 0 && v2.player.canStyleSubtitles === false && v2.player.canDelaySubtitles === false);
