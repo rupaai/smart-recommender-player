@@ -16,7 +16,9 @@ from typing import Any, Dict, List, Optional
 
 import os
 
-from wishmatch import AnswerFile, LLMWishReader, OllamaClient, Request, Wishmatch
+from wishmatch import LLMWishReader, OllamaClient, Request, Wishmatch
+
+from wishmatch.llm import AnswerFile
 
 from .adapter import MovieAdapter
 from .session import WishmatchSession
