@@ -135,7 +135,17 @@
     return "/nl/play/" + encodeURIComponent(itemId) + qs + (isTv ? "&tv=1" : "");
   }
 
+  /* How the player takes input. bigScreen: the TV look (big sizes, dark style), true on the TV and the laptop app.
+   * remote: the TV remote (D-pad focus, OK / Back keys, no pointer), true in the Android app and with ?tv=1, never on
+   * the laptop. cast: the Chromecast sender (phones and laptops, not the remote). keys: which key handler runs. */
+  function inputMode(surface, isNative, tvParam) {
+    var laptop = surface === "laptop";
+    var remote = !!(isNative || tvParam);
+    return { laptop: laptop, bigScreen: remote || laptop, remote: remote, cast: !remote, keys: remote ? "remote" : "web" };
+  }
+
   var api = {
+    inputMode: inputMode,
     pageRoot: pageRoot,
     playUrl: playUrl,
     SPEEDS: SPEEDS,

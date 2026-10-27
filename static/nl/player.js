@@ -51,13 +51,17 @@
   var isNativeV1 = isNative && !isNativeV2;
   var surface = document.body.getAttribute("data-surface") || "web";   // web, tv or laptop (the server decides)
   var isLaptop = surface === "laptop";
-  // For now the laptop looks and works like the TV; a later change splits the look from the remote input.
-  var isTv = isNative || query.get("tv") === "1" || isLaptop;
+  // Two meanings (NLPlayerExtras.inputMode): the big-screen look (TV and laptop: sizes, dark style) and the remote
+  // control input (Android app, ?tv=1: D-pad focus, OK / Back keys, no pointer, no cast). The laptop is big-screen
+  // with a mouse and the normal web keys.
+  var mode = NLPlayerExtras.inputMode(surface, isNative, query.get("tv") === "1");
+  var bigScreen = mode.bigScreen;
+  var remote = mode.remote;
   if (isLaptop) {
     document.documentElement.classList.add("laptop");
     root.classList.add("laptop");
   }
-  if (isTv) {
+  if (bigScreen) {
     document.documentElement.classList.add("tv");
     root.classList.add("tv");
   }
@@ -67,10 +71,10 @@
   }
   if (isNativeV1) { root.classList.add("native-v1"); }
   // Where this app's title and show pages live: /nl/, /nl/tv/ (also in the Android app) or /player/.
-  var PAGE_ROOT = NLPlayerExtras.pageRoot(surface, document.body.getAttribute("data-root"), isTv);
+  var PAGE_ROOT = NLPlayerExtras.pageRoot(surface, document.body.getAttribute("data-root"), bigScreen);
   // M8 casting: `player` is the <video> adapter, or the Chromecast while one is connected (cast.js swaps it).
-  // Phones and laptops only; the TV app never casts.
-  var castKit = window.NLCast ? NLCast.attach(window, localPlayer, !isTv) : null;
+  // Phones and laptops only (the button shows when a Chromecast is found); the TV app never casts.
+  var castKit = window.NLCast ? NLCast.attach(window, localPlayer, mode.cast) : null;
   var player = castKit ? castKit.player : localPlayer;
   function casting() { return !!(castKit && castKit.active()); }
 
@@ -176,9 +180,9 @@
         if (canHide()) {
           root.classList.remove("controls-visible");
           // Back to "arrows skip, OK pauses" once the controls are gone.
-          if (isTv && $("nl-controls").contains(document.activeElement)) { document.activeElement.blur(); }
+          if (remote && $("nl-controls").contains(document.activeElement)) { document.activeElement.blur(); }
         }
-      }, isTv ? TV_HIDE_AFTER_MS : HIDE_AFTER_MS);
+      }, remote ? TV_HIDE_AFTER_MS : HIDE_AFTER_MS);
     }
   }
   function controlsVisible() { return root.classList.contains("controls-visible"); }
@@ -199,7 +203,7 @@
     S.menuOpen = false;
     releaseSubtitleHold();
     showControls();
-    if (isTv && menuOpener && document.activeElement !== menuOpener) { menuOpener.focus(); }   // the remote keeps its place
+    if (remote && menuOpener && document.activeElement !== menuOpener) { menuOpener.focus(); }   // the remote keeps its place
     menuOpener = null;
   }
   function openMenu(title, items) {
@@ -339,7 +343,7 @@
     player.seek(t);
     toast((sign < 0 ? "−" : "+") + S.skip + "s");
     renderProgress();
-    if (isTv && hasTrickplay() && d) { flashThumb(t, t / d); }   // P21: the remote sees where it lands
+    if (remote && hasTrickplay() && d) { flashThumb(t, t / d); }   // P21: the remote sees where it lands
   }
 
   function renderProgress() {
@@ -401,7 +405,7 @@
   }
 
   // P21: the bubble above the seek bar. `fraction` (0..1) is where the pointer or target is along the bar.
-  function thumbWidth() { return isTv ? 240 : 168; }
+  function thumbWidth() { return bigScreen ? 240 : 168; }
   function showThumb(seconds, fraction) {
     var wrap = $("nl-seek-wrap");
     var bubble = $("nl-thumb");
@@ -616,7 +620,7 @@
     el.hidden = false;
     S.segCur = { seg: seg, next: nextEpisode };
     // The remote needs somewhere to land the first time the button appears: OK then skips.
-    if (isTv && !S.segFocused[key] && !screenOpen() && !S.menuOpen && !nextCardVisible() &&
+    if (remote && !S.segFocused[key] && !screenOpen() && !S.menuOpen && !nextCardVisible() &&
         !$("nl-controls").contains(document.activeElement)) {
       S.segFocused[key] = true;
       $("nl-seg-go").focus();
@@ -813,7 +817,7 @@
   // closes (only if it was playing). Moving from one subtitle menu to the next keeps it paused: the release waits a tick.
   var subHold = { active: false, resume: false, timer: null };
   function holdForSubtitles() {
-    if (!isTv || casting()) { return; }
+    if (!remote || casting()) { return; }
     clearTimeout(subHold.timer);
     if (subHold.active) { return; }
     subHold.active = true;
@@ -918,13 +922,13 @@
       container: $("nl-subfind"),
       itemId: itemId,
       sourceId: S.sourceId,
-      tv: isTv,
+      tv: bigScreen,
       onDownloaded: addDownloadedSubtitle,
       onClose: function () {
         S.finderOpen = false;
         releaseSubtitleHold();
         showControls();
-        if (isTv) { $("nl-subs").focus(); }
+        if (remote) { $("nl-subs").focus(); }
       }
     });
   }
@@ -1234,7 +1238,7 @@
     hideSeg();
     $("nl-next-title").textContent = nextLabel(n);
     $("nl-next").hidden = false;
-    if (isTv) { $("nl-next-play").focus(); }   // the remote needs somewhere to land: OK plays it, Back cancels
+    if (remote) { $("nl-next-play").focus(); }   // the remote needs somewhere to land: OK plays it, Back cancels
   }
   function advanceToNext() {
     var n = S.next;
@@ -1244,7 +1248,7 @@
     stopReporting(false);
     S.sourceId = n.source_id;
     S.next = null;
-    try { window.history.replaceState(null, "", NLPlayerExtras.playUrl(surface, isTv, itemId, n.source_id)); } catch (e) { /* ignore */ }
+    try { window.history.replaceState(null, "", NLPlayerExtras.playUrl(surface, remote, itemId, n.source_id)); } catch (e) { /* ignore */ }
     startFirst({ fromNext: true });
   }
   function cancelNext() {
@@ -1398,7 +1402,7 @@
     if (casting()) { castKit.cast.end(true); }   // leaving the player stops the TV too (no remote page to control it)
     // On the TV, go back through the history when we came from one of its screens, so Back
     // from the title page does not land on the player again. Otherwise replace this page.
-    if (isTv) {
+    if (bigScreen) {
       var cameFromTv = false;
       try {
         var ref = document.referrer ? new URL(document.referrer) : null;
@@ -1512,7 +1516,7 @@
   // skips back / ahead by the skip length, a vertical swipe on the right half changes the volume where the browser
   // lets a page do that. Play/pause is the big button and the bottom one.
   var G = { down: null, lastTap: null, tapTimer: null };
-  function touchGestures() { return S.pointerType === "touch" && !isTv; }
+  function touchGestures() { return S.pointerType === "touch" && !remote; }
   function onPicture(e) { return e.target === video || e.target.id === "nl-controls"; }
   root.addEventListener("pointerdown", function (e) {
     S.pointerType = e.pointerType || "mouse";
@@ -1693,11 +1697,12 @@
   document.addEventListener("keydown", function (e) {
     if (e.ctrlKey || e.metaKey || e.altKey) { return; }
     if (!$("nl-help").hidden) { e.preventDefault(); closeHelp(); return; }
-    if (isTv && mediaKey(e)) { return; }
-    if (isTv && tvKey(e)) { return; }
+    if (remote && mediaKey(e)) { return; }
+    if (remote && tvKey(e)) { return; }
     var key = e.key;
     if (key === "Escape") {
       if (S.menuOpen) { e.preventDefault(); closeMenu(); } else if (reactOpen()) { e.preventDefault(); closeReaction(); } else if (nextCardVisible()) { e.preventDefault(); cancelNext(); }
+      else if (bigScreen && !document.fullscreenElement && !S.finderOpen) { e.preventDefault(); leave(); }   // laptop app: Escape goes back like the TV's Back
       return;
     }
     if (!$("nl-resume").hidden || reactOpen() || !$("nl-error").hidden) { showControls(); return; }

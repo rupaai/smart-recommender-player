@@ -361,14 +361,14 @@ def test_static():
     html = read("templates/nl/player.html")
     check("player.js loads the extras once per episode and tolerates failure", "/api/nl/player-extras/" in js and "function loadExtras" in js and "optional" in js)
     check("player.js: thumbnails on hover and scrub, and on the TV when skipping",
-          "function showThumb" in js and 'seek.addEventListener("pointermove"' in js and "flashThumb(t, t / d)" in js and "isTv && hasTrickplay()" in js)
+          "function showThumb" in js and 'seek.addEventListener("pointermove"' in js and "flashThumb(t, t / d)" in js and "remote && hasTrickplay()" in js)
     check("player.js: chapter ticks and the chapters menu", "function renderTicks" in js and "function openChaptersMenu" in js)
     check("player.js: skip intro, next episode, always-skip, auto skip once per segment",
           "function checkSegments" in js and "Skip intro" in html and "Next episode" in html and "S.autoSkipped[key]" in js and "/skip-intro" in js)
     check("player.js: the remote can use, step through and dismiss the skip button", "dismissSeg()" in js and '$("nl-seg").contains(document.activeElement)' in js)
     check("player.js: speed menu with the five speeds, < and > keys", "function openSpeedMenu" in js and "X.SPEEDS" in js and 'case "<"' in js and 'case ">"' in js)
     check("player.js: phone gestures only for touch, never on the TV",
-          "touchGestures()" in js and 'S.pointerType === "touch" && !isTv' in js and "X.tapAction" in js and "X.swipeVolume" in js and "player.canSetVolume" in js)
+          "touchGestures()" in js and 'S.pointerType === "touch" && !remote' in js and "X.tapAction" in js and "X.swipeVolume" in js and "player.canSetVolume" in js)
     check("player-core.js: speed behind feature detection, bridge v4", "canChangeSpeed: v4" in core and 'call("setSpeed"' in core and "Number(nativeVersion()) >= 4" in core)
     check("css: touch-action and the thumbnail bubble", "touch-action: none" in css and ".nl-thumb" in css and ".nl-seg" in css)
 
