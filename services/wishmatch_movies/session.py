@@ -5,7 +5,7 @@ Used instead of the mood-map session (services/mood_popup.MoodSession) when
 recommender.engine is wishmatch. Same methods, so the /api/discover routes drive
 either: the wish is read once, the picks scored, and each question is the split
 that tells the top picks apart best (packages/wishmatch/wishmatch/questions.py),
-worded by the Ollama model when it answers quickly, else by a fixed sentence.
+worded by the Ollama model (each wording remembered, so it is asked once), else by a fixed sentence.
 Each answer adds to the wish and the picks are scored again (about 0.1 s).
 """
 
@@ -15,7 +15,7 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-from wishmatch import apply_answer, next_question, word_question
+from wishmatch import apply_answer, next_question
 from wishmatch.settings import merged
 
 EMOJI = {"low": "🌙", "high": "⚡"}
@@ -79,8 +79,7 @@ class WishmatchSession:
             return None
         if self._worded is None:
             words = [o["words"][0] for o in self.current["options"]]
-            complete = self.service.question_client.generate if self.service.question_client else None
-            self._worded = word_question(self.current["about"], words, complete, noun="films and TV shows")
+            self._worded = self.service.word_question(self.current["about"], words)
         ids = [e for o in self.current["options"] for e in o["examples"]]
         rows = self.service.db.get_items_by_ids(ids) if ids else {}
         opts = []

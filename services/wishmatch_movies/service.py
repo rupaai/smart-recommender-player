@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import os
 
-from wishmatch import LLMWishReader, OllamaClient, Request, Wishmatch
+from wishmatch import LLMWishReader, OllamaClient, QuestionWorder, Request, Wishmatch, word_question
 
 from .adapter import MovieAdapter
 from .session import WishmatchSession
@@ -35,11 +35,14 @@ class WishmatchMovies:
                                wait_seconds=float(cfg.get("wait_seconds", 8)),
                                avoid_groups=list(cfg.get("avoid_groups") or ["flags"])) if self.ollama else None
         self.engine = Wishmatch(self.adapter, reader=reader)
-        # Question wording waits less than a wish: a slow answer falls back to a fixed sentence.
+        # Question wording waits less than a wish: a slow answer falls back to a fixed sentence this
+        # time and is remembered, so each question is worded by the model once.
         qcfg = self.adapter.rules().get("questions") or {}
         self.question_client = self._ollama({**(self.adapter.rules().get("wish_reader") or {}),
-                                             "timeout_seconds": qcfg.get("wording_timeout_seconds", 6),
                                              "max_tokens": 60}) if qcfg.get("model_wording", True) else None
+        self.question_worder = QuestionWorder(self.question_client.generate, noun="films and TV shows",
+                                              wait_seconds=float(qcfg.get("wording_timeout_seconds", 6))) \
+            if self.question_client else None
         self.moods = mood_mappings or {}
 
     @staticmethod
@@ -97,6 +100,12 @@ class WishmatchMovies:
             filters={"exclude_seen": exclude_watched, "genres": genres or [], "era": era,
                      "duration": duration, "min_rating": min_rating, "exclude_ids": exclude_ids or []},
         )
+
+    def word_question(self, about: str, options: List[str]) -> Dict[str, Any]:
+        """A question's wording: the model's (remembered), or a fixed sentence."""
+        if self.question_worder is None:
+            return word_question(about, options, noun="films and TV shows")
+        return self.question_worder.word(about, options)
 
     def run(self, request: Request) -> Dict[str, Any]:
         result = self.engine.recommend(request)
