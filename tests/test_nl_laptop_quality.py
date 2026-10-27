@@ -56,9 +56,13 @@ def test_profile():
     cp = [c for c in p["CodecProfiles"] if c.get("Codec") == "hevc"][0]
     props = {c["Property"]: c for c in cp["Conditions"]}
     check("HEVC keeps main / main 10", props["VideoProfile"]["Value"] == "main|main 10")
-    check("HEVC dynamic range: SDR, HDR10, HDR10Plus, HLG; no Dolby Vision; not required",
-          props["VideoRangeType"]["Condition"] == "EqualsAny" and props["VideoRangeType"]["Value"] == "SDR|HDR10|HDR10Plus|HLG"
-          and props["VideoRangeType"]["IsRequired"] is False and "DOVI" not in props["VideoRangeType"]["Value"], props)
+    ranges = props["VideoRangeType"]["Value"].split("|")
+    check("HEVC dynamic range: SDR, HDR10, HDR10Plus, HLG and Dolby Vision with a base layer (profile 7 = DOVIWithEL); not required",
+          props["VideoRangeType"]["Condition"] == "EqualsAny"
+          and {"SDR", "HDR10", "HDR10Plus", "HLG", "DOVIWithEL", "DOVIWithHDR10", "DOVIWithHLG", "DOVIWithSDR"} <= set(ranges)
+          and props["VideoRangeType"]["IsRequired"] is False, props)
+    check("no profile 5 (DOVI) or DOVIInvalid: Jellyfin would tag the copy dvh1 / it has no base layer a browser can show",
+          "DOVI" not in ranges and "DOVIInvalid" not in ranges, ranges)
     check("the h264 TS profile stays (the converted copy uses it)", any(x["Container"] == "ts" and x["VideoCodec"] == "h264" for x in p["TranscodingProfiles"]))
     none = laptop_profile(None)
     check("no caps: the conservative browser profile at 400 Mbps",
