@@ -411,9 +411,11 @@ class PlayerController(
         val wanted = audioOrder
         if (wanted < 0 || wanted == appliedAudioOrder) return
         val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (wanted >= groups.size) return
+        // The page's order is the file's; Media3's list puts tracks only FFmpeg decodes last.
+        val inFile = fileOrder(groups.map { g -> if (g.length > 0) g.getTrackFormat(0).id else null })
+        if (wanted >= inFile.size) return
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-            .setOverrideForType(TrackSelectionOverride(groups[wanted].mediaTrackGroup, 0))
+            .setOverrideForType(TrackSelectionOverride(groups[inFile[wanted]].mediaTrackGroup, 0))
             .build()
         appliedAudioOrder = wanted
     }
