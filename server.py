@@ -1096,9 +1096,9 @@ async def nl_play_info(
     start: float = Query(0.0, ge=0, description="Start position in seconds"),
     caps: Optional[str] = Query(None, max_length=300, description="Codecs this browser can play, e.g. v=h264.hevc;a=aac;h=h264.aac"),
     source: Optional[int] = Query(None, ge=1, description="media_sources.id: which episode of a show (default: the first)"),
-    client: Optional[str] = Query(None, pattern="^(tv)$", description="tv = the Android TV app (TV profile; caps ignored)"),
+    client: Optional[str] = Query(None, pattern="^(tv|laptop)$", description="tv = the Android TV app (TV profile; caps ignored); laptop = the /player laptop app (original video; caps shape the profile)"),
     max_kbps: Optional[int] = Query(None, ge=0, le=200000, description="Quality for this viewing: 8000, 4000, 2000 or 1000 kbit/s; 0 = Auto; absent = the person's default"),
-    allow_conversion: bool = Query(False, description="TV only: the viewer agreed to a converted copy because the original cannot be played"),
+    allow_conversion: bool = Query(False, description="TV and laptop only: the viewer agreed to a converted copy because the original cannot be played"),
 ) -> Dict[str, Any]:
     """How to play one movie or episode: a proxied stream URL and its kind (file or hls),
     its audio and subtitle tracks, and where the viewer left off. For the viewer (who's watching):
@@ -1133,6 +1133,13 @@ async def _nl_play(
         raise HTTPException(status_code=400, detail="Quality must be 8000, 4000, 2000 or 1000 (kbit/s), or 0 for Auto.")
     if client == "cast":
         quality = None   # the Chromecast has its own profile ceiling
+    if client == "laptop":
+        # The laptop plays the original: the person's saved cap is ignored. A cap picked for this viewing is the viewer
+        # choosing a converted copy, so it counts as agreeing to one.
+        if max_kbps is None:
+            quality = None
+        elif quality:
+            allow_conversion = True
     item = db.get_nl_title(item_id)
     if not item or not item.get("sources"):
         raise HTTPException(status_code=404, detail="Media file not found.")
@@ -1146,8 +1153,8 @@ async def _nl_play(
         profile = profile_for(client, caps)
         info = await asyncio.to_thread(
             _as_user, viewer.jellyfin_users[0], _stream_for_viewer, item, audio, subtitle, start, profile, prefer,
-            quality, "This TV" if client == "tv" else ("This Chromecast" if client == "cast" else "This browser"),
-            allow_conversion,
+            quality, {"tv": "This TV", "cast": "This Chromecast", "laptop": "This laptop"}.get(client or "", "This browser"),
+            allow_conversion, client == "laptop" and not allow_conversion,
         )
         states: Dict[str, Dict[str, Any]] = {}
         if nl_people.configured and info.get("jellyfin_id"):
@@ -1206,12 +1213,12 @@ async def nl_cast_play(
     return cast_payload(info, nl_cast, nl_cast_tokens)
 
 
-def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser", allow_conversion=False):
+def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser", allow_conversion=False, copy_video_only=False):
     if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on") or prefer.get("subtitle_lang")):
         prefer = None
     if prefer:
-        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion)
-    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion)
+        return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion, copy_video_only=copy_video_only)
+    return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion, copy_video_only=copy_video_only)
 
 
 def _apply_resume_rule(viewer: Viewer, info: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:

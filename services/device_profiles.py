@@ -147,6 +147,49 @@ def browser_profile(caps: Optional[Caps]) -> dict:
     return profile
 
 
+# ---- Laptop profile ----------------------------------------------------------------
+# The laptop app (/player) on the home network gets the original video untouched. Chosen with `client=laptop`;
+# the page's `caps` still shape it (what this browser decodes). Like the TV it lifts the ceiling to 400 Mbps, so
+# bitrate alone never makes Jellyfin convert. Jellyfin may only repackage the file into fMP4 HLS (same video, new
+# container) and convert the AUDIO (browsers can't play TrueHD / DTS). The server (stream_for with copy_video_only)
+# refuses any stream where Jellyfin would re-encode the video, unless the viewer chose "Play a converted copy"; the
+# h264 TS profile below stays in the profile because that is what Jellyfin uses for that converted copy.
+# Audio: FLAC first when the browser plays it (lossless), else AAC; the other codecs the browser lists follow, so a
+# compatible source track (AAC, or AC3 / E-AC3 in Safari) is copied as it is. Stereo: laptop speakers.
+
+LAPTOP_CLIENT = "laptop"
+LAPTOP_MAX_BITRATE = 400_000_000
+# Dynamic ranges a browser shows correctly. Dolby Vision types are left out: a profile 5 / 7 / 8 stream
+# needs a DV decoder or it looks purple, so those count as "needs conversion" until checked on the real server.
+LAPTOP_VIDEO_RANGES = "SDR|HDR10|HDR10Plus|HLG"
+
+
+def laptop_profile(caps: Optional[Caps]) -> dict:
+    """The DeviceProfile for the laptop app: browser_profile(caps) with a 400 Mbps ceiling, lossless-first stereo audio
+    for the fMP4 HLS remux and a dynamic range condition on HEVC. No caps: h264 + aac like BROWSER_PROFILE, 400 Mbps."""
+    profile = copy.deepcopy(browser_profile(caps))
+    profile["Name"] = "Northern Lights (laptop)"
+    profile["MaxStreamingBitrate"] = LAPTOP_MAX_BITRATE
+    profile["MaxStaticBitrate"] = LAPTOP_MAX_BITRATE
+    hls_audio = (caps or {}).get("hls", [])
+    for tp in profile["TranscodingProfiles"]:
+        if tp.get("Container") != "mp4" or tp.get("Protocol") != "hls":
+            continue
+        listed = [c for c in tp["AudioCodec"].split(",") if c]
+        first = "flac" if "flac" in hls_audio and "flac" in listed else "aac"
+        tp["AudioCodec"] = ",".join([first] + [c for c in listed if c != first])
+        tp["MaxAudioChannels"] = "2"
+    for cp in profile["CodecProfiles"]:
+        if cp.get("Type") == "Video" and cp.get("Codec") == "hevc":
+            cp["Conditions"].append({
+                "Condition": "EqualsAny",
+                "Property": "VideoRangeType",
+                "Value": LAPTOP_VIDEO_RANGES,
+                "IsRequired": False,
+            })
+    return profile
+
+
 # ---- TV profile (M3) --------------------------------------------------------------
 # The Android TV app plays through Media3/ExoPlayer, which decodes far more than a browser.
 # Chosen with `client=tv`; the page's `caps` are ignored. The TV always plays the original file:
@@ -256,10 +299,12 @@ CAST_PROFILE = {
 
 
 def profile_for(client: Optional[str], caps_raw: Optional[str]) -> dict:
-    """The DeviceProfile for a play request: `client=tv` or `client=cast` wins (caps ignored), else the
-    browser profile shaped by `caps`, else the conservative BROWSER_PROFILE."""
+    """The DeviceProfile for a play request: `client=tv` or `client=cast` wins (caps ignored), `client=laptop` is the
+    laptop profile shaped by `caps`, else the browser profile shaped by `caps`, else the conservative BROWSER_PROFILE."""
     if client == TV_CLIENT:
         return TV_PROFILE
     if client == CAST_CLIENT:
         return CAST_PROFILE
+    if client == LAPTOP_CLIENT:
+        return laptop_profile(parse_caps(caps_raw))
     return browser_profile(parse_caps(caps_raw))

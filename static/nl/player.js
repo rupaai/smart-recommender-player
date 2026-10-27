@@ -90,7 +90,7 @@
     wasVisible: true,
     errors: 0,
     switching: false,
-    allowConversion: false,   // TV: the viewer chose "Play a converted copy" because the original cannot be played
+    allowConversion: false,   // TV and laptop: the viewer chose "Play a converted copy" because the original cannot be played
     retry: null,
     progressTimer: null,
     hideTimer: null,
@@ -774,6 +774,16 @@
       player.showTextTrack(index);
       toast("Subtitles: " + track.label);
       if (S.burnIndex >= 0) { reloadStream({ subtitle: -1 }); }
+    } else if (track.kind === "image" && isLaptop && !S.allowConversion && !casting()) {
+      // Burning a picture subtitle in re-encodes the video: the laptop asks first instead of doing it quietly.
+      openMenu("Picture subtitle", [
+        { kind: "note", text: "This subtitle is a picture. Showing it needs a converted copy (lower quality)." },
+        { kind: "action", label: "Play a converted copy", onSelect: function () {
+          S.allowConversion = true;
+          chooseSubtitle(index);
+        } },
+        { kind: "action", label: "Keep the original", onSelect: function () { /* closeMenu did it; nothing changes */ } }
+      ]);
     } else if (track.kind === "image") {
       S.textIndex = null;
       player.showTextTrack(null);
@@ -992,12 +1002,16 @@
   function fetchPlay(params) {
     // The Android app decodes far more than a browser: it asks for the TV profile instead of sending caps.
     // While casting the Chromecast is what plays: the cast endpoint answers with the cast profile and LAN URLs.
-    var qs = casting() ? [] : [isNative ? "client=tv" : "caps=" + encodeURIComponent(capsString())];
+    // The laptop app asks for the original video (client=laptop; its caps shape the profile) and, like the TV, can
+    // agree to a converted copy. The device part of the query is NLPlayerExtras.playDeviceParams.
+    var qs = NLPlayerExtras.playDeviceParams({
+      casting: casting(), isNative: isNative, isLaptop: isLaptop, allowConversion: S.allowConversion,
+      caps: casting() || isNative ? "" : capsString()
+    });
     if (params.audio !== undefined && params.audio !== null) { qs.push("audio=" + encodeURIComponent(params.audio)); }
     if (params.subtitle !== undefined && params.subtitle !== null) { qs.push("subtitle=" + encodeURIComponent(params.subtitle)); }
     if (params.start > 0) { qs.push("start=" + encodeURIComponent(params.start.toFixed(1))); }
     if (S.sourceId) { qs.push("source=" + encodeURIComponent(S.sourceId)); }
-    if (isNative && S.allowConversion) { qs.push("allow_conversion=1"); }
     if (!casting() && S.quality !== null) { qs.push("max_kbps=" + encodeURIComponent(S.quality)); }
     var url = (casting() ? "/api/nl/cast/play/" : "/api/nl/play/") + encodeURIComponent(itemId) + (qs.length ? "?" + qs.join("&") : "");
     return fetch(url).then(function (resp) {
@@ -1282,7 +1296,7 @@
 
   function showError(message, detail, canConvert) {
     stopReporting(false);
-    $("nl-convert").hidden = !(canConvert && isNative);
+    $("nl-convert").hidden = !(canConvert && (isNative || isLaptop));
     // The server's reason goes on a second line, so a setup problem isn't mistaken for "mars is off".
     $("nl-error-text").textContent = detail ? message + "\n" + detail : message;
     $("nl-error").hidden = false;

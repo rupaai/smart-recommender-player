@@ -22,7 +22,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from urllib.parse import quote, unquote
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.device_profiles import BROWSER_PROFILE, TV_PROFILE
 from services import nl_picture, nl_settings
@@ -57,6 +57,9 @@ class NotPlayable(Exception):
     def __init__(self, message: str = "", can_convert: bool = False):
         super().__init__(message)
         self.can_convert = can_convert
+
+
+PICTURE_SUBTITLE_MESSAGE = "This subtitle is a picture; showing it needs a converted copy (lower quality)."
 
 
 class SubtitleError(Exception):
@@ -197,6 +200,52 @@ def valid_jellyfin_id(value: str) -> bool:
 
 def seconds_to_ticks(seconds: float) -> int:
     return int(round(max(0.0, float(seconds or 0)) * _TICKS))
+
+
+# TranscodeReasons (Jellyfin's TranscodeReason enum) that leave the video alone: the container is repackaged or only
+# the sound is converted. The laptop accepts an HLS stream only when every reason is one of these. Everything else
+# means the picture itself is re-encoded (or may be): VideoCodecNotSupported, VideoProfileNotSupported,
+# VideoRangeTypeNotSupported (also Dolby Vision), VideoLevelNotSupported, VideoResolutionNotSupported,
+# VideoBitDepthNotSupported, VideoFramerateNotSupported, RefFramesNotSupported, AnamorphicVideoNotSupported,
+# InterlacedVideoNotSupported, VideoBitrateNotSupported, ContainerBitrateExceedsLimit (a bitrate cap makes Jellyfin
+# re-encode), SubtitleCodecNotSupported (burn-in), UnknownVideoStreamInfo, StreamCountExceedsLimit.
+VIDEO_COPY_REASONS = frozenset({
+    "ContainerNotSupported",
+    "AudioCodecNotSupported",
+    "AudioChannelsNotSupported",
+    "AudioProfileNotSupported",
+    "AudioSampleRateNotSupported",
+    "AudioBitDepthNotSupported",
+    "AudioBitrateNotSupported",
+    "SecondaryAudioNotSupported",
+    "AudioIsExternal",
+    "DirectPlayError",
+})
+_VIDEO_CODEC_ALIASES = {"h265": "hevc", "avc": "h264", "x264": "h264", "x265": "hevc"}
+
+
+def _norm_video_codec(name: Any) -> str:
+    codec = str(name or "").strip().lower()
+    return _VIDEO_CODEC_ALIASES.get(codec, codec)
+
+
+def video_is_copied(transcoding_url: Any, source_video_codec: Any) -> bool:
+    """Does Jellyfin's HLS stream carry the file's video as it is (a remux), judged from its TranscodingUrl?
+    True only when every TranscodeReason is a container or audio one (VIDEO_COPY_REASONS), the URL does not say
+    AllowVideoStreamCopy=false, and its VideoCodec list contains the source video codec. Anything unclear is False."""
+    if not transcoding_url or not source_video_codec:
+        return False
+    if any(r not in VIDEO_COPY_REASONS for r in nl_picture.transcode_reasons(transcoding_url)):
+        return False
+    try:
+        query = parse_qs(urlsplit(str(transcoding_url)).query, keep_blank_values=True)
+    except ValueError:
+        return False
+    params = {k.lower(): v for k, v in query.items()}
+    if any(str(v).strip().lower() == "false" for v in params.get("allowvideostreamcopy", [])):
+        return False
+    codecs = {_norm_video_codec(c) for v in params.get("videocodec", []) for c in v.split(",") if c.strip()}
+    return _norm_video_codec(source_video_codec) in codecs
 
 
 def _language_name(stream: Dict[str, Any]) -> str:
@@ -791,8 +840,13 @@ class JellyfinPlayback:
         max_kbps: Optional[int] = None,
         device: str = "This browser",
         allow_conversion: bool = False,
+        copy_video_only: bool = False,
     ) -> Dict[str, Any]:
-        """`allow_conversion`: for the TV profile the answer is always the original file (static URL, `audio_order` says
+        """`copy_video_only` (the laptop app, when the viewer has not agreed to a converted copy): the video must reach the
+        browser untouched. The file itself (direct play) is fine, and so is an HLS stream in which Jellyfin copies the video
+        and at most converts the audio (`video_is_copied`). Anything else, or a picture subtitle (burn-in re-encodes the
+        video), raises NotPlayable(can_convert=True). Picture subtitles are never the default then.
+        `allow_conversion`: for the TV profile the answer is always the original file (static URL, `audio_order` says
         which audio track of the file to select, picture subtitles are not burned in, the viewer's quality cap is not
         applied); when Jellyfin cannot give that, NotPlayable(can_convert=True) is raised unless this is True, which
         brings back the conversion path below.
@@ -820,6 +874,11 @@ class JellyfinPlayback:
             # The original is never lowered, and a track choice never reaches Jellyfin (the app switches inside the file).
             max_kbps = None
             subtitle_index = None
+        requested_subtitle = subtitle_index
+        if copy_video_only and not original_only:
+            # A subtitle index is checked below (a picture track needs burn-in); text tracks are side files, never sent.
+            if subtitle_index is not None and subtitle_index >= 0:
+                subtitle_index = None
         cap = nl_settings.effective_cap_bps(int((profile or BROWSER_PROFILE).get("MaxStreamingBitrate") or 0) or None, max_kbps) if max_kbps else None
 
         def pinfo(audio, sub, start, **kw):
@@ -829,13 +888,19 @@ class JellyfinPlayback:
 
         def not_playable(info_, ms_=None):
             code = (info_ or {}).get("ErrorCode") or "no media source"
-            return NotPlayable(self._cannot_play_message(jf_id, ms_, code, device, original=original_only))
+            return NotPlayable(self._cannot_play_message(jf_id, ms_, code, device, original=original_only or copy_video_only))
 
         info = pinfo(audio_index, subtitle_index, start_seconds)
         media_sources = info.get("MediaSources") or []
         if info.get("ErrorCode") or not media_sources:
             raise not_playable(info)
         ms = media_sources[0]
+
+        if copy_video_only and not original_only and requested_subtitle is not None and requested_subtitle >= 0:
+            picked = next((t for t in extract_tracks(ms, jf_id, ms.get("Id") or jf_id)["subtitle_tracks"]
+                           if t["index"] == requested_subtitle), None)
+            if picked is not None and picked.get("kind") == "image":
+                raise NotPlayable(PICTURE_SUBTITLE_MESSAGE, can_convert=True)
 
         default_subtitle_index = -1
         if prefer and (audio_index is None or subtitle_index is None):
@@ -849,7 +914,7 @@ class JellyfinPlayback:
                 track = pick_subtitle_track(first["subtitle_tracks"], prefer.get("subtitle_lang"))
                 if track is not None:
                     if track.get("kind") == "image":
-                        if not original_only:
+                        if not original_only and not copy_video_only:
                             want_sub = track["index"]
                     else:
                         default_subtitle_index = track["index"]
@@ -874,7 +939,7 @@ class JellyfinPlayback:
             if info.get("ErrorCode") or not media_sources:
                 raise not_playable(info)
             ms = media_sources[0]
-            if not ms.get("TranscodingUrl"):
+            if not ms.get("TranscodingUrl") and not copy_video_only:
                 info = pinfo(audio_index, subtitle_index, start_seconds, direct_play=False, direct_stream=False)
                 media_sources = info.get("MediaSources") or []
                 if info.get("ErrorCode") or not media_sources:
@@ -885,11 +950,23 @@ class JellyfinPlayback:
         source_id = ms.get("Id") or jf_id
         transcoding_url = ms.get("TranscodingUrl")
 
+        if copy_video_only and wants_other_audio and not transcoding_url:
+            # The file itself carries only its default audio; another track needs Jellyfin to repackage the file.
+            raise NotPlayable(
+                self._cannot_play_message(jf_id, ms, "no stream with that audio track", device, original=True), can_convert=True
+            )
+
         direct = bool(ms.get("SupportsDirectPlay") or (ms.get("SupportsDirectStream") and not transcoding_url))
         if original_only and not direct:
             reasons = nl_picture.transcode_reasons(transcoding_url)
             code = ", ".join(reasons) or "no stream offered"
             raise NotPlayable(self._cannot_play_message(jf_id, ms, code, device, original=True), can_convert=True)
+        if copy_video_only and not direct:
+            source_video = next((st.get("Codec") for st in (ms.get("MediaStreams") or []) if st.get("Type") == "Video"), None)
+            if not (transcoding_url and video_is_copied(transcoding_url, source_video)):
+                reasons = nl_picture.transcode_reasons(transcoding_url)
+                code = ", ".join(reasons) or ("the video would be re-encoded" if transcoding_url else "no stream offered")
+                raise NotPlayable(self._cannot_play_message(jf_id, ms, code, device, original=True), can_convert=True)
 
         if direct:
             play_method = "DirectPlay" if ms.get("SupportsDirectPlay") else "DirectStream"

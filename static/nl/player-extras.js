@@ -144,8 +144,23 @@
     return { laptop: laptop, bigScreen: remote || laptop, remote: remote, cast: !remote, keys: remote ? "remote" : "web" };
   }
 
+  /* The device part of the /api/nl/play query: who is asking (client=tv for the Android app, client=laptop plus caps for
+   * the laptop app, caps alone for phones and browsers, nothing while casting: the cast endpoint picks the profile) and
+   * whether the viewer agreed to a converted copy (the TV and the laptop; never the phone page). Returns query parts. */
+  function playDeviceParams(o) {
+    var qs = [];
+    if (!o.casting) {
+      if (o.isNative) { qs.push("client=tv"); }
+      else if (o.isLaptop) { qs.push("client=laptop", "caps=" + encodeURIComponent(o.caps)); }
+      else { qs.push("caps=" + encodeURIComponent(o.caps)); }
+    }
+    if ((o.isNative || o.isLaptop) && o.allowConversion) { qs.push("allow_conversion=1"); }
+    return qs;
+  }
+
   var api = {
     inputMode: inputMode,
+    playDeviceParams: playDeviceParams,
     pageRoot: pageRoot,
     playUrl: playUrl,
     SPEEDS: SPEEDS,
