@@ -32,22 +32,90 @@ class PlaybackLogicTest {
         assertFalse(isSideLoadedSubtitleId(null))
     }
 
+    private fun groups(vararg ids: String?) = ids.map { TextGroupInfo(it, null) }
+
     @Test
     fun embeddedOrderSkipsSideLoadedGroups() {
         // Text groups as Media3 lists them: two from the file, one side-loaded, one more from the file.
-        val ids = listOf("3", "5", "1:nlsub7", "9")
-        assertEquals(0, embeddedTextGroupPosition(ids, 0))
-        assertEquals(1, embeddedTextGroupPosition(ids, 1))
-        assertEquals(3, embeddedTextGroupPosition(ids, 2))
-        assertNull(embeddedTextGroupPosition(ids, 3))
+        val g = groups("3", "5", "1:nlsub7", "9")
+        assertEquals(0, embeddedTextGroupPosition(g, 0))
+        assertEquals(1, embeddedTextGroupPosition(g, 1))
+        assertEquals(3, embeddedTextGroupPosition(g, 2))
+        assertNull(embeddedTextGroupPosition(g, 3))
     }
 
     @Test
     fun embeddedOrderEdgeCases() {
         assertNull(embeddedTextGroupPosition(emptyList(), 0))
-        assertNull(embeddedTextGroupPosition(listOf("1"), -1))
-        assertNull(embeddedTextGroupPosition(listOf("nlsub1", "nlsub2"), 0))
-        assertEquals(0, embeddedTextGroupPosition(listOf(null), 0))
+        assertNull(embeddedTextGroupPosition(groups("1"), -1))
+        assertNull(embeddedTextGroupPosition(groups("nlsub1", "nlsub2"), 0))
+        assertEquals(0, embeddedTextGroupPosition(groups(null), 0))
+    }
+
+    @Test
+    fun languageWinsWhenMedia3SkippedAStream() {
+        // The server counted English, German, Italian, Hindi; Media3 left out one stream before Italian, so order 2
+        // (Italian) would land on Hindi. That is the "off by one" seen on the TV.
+        val g = listOf(TextGroupInfo("3", "en"), TextGroupInfo("5", "it"), TextGroupInfo("6", "hi"))
+        assertEquals(1, embeddedTextGroupPosition(g, 2, "it", 0))
+        // Order and language agree: the order is used.
+        assertEquals(2, embeddedTextGroupPosition(listOf(TextGroupInfo("3", "en"), TextGroupInfo("4", "de"),
+            TextGroupInfo("5", "it")), 2, "it", 0))
+        // Two Italian tracks (full and forced): the rank picks between them.
+        val two = listOf(TextGroupInfo("3", "it"), TextGroupInfo("4", "hi"), TextGroupInfo("5", "it"))
+        assertEquals(2, embeddedTextGroupPosition(two, 3, "it", 1))
+        assertEquals(0, embeddedTextGroupPosition(two, 3, "it", 0))
+        // No group in that language, or groups without a language: fall back to the order.
+        assertEquals(1, embeddedTextGroupPosition(g, 1, "fr", 0))
+        assertEquals(1, embeddedTextGroupPosition(groups("3", "5"), 1, "it", 0))
+        // Side-loaded groups never count, even in the right language.
+        assertEquals(2, embeddedTextGroupPosition(listOf(TextGroupInfo("3", "en"), TextGroupInfo("nlsub9", "it"),
+            TextGroupInfo("5", "it")), 5, "it", 0))
+    }
+
+    @Test
+    fun delayIsClampedToAMinute() {
+        assertEquals(1_250_000L, subtitleDelayUs(1.25))
+        assertEquals(-500_000L, subtitleDelayUs(-0.5))
+        assertEquals(60_000_000L, subtitleDelayUs(600.0))
+        assertEquals(0L, subtitleDelayUs(Double.NaN))
+    }
+
+    @Test
+    fun pictureSubtitlesScaleAroundTheirBottomCentreAndRise() {
+        val box = CueBox(0.3f, 0.8f, 0.4f, 0.1f) // bottom at 0.9, centre at 0.5
+        val same = placePictureCue(box, 1f, 0f)
+        assertEquals(0.3f, same.left, 1e-5f)
+        assertEquals(0.8f, same.top, 1e-5f)
+        val raised = placePictureCue(box, 1f, 0.07f)
+        assertEquals(0.73f, raised.top, 1e-5f)
+        assertEquals(0.3f, raised.left, 1e-5f)
+        val bigger = placePictureCue(box, 1.5f, 0f)
+        assertEquals(0.6f, bigger.width, 1e-5f)
+        assertEquals(0.2f, bigger.left, 1e-5f)
+        assertEquals(0.9f, bigger.top + bigger.height, 1e-5f)
+        // Never pushed off the screen.
+        val huge = placePictureCue(CueBox(0.1f, 0.0f, 0.8f, 0.2f), 2f, 0.14f)
+        assertEquals(0f, huge.top, 1e-5f)
+        assertEquals(0f, huge.left, 1e-5f)
+    }
+
+    @Test
+    fun anchorsAndPadding() {
+        assertEquals(0.5f, anchoredStart(0.5f, 0.2f, 0), 1e-5f)
+        assertEquals(0.4f, anchoredStart(0.5f, 0.2f, 1), 1e-5f)
+        assertEquals(0.3f, anchoredStart(0.5f, 0.2f, 2), 1e-5f)
+        val padded = padPictureBox(CueBox(0.2f, 0.8f, 0.4f, 0.1f), 400, 100, 10)
+        assertEquals(0.19f, padded.left, 1e-5f)
+        assertEquals(0.79f, padded.top, 1e-5f)
+        assertEquals(0.42f, padded.width, 1e-5f)
+        assertEquals(0.12f, padded.height, 1e-5f)
+    }
+
+    @Test
+    fun onlyLowTextLinesRise() {
+        assertEquals(0.88f, raiseTextLine(0.95f, 0.07f), 1e-5f)
+        assertEquals(0.1f, raiseTextLine(0.1f, 0.07f), 1e-5f) // a sign at the top stays
     }
 
     @Test

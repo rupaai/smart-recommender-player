@@ -42,22 +42,77 @@ const val SIDE_LOADED_SUBTITLE_PREFIX = "nlsub"
 fun isSideLoadedSubtitleId(id: String?): Boolean =
     id != null && (id.startsWith(SIDE_LOADED_SUBTITLE_PREFIX) || id.contains(":$SIDE_LOADED_SUBTITLE_PREFIX"))
 
+/** One text track group as Media3 lists it: the id and (normalised) language of its first format. */
+data class TextGroupInfo(val id: String?, val language: String?)
+
 /**
- * The position, in the player's list of text track groups, of the [order]-th subtitle stream that is inside the file.
- * [formatIds] has one entry per text group (the id of its first format). Side-loaded groups are skipped, so the
- * server's `order` (position among the file's own subtitle streams, file order) maps to the right group.
- * Null when [order] is negative or the file has fewer such groups.
+ * The position, in the player's list of text track groups, of a subtitle stream that is inside the file.
+ * [order] is the server's position among the file's own subtitle streams (file order); side-loaded groups are skipped.
+ * When the group found that way has another language than [language] (Media3 left out a stream the server counted,
+ * which showed the track next to the chosen one), the [languageRank]-th group in [language] is used instead.
+ * [language] must be normalised the same way as the groups' languages; empty means "don't check".
+ * Null when [order] is negative or nothing fits.
  */
-fun embeddedTextGroupPosition(formatIds: List<String?>, order: Int): Int? {
+fun embeddedTextGroupPosition(groups: List<TextGroupInfo>, order: Int, language: String = "", languageRank: Int = 0): Int? {
     if (order < 0) return null
-    var seen = 0
-    for ((position, id) in formatIds.withIndex()) {
-        if (isSideLoadedSubtitleId(id)) continue
-        if (seen == order) return position
-        seen++
-    }
-    return null
+    val inFile = groups.indices.filter { !isSideLoadedSubtitleId(groups[it].id) }
+    val byOrder = inFile.getOrNull(order)
+    if (language.isEmpty()) return byOrder
+    if (byOrder != null && groups[byOrder].language.isNullOrEmpty()) return byOrder
+    if (byOrder != null && groups[byOrder].language == language) return byOrder
+    val sameLanguage = inFile.filter { groups[it].language == language }
+    if (sameLanguage.isEmpty()) return byOrder
+    return sameLanguage[languageRank.coerceIn(0, sameLanguage.size - 1)]
 }
+
+/** Largest subtitle delay either way, in seconds (the page's own limit). */
+const val MAX_SUBTITLE_DELAY_SECONDS = 60.0
+
+/** The page's delay in seconds (positive: subtitles later) as microseconds; unusable values mean no delay. */
+fun subtitleDelayUs(seconds: Double): Long {
+    if (seconds.isNaN() || seconds.isInfinite()) return 0L
+    return (seconds.coerceIn(-MAX_SUBTITLE_DELAY_SECONDS, MAX_SUBTITLE_DELAY_SECONDS) * 1_000_000).toLong()
+}
+
+/** A cue's rectangle in fractions of the screen. */
+data class CueBox(val left: Float, val top: Float, val width: Float, val height: Float)
+
+/** The start (left or top) of a cue edge given Media3's anchor: 1 = middle, 2 = end, anything else = start. */
+fun anchoredStart(value: Float, extent: Float, anchor: Int): Float = when (anchor) {
+    1 -> value - extent / 2
+    2 -> value - extent
+    else -> value
+}
+
+/**
+ * Picture subtitles (disc PGS, DVD, DVB) are images placed by the disc, so the subtitle view's size and position
+ * settings do nothing to them. This scales the image by [scale] around its bottom centre, lifts it by [raise]
+ * (fraction of the screen height) and keeps it on screen.
+ */
+fun placePictureCue(box: CueBox, scale: Float, raise: Float): CueBox {
+    val width = box.width * scale
+    val height = box.height * scale
+    val centre = box.left + box.width / 2
+    val bottom = box.top + box.height
+    val left = (centre - width / 2).coerceIn(0f, maxOf(0f, 1f - width))
+    val top = (bottom - height - raise).coerceIn(0f, maxOf(0f, 1f - height))
+    return CueBox(left, top, width, height)
+}
+
+/** The box grown by [padPx] on every side of a [bitmapWidth] x [bitmapHeight] image, for the dark box behind it. */
+fun padPictureBox(box: CueBox, bitmapWidth: Int, bitmapHeight: Int, padPx: Int): CueBox {
+    if (bitmapWidth <= 0 || bitmapHeight <= 0 || padPx <= 0) return box
+    val dx = box.width * padPx / bitmapWidth
+    val dy = box.height * padPx / bitmapHeight
+    return CueBox(box.left - dx, box.top - dy, box.width + 2 * dx, box.height + 2 * dy)
+}
+
+/**
+ * Text subtitles that carry their own line position (ASS/SSA always do) ignore the view's bottom padding, so the
+ * Position setting lifts them here: a line in the lower half of the screen moves up by [raise]; lines placed near
+ * the top (signs, songs) stay where they are.
+ */
+fun raiseTextLine(line: Float, raise: Float): Float = if (line >= 0.5f) (line - raise).coerceAtLeast(0f) else line
 
 // C.COLOR_TRANSFER_* values, kept here so this file stays free of Media3 (unit tests run on a plain JVM).
 private const val COLOR_TRANSFER_ST2084 = 6

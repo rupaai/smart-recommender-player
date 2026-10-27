@@ -10,8 +10,8 @@
  *   p.showTextTrack(id | null)                       // null = subtitles off
  *   p.setSubtitleDelay(seconds)                      // web: shifts the shown track's cue times; p.subtitleDelay reads it
  *   p.setSubtitleStyle({size: S|M|L|XL, background: none|shadow|box, raise: 0|1|2})
- *   p.canStyleSubtitles / p.canDelaySubtitles        // false where the player can't (the TV app has no delay: Media3 1.5.1
- *                                                    // has no subtitle offset; style needs bridge version 3)
+ *   p.canStyleSubtitles / p.canDelaySubtitles        // false where the player can't (on the TV, style needs bridge
+ *                                                    // version 3 and delay version 7)
  *   p.toggleFullscreen(containerElement); p.isFullscreen
  *   p.on("play"|"pause"|"timeupdate"|"ended"|"waiting"|"playing"|"loadedmetadata"|"seeking"|"seeked"
  *        |"volumechange"|"fullscreenchange"|"error", fn);
@@ -395,7 +395,7 @@
    *   (version 6) play() subtitleTracks entries of kind "embedded" carry order = the track's position among the file's own
    *                                         subtitle streams; setSubtitle(index) selects it and Media3 draws it (no url)
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
-   *   NorthernLightsNative.version()        "6" (v6 = v5 + stats and embedded subtitle tracks), "5" (v5 = v4 + setAudioTrack, audioOrder in play()), "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle; there is no subtitle delay on the TV), "2" (v2 above); "1" = old app without pause/resume/seekTo/
+   *   NorthernLightsNative.version()        "7" (v7 = v6 + setSubtitleDelay(seconds), and picture subtitles follow the style), "6" (v6 = v5 + stats and embedded subtitle tracks), "5" (v5 = v4 + setAudioTrack, audioOrder in play()), "4" (v4 = v3 + setSpeed), "3" (v3 = v2 + setSubtitleStyle), "2" (v2 above); "1" = old app without pause/resume/seekTo/
    *                                         setSubtitle and with its own native controls: the web
    *                                         controls then stay hidden and seek() restarts the stream
    *   NLNativeEvents.dispatch(json)         json = {type: started|time|progress|paused|resumed|seeked|
@@ -428,6 +428,8 @@
     var v4 = Number(nativeVersion()) >= 4;
     var v5 = Number(nativeVersion()) >= 5;
     var v6 = Number(nativeVersion()) >= 6;
+    var v7 = Number(nativeVersion()) >= 7;
+    var subDelay = 0;
     var rate = 1;
     var listeners = {};
     var pos = 0;
@@ -674,11 +676,15 @@
       showTextTrack: function (id) {
         if (v2) { call("setSubtitle", id === null || id === undefined ? -1 : Number(id)); }
       },
-      // Media3 1.5.1 has no subtitle offset, so the TV offers no delay; style needs an app with bridge version 3.
-      canDelaySubtitles: false,
+      // Bridge v7: the app shifts its subtitle clock (Media3 has no offset of its own); style needs bridge version 3.
+      canDelaySubtitles: v7,
       canStyleSubtitles: v3,
-      get subtitleDelay() { return 0; },
-      setSubtitleDelay: function () { /* unsupported on the TV */ },
+      get subtitleDelay() { return subDelay; },
+      setSubtitleDelay: function (seconds) {
+        if (!v7) { return; }
+        subDelay = isFinite(seconds) ? seconds : 0;
+        call("setSubtitleDelay", String(subDelay));
+      },
       setSubtitleStyle: function (style) {
         if (v3) { call("setSubtitleStyle", JSON.stringify(style || {})); }
       },

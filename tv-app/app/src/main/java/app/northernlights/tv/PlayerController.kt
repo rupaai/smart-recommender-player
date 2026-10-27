@@ -21,6 +21,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.SeekParameters
@@ -56,6 +57,7 @@ class PlayerController(
     private var pendingSubtitleIndex: Int? = null
     private var ticks = 0
     private var subtitleStyleJson: String? = null
+    private val subtitleLook = SubtitleLook() // bridge v7: delay, and the style Media3's view can't apply
     private var speed = 1.0 // bridge v4: kept across streams, a new ExoPlayer would start at 1x
     private var selectedSubtitleIndex = -1 // the side-loaded track Media3 has selected, -1 = none
     private var audioOrder = -1 // bridge v5: wanted audio track among the file's audio groups, -1 = Media3's choice
@@ -262,6 +264,7 @@ class PlayerController(
         frameRateHandled = false
         selectedSubtitleIndex = -1
         subtitleTracks = req.subtitleTracks
+        subtitleLook.reset() // a delay belongs to one file; the page sends it again after play()
         playingAudioLabels = if (req.kind == "file") req.audioTracks.map { it.label } else emptyList()
         statsSource = if (req.kind == "file") "original" else "converted"
         droppedFrames = 0
@@ -279,7 +282,7 @@ class PlayerController(
                 if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
             )
         val plan = bufferPlan(Runtime.getRuntime().maxMemory(), availableMemoryBytes())
-        val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity))
+        val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity, subtitleLook))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -479,7 +482,8 @@ class PlayerController(
 
     /**
      * Bridge v3: size, background and position of the subtitles Media3 draws. Remembered, so it also applies
-     * to the next stream. Media3 1.5.1 has no subtitle delay, so there is none.
+     * to the next stream. The view styles plain text lines; [SubtitleLook] does the rest (picture subtitles, and text
+     * lines that carry their own position).
      */
     fun setSubtitleStyle(json: String) {
         subtitleStyleJson = json
@@ -497,7 +501,7 @@ class PlayerController(
             "S" -> 0.8f
             "L" -> 1.5f
             "XL" -> 2.0f
-            else -> 1.15f
+            else -> MEDIUM_SCALE
         }
         val boxColor = Color.argb(184, 0, 0, 0)
         val background: Int
@@ -524,6 +528,12 @@ class PlayerController(
         view.setBottomPaddingFraction(
             SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION + RAISE_STEP_FRACTION * raise
         )
+        subtitleLook.setStyle(scale / MEDIUM_SCALE, RAISE_STEP_FRACTION * raise, background)
+    }
+
+    /** Bridge v7: subtitle delay in seconds, positive = later. For this stream only; start() sets it back to 0. */
+    fun setSubtitleDelay(seconds: Double) {
+        subtitleLook.delayUs = subtitleDelayUs(seconds)
     }
 
     private fun emit(type: String, message: String? = null) {
@@ -589,11 +599,22 @@ class PlayerController(
 
     /**
      * Bridge v6: a subtitle stream inside the file (a disc PGS track) that Media3 reads and draws itself. [order] is its
-     * position among the file's subtitle streams; the side-loaded text groups are not counted.
+     * position among the file's subtitle streams; the side-loaded text groups are not counted. The language is checked
+     * too: if Media3 skipped a stream the server counted, the order alone lands on the next track.
      */
     private fun selectEmbeddedSubtitle(p: ExoPlayer, index: Int, order: Int): Boolean {
         val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-        val position = embeddedTextGroupPosition(groups.map { g -> if (g.length > 0) g.getTrackFormat(0).id else null }, order)
+        val infos = groups.map { g ->
+            val format = if (g.length > 0) g.getTrackFormat(0) else null
+            TextGroupInfo(format?.id, normalizeLanguage(format?.language))
+        }
+        val wanted = subtitleTracks.firstOrNull { it.index == index }
+        val language = normalizeLanguage(wanted?.language)
+        val rank = subtitleTracks
+            .filter { it.kind == "embedded" && normalizeLanguage(it.language) == language }
+            .sortedBy { it.order }
+            .indexOfFirst { it.index == index }
+        val position = embeddedTextGroupPosition(infos, order, language, rank.coerceAtLeast(0))
             ?: return false
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -603,12 +624,16 @@ class PlayerController(
         return true
     }
 
+    private fun normalizeLanguage(language: String?): String =
+        if (language.isNullOrEmpty() || language == C.LANGUAGE_UNDETERMINED) "" else Util.normalizeLanguageCode(language)
+
     companion object {
         private const val TIME_MS = 500L
         private const val PROGRESS_EVERY_TICKS = 20 // 20 x 500 ms = 10 s
         private const val SEEK_CHECK_MS = 50L
         private const val SEEK_PROGRESS_MS = 200L
         private const val SUB_ID_PREFIX = SIDE_LOADED_SUBTITLE_PREFIX
+        private const val MEDIUM_SCALE = 1.15f
         private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
         // Buffered before playback resumes after a seek or a stall. The network measured 294 Mbps against a 92 Mbps film,
