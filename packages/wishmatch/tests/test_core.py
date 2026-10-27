@@ -661,6 +661,49 @@ def test_word_question_falls_back_to_template():
     assert bad["source"] == "template"
 
 
+def test_question_worder_asks_the_model_once_per_question():
+    from wishmatch.llm import QuestionWorder
+    calls = []
+
+    def model(*a, **k):
+        calls.append(a[0])
+        return '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}'
+
+    w = QuestionWorder(model, wait_seconds=1)
+    first = w.word("tone", ["silly", "witty"])
+    again = w.word("tone", ["silly", "witty"])
+    assert first == again == {"question": "Goofy or clever?", "options": ["Goofy", "Clever"], "source": "model"}
+    assert len(calls) == 1
+    w.word("tone", ["witty", "silly"])                       # a different choice is worded on its own
+    assert len(calls) == 2
+
+
+def test_question_worder_slow_model_uses_template_now_and_wording_later():
+    import threading
+    from wishmatch.llm import QuestionWorder
+    release = threading.Event()
+
+    def slow(*a, **k):
+        release.wait(2)
+        return '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}'
+
+    w = QuestionWorder(slow, wait_seconds=0.05)
+    assert w.word("tone", ["silly", "witty"])["source"] == "template"
+    release.set()
+    for _ in range(100):                                     # the background answer lands in the cache
+        if w.word("tone", ["silly", "witty"])["source"] == "model":
+            break
+    assert w.word("tone", ["silly", "witty"])["source"] == "model"
+
+
+def test_question_worder_does_not_remember_failures():
+    from wishmatch.llm import QuestionWorder
+    answers = [None, '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}']
+    w = QuestionWorder(lambda *a, **k: answers.pop(0), wait_seconds=1)
+    assert w.word("tone", ["silly", "witty"])["source"] == "template"
+    assert w.word("tone", ["silly", "witty"])["source"] == "model"
+
+
 def test_ollama_client_fails_quietly_without_a_server():
     from wishmatch import OllamaClient
     c = OllamaClient("http://127.0.0.1:9", "tiny", timeout=0.5)

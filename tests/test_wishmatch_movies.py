@@ -282,6 +282,24 @@ def main():
     sess2 = wm.session(2, {"query": "comedy", "media_type": "movie", "profile": "me", "mood_id": 8})
     check("no question when the picks already agree", sess2.next_question() is None, sess2.current)
     check("log fields are JSON", json.loads(sess.log_fields()["belief_json"])["weights"], sess.log_fields())
+    from wishmatch import QuestionWorder
+    asked = []
+
+    def fake_model(prompt, *a, **k):
+        asked.append(prompt)
+        n = json.loads(prompt[prompt.index("["):prompt.index("]") + 1])
+        return json.dumps({"question": "Which one?", "options": [f"Pick {i}" for i in range(len(n))]})
+
+    wm.question_worder = QuestionWorder(fake_model, wait_seconds=2)
+    worded = [wm.session(10 + i, {"query": "", "media_type": "movie", "profile": "together", "mood_id": 8})
+              for i in range(2)]
+    texts = []
+    for s in worded:
+        s.next_question()
+        texts.append(s.public_question()["text"])
+    check("the model words a question once; the next search reuses it", texts == ["Which one?"] * 2 and len(asked) == 1,
+          (texts, asked))
+    wm.question_worder = None
 
     print("\n[12] Decades, 'sci-fi' and genre hints (step 7 fixes)")
     from services.wishmatch_movies.adapter import typed_decade

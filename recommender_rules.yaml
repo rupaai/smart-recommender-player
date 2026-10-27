@@ -348,7 +348,7 @@ wishmatch:
     tag_groups: [feels, good_for]
     answer_weight: 0.5        # an answer counts half as much as a word you typed
     model_wording: true       # the Ollama model words the question; a fixed sentence if it's slow
-    wording_timeout_seconds: 6
+    wording_timeout_seconds: 6  # a search waits this long for a new wording; each wording is remembered
   # The wish reader: an open-weight model in Ollama turns the typed wish into the
   # words above; the word lookup below stays as its fallback (slow, missing or
   # confused model = lookup only). OLLAMA_URL picks the server (Homelab sets
