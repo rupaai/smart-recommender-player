@@ -972,13 +972,21 @@ def _nl_effective_prefs(viewer: Viewer) -> Prefs:
     return Prefs.from_row(_nl_prefs_row(viewer))
 
 
-def _nl_page(request: Request, name: str, context: Dict[str, Any], tv: bool = False) -> Any:
-    """A /nl/ page. With people configured and nobody chosen yet, the who's-watching screen first."""
+# Where each surface lives: the phone/web pages, the TV app, and the TV app in a laptop browser.
+NL_SURFACE_ROOTS = {"web": "/nl/", "tv": "/nl/tv/", "laptop": "/player/"}
+
+
+def _nl_page(request: Request, name: str, context: Dict[str, Any], surface: str = "web") -> Any:
+    """A page of one surface (web, tv or laptop). With people configured and nobody chosen yet, the
+    who's-watching screen of that surface first."""
+    root = NL_SURFACE_ROOTS[surface]
     viewer = _nl_viewer(request)
     if viewer is None:
         here = request.url.path + (("?" + request.url.query) if request.url.query else "")
-        return RedirectResponse(f"/nl/{'tv/' if tv else ''}who?next={quote(here, safe='')}", status_code=302)
-    ctx = {**context, "viewer": viewer.public(), "people_configured": nl_people.configured, "tv": tv}
+        return RedirectResponse(f"{root}who?next={quote(here, safe='')}", status_code=302)
+    # "tv" stays true for the laptop: it uses the TV templates.
+    ctx = {**context, "viewer": viewer.public(), "people_configured": nl_people.configured,
+           "tv": surface != "web", "surface": surface, "root": root}
     return templates.TemplateResponse(request=request, name=name, context=ctx)
 
 
@@ -995,11 +1003,11 @@ async def nl_viewer_info(request: Request) -> Dict[str, Any]:
     }
 
 
-def _nl_choose(key: str, next_url: Optional[str], tv: bool) -> Response:
-    default = "/nl/tv/" if tv else "/nl/"
-    target = safe_next(next_url, default)
+def _nl_choose(key: str, next_url: Optional[str], surface: str = "web") -> Response:
+    root = NL_SURFACE_ROOTS[surface]
+    target = safe_next(next_url, root)
     if not nl_people.configured or nl_people.viewer_for(key) is None:
-        return RedirectResponse(f"/nl/{'tv/' if tv else ''}who?next={quote(target, safe='')}", status_code=302)
+        return RedirectResponse(f"{root}who?next={quote(target, safe='')}", status_code=302)
     resp = RedirectResponse(target, status_code=302)
     resp.set_cookie(COOKIE_NAME, key.lower(), max_age=COOKIE_MAX_AGE, path="/", samesite="lax", httponly=True)
     return resp
@@ -1018,7 +1026,7 @@ async def nl_who_page(request: Request, next: Optional[str] = None) -> Any:
 
 @app.get("/nl/who/{key}")
 async def nl_who_choose(key: str, next: Optional[str] = None) -> Any:
-    return _nl_choose(key, next, tv=False)
+    return _nl_choose(key, next, "web")
 
 
 @app.get("/nl/tv/who", response_class=HTMLResponse)
@@ -1027,13 +1035,13 @@ async def nl_tv_who_page(request: Request, next: Optional[str] = None) -> Any:
         return RedirectResponse("/nl/tv/", status_code=302)
     return templates.TemplateResponse(request=request, name="nl/tv/who.html", context={
         "page": "who", "choices": nl_people.choices(), "next": safe_next(next, "/nl/tv/"), "viewer": None,
-        "people_configured": True, "tv": True, "choose_base": "/nl/tv/who/",
+        "people_configured": True, "tv": True, "choose_base": "/nl/tv/who/", "surface": "tv", "root": "/nl/tv/",
     })
 
 
 @app.get("/nl/tv/who/{key}")
 async def nl_tv_who_choose(key: str, next: Optional[str] = None) -> Any:
-    return _nl_choose(key, next, tv=True)
+    return _nl_choose(key, next, "tv")
 
 
 def _nl_prefs_reply(viewer: Viewer) -> Dict[str, Any]:
@@ -2134,42 +2142,109 @@ async def nl_me_page(request: Request) -> Any:
 
 @app.get("/nl/tv/", response_class=HTMLResponse)
 async def nl_tv_home(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/home.html", {"page": "home"}, tv=True)
+    return _nl_page(request, "nl/tv/home.html", {"page": "home"}, "tv")
 
 
 @app.get("/nl/tv/search", response_class=HTMLResponse)
 async def nl_tv_search(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/search.html", {"page": "search"}, tv=True)
+    return _nl_page(request, "nl/tv/search.html", {"page": "search"}, "tv")
 
 
 @app.get("/nl/tv/title/{item_id}", response_class=HTMLResponse)
 async def nl_tv_title(item_id: int, request: Request) -> Any:
-    return _nl_page(request, "nl/tv/title.html", {"page": "title", "item_id": item_id}, tv=True)
+    return _nl_page(request, "nl/tv/title.html", {"page": "title", "item_id": item_id}, "tv")
 
 
 @app.get("/nl/tv/show/{item_id}", response_class=HTMLResponse)
 async def nl_tv_show(item_id: int, request: Request) -> Any:
-    return _nl_page(request, "nl/tv/show.html", {"page": "show", "item_id": item_id}, tv=True)
+    return _nl_page(request, "nl/tv/show.html", {"page": "show", "item_id": item_id}, "tv")
 
 
 @app.get("/nl/tv/watchlist", response_class=HTMLResponse)
 async def nl_tv_watchlist(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, tv=True)
+    return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, "tv")
 
 
 @app.get("/nl/tv/choose", response_class=HTMLResponse)
 async def nl_tv_choose(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, tv=True)
+    return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, "tv")
 
 
 @app.get("/nl/tv/downloads", response_class=HTMLResponse)
 async def nl_tv_downloads(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, tv=True)
+    return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, "tv")
 
 
 @app.get("/nl/tv/me", response_class=HTMLResponse)
 async def nl_tv_me(request: Request) -> Any:
-    return _nl_page(request, "nl/tv/me.html", {"page": "me"}, tv=True)
+    return _nl_page(request, "nl/tv/me.html", {"page": "me"}, "tv")
+
+
+# --- The TV app for a laptop browser at /player (same templates and tv.js as /nl/tv/) ---
+@app.get("/player")
+async def player_root() -> Any:
+    return RedirectResponse("/player/", status_code=302)
+
+
+@app.get("/player/", response_class=HTMLResponse)
+async def player_home(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/home.html", {"page": "home"}, "laptop")
+
+
+@app.get("/player/search", response_class=HTMLResponse)
+async def player_search(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/search.html", {"page": "search"}, "laptop")
+
+
+@app.get("/player/title/{item_id}", response_class=HTMLResponse)
+async def player_title(item_id: int, request: Request) -> Any:
+    return _nl_page(request, "nl/tv/title.html", {"page": "title", "item_id": item_id}, "laptop")
+
+
+@app.get("/player/show/{item_id}", response_class=HTMLResponse)
+async def player_show(item_id: int, request: Request) -> Any:
+    return _nl_page(request, "nl/tv/show.html", {"page": "show", "item_id": item_id}, "laptop")
+
+
+@app.get("/player/watchlist", response_class=HTMLResponse)
+async def player_watchlist(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/watchlist.html", {"page": "watchlist"}, "laptop")
+
+
+@app.get("/player/choose", response_class=HTMLResponse)
+async def player_choose(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/choose.html", {"page": "choose"}, "laptop")
+
+
+@app.get("/player/downloads", response_class=HTMLResponse)
+async def player_downloads(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, "laptop")
+
+
+@app.get("/player/me", response_class=HTMLResponse)
+async def player_me(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/me.html", {"page": "me"}, "laptop")
+
+
+@app.get("/player/who", response_class=HTMLResponse)
+async def player_who_page(request: Request, next: Optional[str] = None) -> Any:
+    if not nl_people.configured:
+        return RedirectResponse("/player/", status_code=302)
+    return templates.TemplateResponse(request=request, name="nl/tv/who.html", context={
+        "page": "who", "choices": nl_people.choices(), "next": safe_next(next, "/player/"), "viewer": None,
+        "people_configured": True, "tv": True, "choose_base": "/player/who/", "surface": "laptop", "root": "/player/",
+    })
+
+
+@app.get("/player/who/{key}")
+async def player_who_choose(key: str, next: Optional[str] = None) -> Any:
+    return _nl_choose(key, next, "laptop")
+
+
+@app.get("/player/play/{item_id}", response_class=HTMLResponse)
+async def player_play_page(item_id: int, request: Request) -> Any:
+    """The player page in laptop mode (?source= picks an episode)."""
+    return _nl_page(request, "nl/player.html", {"item_id": item_id}, "laptop")
 
 
 # --- Northern Lights phone keyboard for TV search (M8b) ---
@@ -2275,7 +2350,8 @@ async def nl_cast_receiver(request: Request) -> Any:
 @app.get("/nl/play/{item_id}", response_class=HTMLResponse)
 async def nl_play_page(item_id: int, request: Request) -> Any:
     """Minimal full-screen player page for one movie or episode."""
-    return _nl_page(request, "nl/player.html", {"item_id": item_id}, tv=request.query_params.get("tv") == "1")
+    return _nl_page(request, "nl/player.html", {"item_id": item_id},
+                    "tv" if request.query_params.get("tv") == "1" else "web")
 
 
 @app.post("/api/watch/start")

@@ -121,7 +121,23 @@
     return Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.3;
   }
 
+  /* Where the player's own pages live. The laptop app has its own root (the server renders it); the TV app and
+   * the phone pages keep /nl/tv/ and /nl/. */
+  function pageRoot(surface, rootAttr, isTv) {
+    if (surface === "laptop") { return rootAttr || "/player/"; }
+    return isTv ? "/nl/tv/" : "/nl/";
+  }
+
+  /* The address of the player for one episode (or movie): the laptop page, or /nl/play (with tv=1 on the TV). */
+  function playUrl(surface, isTv, itemId, sourceId) {
+    var qs = "?source=" + encodeURIComponent(sourceId);
+    if (surface === "laptop") { return "/player/play/" + encodeURIComponent(itemId) + qs; }
+    return "/nl/play/" + encodeURIComponent(itemId) + qs + (isTv ? "&tv=1" : "");
+  }
+
   var api = {
+    pageRoot: pageRoot,
+    playUrl: playUrl,
     SPEEDS: SPEEDS,
     DOUBLE_TAP_MS: DOUBLE_TAP_MS,
     tileFor: tileFor,

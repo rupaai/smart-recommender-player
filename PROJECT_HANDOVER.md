@@ -154,7 +154,7 @@ Live on `mars` under Homelab (`homelab.yaml`; Jellyfin and Prowlarr are Homelab 
 - Known gap: titles added by the catalogue refresh get no TIGER semantic code until the prepare / RQ-VAE steps are re-run by hand.
 
 ## 14. Northern Lights player and TV app
-Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H, D) are in `docs/northern-lights/`. Pages: web `/nl/…`, TV `/nl/tv/…`, player `/nl/play/{id}` (`?source=` for an episode, `?tv=1` for the remote).
+Our own player in front of Jellyfin. Plans and feature ids (P, L, U, W, C, T, H, D) are in `docs/northern-lights/`. Pages: web `/nl/…`, TV `/nl/tv/…`, laptop `/player/…` (TV pages for a laptop browser, player `/player/play/{id}`), player `/nl/play/{id}` (`?source=` for an episode, `?tv=1` for the remote).
 <!-- feature:nl-player -->
 - **M0-M1 Player** (merged): `jellyfin_playback.py`, `device_profiles.py` (browser profile from probed codecs), `static/nl/player-core.js` (the only file touching hls.js, the `<video>` or the native bridge), `player.js`. Audio and subtitle menus, resume, skip-length chip, progress reports.
 <!-- /feature:nl-player -->

@@ -16,15 +16,23 @@
     if (s) { s.textContent = text || ""; s.hidden = !text; }
   }
 
-  /* The phone pages' links, pointed at the TV pages. Play links get tv=1 (remote-friendly player). */
-  function tvHref(href) {
+  /* The phone pages' links, pointed at this app's pages (root: /nl/tv/ on the TV, /player/ on a laptop).
+   * On the TV the play links get tv=1 (remote-friendly player); the laptop player is its own page. */
+  var ROOT = body.getAttribute("data-root") || "/nl/tv/";
+
+  function mapHref(href, root) {
     if (!href) { return href; }
-    if (href.indexOf("/nl/title/") === 0) { return "/nl/tv/title/" + href.slice("/nl/title/".length); }
-    if (href.indexOf("/nl/show/") === 0) { return "/nl/tv/show/" + href.slice("/nl/show/".length); }
-    if (href.indexOf("/nl/play/") === 0) { return href + (href.indexOf("?") < 0 ? "?" : "&") + "tv=1"; }
+    if (href.indexOf("/nl/title/") === 0) { return root + "title/" + href.slice("/nl/title/".length); }
+    if (href.indexOf("/nl/show/") === 0) { return root + "show/" + href.slice("/nl/show/".length); }
+    if (href.indexOf("/nl/play/") === 0) {
+      if (root === "/player/") { return "/player/play/" + href.slice("/nl/play/".length); }
+      return href + (href.indexOf("?") < 0 ? "?" : "&") + "tv=1";
+    }
     return href;
   }
 
+  function tvHref(href) { return mapHref(href, ROOT); }
+  window.NLTvHref = mapHref;   // for tests/js/nl_laptop_check.js
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, String(v)); } catch (e) { /* private mode */ } }
 
