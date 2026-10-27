@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import os
 
-from wishmatch import LLMWishReader, OllamaClient, Request, Wishmatch
+from wishmatch import AnswerFile, LLMWishReader, OllamaClient, Request, Wishmatch
 
 from .adapter import MovieAdapter
 from .session import WishmatchSession
@@ -33,7 +33,9 @@ class WishmatchMovies:
         cfg = self.adapter.rules().get("wish_reader") or {}
         reader = LLMWishReader(self.ollama.generate, noun="films and TV shows",
                                wait_seconds=float(cfg.get("wait_seconds", 8)),
-                               avoid_groups=list(cfg.get("avoid_groups") or ["flags"])) if self.ollama else None
+                               avoid_groups=list(cfg.get("avoid_groups") or ["flags"]),
+                               skip_when_understood=bool(cfg.get("skip_when_understood", True)),
+                               store=self._answers(cfg)) if self.ollama else None
         self.engine = Wishmatch(self.adapter, reader=reader)
         # Question wording waits less than a wish: a slow answer falls back to a fixed sentence.
         qcfg = self.adapter.rules().get("questions") or {}
@@ -54,6 +56,16 @@ class WishmatchMovies:
             options["num_thread"] = int(cfg["threads"])
         return OllamaClient(url, str(cfg["model"]), timeout=float(cfg.get("timeout_seconds", 60)),
                             keep_alive=str(cfg.get("keep_alive", "5m")), options=options)
+
+    def _answers(self, cfg: Dict[str, Any]) -> Optional[AnswerFile]:
+        """Where the model's wish readings are kept across restarts: `answers_file`, next to the
+        database unless it is a full path. None when unset or when the database is in memory."""
+        name = str(cfg.get("answers_file") or "")
+        db_path = str(getattr(self.db, "db_path", "") or "")
+        if not name or (not os.path.isabs(name) and (not db_path or db_path == ":memory:")):
+            return None
+        path = name if os.path.isabs(name) else os.path.join(os.path.dirname(os.path.abspath(db_path)), name)
+        return AnswerFile(path, tag=str(cfg.get("model") or ""))
 
     def start(self) -> None:
         """At server start: ask Ollama to download the wish reader's model if it lacks it (in the background).

@@ -67,6 +67,6 @@ services:
   # prod downloads the model (wishmatch.wish_reader.pull_in), so dev uses the word lookup.
   - name: ollama
     image: ollama/ollama:0.40.1
-    env: {OLLAMA_KEEP_ALIVE: "5m", OLLAMA_MAX_LOADED_MODELS: "1", OLLAMA_NUM_PARALLEL: "1"}
+    env: {OLLAMA_KEEP_ALIVE: "1h", OLLAMA_MAX_LOADED_MODELS: "1", OLLAMA_NUM_PARALLEL: "1"}
     data: [{name: ollama-models, path: /root/.ollama}]
     memory: 3g

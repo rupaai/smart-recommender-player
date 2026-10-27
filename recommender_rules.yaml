@@ -360,7 +360,9 @@ wishmatch:
     pull_in: [prod]           # under Homelab only prod downloads it; dev just uses the word lookup
     wait_seconds: 8           # a search waits this long; a slower answer is kept for next time
     timeout_seconds: 60       # give up on a model answer after this long
-    keep_alive: 5m            # Ollama unloads the model after this long without a search
+    keep_alive: 1h            # Ollama unloads the model after this long without a search (Labiba 2026-10-27; ~2.5 GB RAM while loaded)
+    skip_when_understood: true  # the word lookup understood every word: answer now, the model reads it in the background for next time
+    answers_file: wishmatch_wishes.json  # the model's readings, kept across restarts (next to the database)
     threads: 4                # of mars's 6 cores, so Jellyfin keeps room
     max_tokens: 80
     avoid_groups: [flags]     # the model may only rule out content warnings ("the dog can't die")
