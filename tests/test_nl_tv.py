@@ -289,8 +289,9 @@ def run(tmp):
     page = client.get(f"/nl/play/{alpha}?tv=1")
     check("the player page has the hidden converted-copy button", 'id="nl-convert"' in page.text and "Play a converted copy (lower quality)" in page.text, page.status_code)
     js = client.get("/static/nl/player.js").text
+    extras_js = client.get("/static/nl/player-extras.js").text
     check("player.js sends allow_conversion only after the button and shows it for can_convert",
-          "allow_conversion=1" in js and "err.canConvert" in js and "canSwitchAudioInPlace" in js)
+          "allow_conversion=1" in extras_js and "playDeviceParams" in js and "err.canConvert" in js and "canSwitchAudioInPlace" in js)
     css_player = client.get("/static/nl/player.css").text
     check("player.css makes the page transparent in native mode and keeps the v1 fallback",
           "html.native body" in css_player and "background: transparent" in css_player and "native-v1" in css_player)
