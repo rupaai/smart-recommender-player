@@ -32,6 +32,7 @@ It knows two specific people. Recommendations are blended across both profiles (
 - Light interface preferred (user stated).
 - Must not feel: cute or childish; techy / like a torrent tool; a Netflix clone; a generic app template.
 - No popcorn mark.
+- TV surface exception (Labiba, 2026-10-28): the TV app is dark and fully aurora (polar-night ground, aurora sky, aurora-green focus), still fast and simple. The aurora-as-foil rule above applies to the phone/web pages only.
 
 ## Evidence on Hand
 Real catalogue data (TMDB posters and metadata) at runtime. No testimonials, logos or brand assets exist.

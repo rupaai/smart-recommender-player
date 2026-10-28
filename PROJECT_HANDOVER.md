@@ -66,7 +66,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Claude's sandbox cannot reach TMDB, Hugging Face, Google Maven or the user's Jellyfin, so anything needing them is a command for Labiba to run on the Mac.
 - On the server, edit `homelab/config.yaml` in the repo, not on `mars`: it is baked into the image.
 - The browser, TV app and Chromecast never see the Jellyfin API key, Jellyfin user ids, magnet links or file paths. All Jellyfin calls go through the server; `/nl/jf/` is a strict allowlist proxy (videos, subtitles, trickplay, artwork). Do not widen it without a test.
-- UI: the original app uses the light "ticket" look (paper ground, white ticket cards, roll colours as roles, condensed Archivo, aurora only as holographic foil). Northern Lights pages share that look; TV pages are dark. Every new feature must work on phone (390 px), laptop and TV (D-pad focus, `NLFocus`), with no horizontal scroll.
+- UI: the original app uses the light "ticket" look (paper ground, white ticket cards, roll colours as roles, condensed Archivo, aurora only as holographic foil). Northern Lights phone/web pages share that look. TV pages, the laptop `/player` pages and the TV player use the polar-night aurora look instead (still sky image, aurora-green focus; Labiba 2026-10-28; keep it still and cheap for the TV). Every new feature must work on phone (390 px), laptop and TV (D-pad focus, `NLFocus`), with no horizontal scroll.
 - Missing data degrades, never 500s: no Jellyfin, no TMDB, no model, no people configured each have a fallback.
 - Write plain, short user-facing text.
 
