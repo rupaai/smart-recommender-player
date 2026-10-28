@@ -68,6 +68,21 @@
     return SPEEDS[clamp(i + step, 0, SPEEDS.length - 1)];
   }
 
+  /* ---- "Ends at": the wall-clock time (ms) the film ends, at the current speed; null while the length is unknown ---- */
+  function endsAt(nowMs, duration, current, rate) {
+    var d = Number(duration), c = Number(current) || 0, r = Number(rate) || 1;
+    if (!(d > 0) || !isFinite(d) || !(r > 0)) { return null; }
+    return nowMs + Math.max(0, d - c) / r * 1000;
+  }
+
+  /* ---- Back on the TV remote, once menus and cards are closed: first hide the controls, then ask, then leave ---- */
+  var BACK_AGAIN_MS = 3000;
+  function backAction(controlsVisible, armedAt, nowMs) {
+    if (controlsVisible) { return "hide"; }
+    if (armedAt && nowMs - armedAt >= 0 && nowMs - armedAt <= BACK_AGAIN_MS) { return "leave"; }
+    return "arm";
+  }
+
   /* ---- TV info panel: the app's stats() numbers in plain words ---- */
   function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
   function infoLines(st) {
@@ -159,6 +174,9 @@
   }
 
   var api = {
+    BACK_AGAIN_MS: BACK_AGAIN_MS,
+    backAction: backAction,
+    endsAt: endsAt,
     inputMode: inputMode,
     playDeviceParams: playDeviceParams,
     pageRoot: pageRoot,
