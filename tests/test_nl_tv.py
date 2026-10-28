@@ -112,8 +112,10 @@ class OriginalFileJellyfin(nl_fake.FakeJellyfin):
                     "DefaultAudioStreamIndex": 1, "MediaStreams": self.streams}
             wants_conversion = body.get("AudioStreamIndex") not in (None, 1) or (body.get("SubtitleStreamIndex") or -1) >= 0
             # Jellyfin's own default subtitle is a picture file next to the film (5 Centimeters per Second's .sub):
-            # unless the request says "no subtitle", the file can't direct play.
-            wants_conversion = wants_conversion or (self.default_picture_sub and "SubtitleStreamIndex" not in body)
+            # unless the request says "no subtitle" for this media source (Jellyfin ignores the choice without the
+            # MediaSourceId), the file can't direct play.
+            no_subtitle = body.get("SubtitleStreamIndex") == -1 and body.get("MediaSourceId") == "ms-" + jf
+            wants_conversion = wants_conversion or (self.default_picture_sub and not no_subtitle)
             if self.mode == "direct" and not wants_conversion:
                 ms = {**base, "SupportsDirectPlay": True, "SupportsDirectStream": True}
             else:
@@ -161,8 +163,9 @@ def run_original_file(ctx):
     fake.default_picture_sub = True
     r = play(client="tv")
     check("Jellyfin's default subtitle is a picture file next to the film: still the original, no subtitle asked for",
-          r.status_code == 200 and r.json()["kind"] == "file" and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies),
-          (r.text[:300], fake.bodies and fake.bodies[0].get("SubtitleStreamIndex")))
+          r.status_code == 200 and r.json()["kind"] == "file" and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies)
+          and str(fake.bodies[-1].get("MediaSourceId")).startswith("ms-"),
+          (r.text[:300], [(b.get("SubtitleStreamIndex"), b.get("MediaSourceId")) for b in fake.bodies]))
     fake.default_picture_sub = False
 
     r = play(client="tv", max_kbps=1000)
@@ -229,6 +232,11 @@ def run_original_file(ctx):
     r = play(client="tv", allow_conversion=1)
     d = r.json()
     check("with allow_conversion: the converted stream", r.status_code == 200 and d["kind"] == "hls" and "master.m3u8" in d["url"], r.text[:300])
+    check("... and Jellyfin is told no subtitle for this file, so it doesn't burn in its own default (a broken .sub broke "
+          "5 Centimeters per Second's conversion)",
+          fake.bodies and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies)
+          and str(fake.bodies[-1].get("MediaSourceId")).startswith("ms-"),
+          [(b.get("SubtitleStreamIndex"), b.get("MediaSourceId")) for b in fake.bodies])
     r = play(caps="v=h264;a=aac;h=h264.aac")
     check("the browser never gets the flag", "can_convert" not in r.text, r.text[:200])
 
