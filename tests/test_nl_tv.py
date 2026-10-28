@@ -100,6 +100,7 @@ class OriginalFileJellyfin(nl_fake.FakeJellyfin):
         self.mode = "direct"
         self.bodies = []
         self.streams = TRUEHD_STREAMS
+        self.default_picture_sub = False
 
     def request(self, method, url, **kw):
         path = url.split("jellyfin.test:8096", 1)[1] if "jellyfin.test:8096" in url else url
@@ -110,6 +111,9 @@ class OriginalFileJellyfin(nl_fake.FakeJellyfin):
             base = {"Id": "ms-" + jf, "Container": "mkv", "RunTimeTicks": 50 * 60 * nl_fake.TICKS, "Bitrate": 92_000_000,
                     "DefaultAudioStreamIndex": 1, "MediaStreams": self.streams}
             wants_conversion = body.get("AudioStreamIndex") not in (None, 1) or (body.get("SubtitleStreamIndex") or -1) >= 0
+            # Jellyfin's own default subtitle is a picture file next to the film (5 Centimeters per Second's .sub):
+            # unless the request says "no subtitle", the file can't direct play.
+            wants_conversion = wants_conversion or (self.default_picture_sub and "SubtitleStreamIndex" not in body)
             if self.mode == "direct" and not wants_conversion:
                 ms = {**base, "SupportsDirectPlay": True, "SupportsDirectStream": True}
             else:
@@ -152,7 +156,14 @@ def run_original_file(ctx):
     r = play(client="tv", audio=2, subtitle=3)
     d = r.json()
     check("a picture subtitle is not burned in for the TV", r.status_code == 200 and d["kind"] == "file" and d["subtitle_index"] == -1
-          and all("SubtitleStreamIndex" not in b for b in fake.bodies), r.text[:300])
+          and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies), r.text[:300])
+
+    fake.default_picture_sub = True
+    r = play(client="tv")
+    check("Jellyfin's default subtitle is a picture file next to the film: still the original, no subtitle asked for",
+          r.status_code == 200 and r.json()["kind"] == "file" and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies),
+          (r.text[:300], fake.bodies and fake.bodies[0].get("SubtitleStreamIndex")))
+    fake.default_picture_sub = False
 
     r = play(client="tv", max_kbps=1000)
     check("the viewer's quality cap does not lower the TV's original", r.status_code == 200 and r.json()["kind"] == "file"
@@ -175,7 +186,7 @@ def run_original_file(ctx):
     d = r.json()
     check("subtitles on by default: the embedded picture track is the default, not burned in",
           r.status_code == 200 and d["kind"] == "file" and d["default_subtitle_index"] == 3 and d["subtitle_index"] == -1
-          and all("SubtitleStreamIndex" not in b for b in fake.bodies), r.text[:300])
+          and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies), r.text[:300])
     r = play(caps="v=h264.hevc;a=aac;h=h264.hevc.aac")
     d = r.json()
     check("the browser still burns the picture subtitle in",

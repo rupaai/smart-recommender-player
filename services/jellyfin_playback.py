@@ -883,7 +883,10 @@ class JellyfinPlayback:
 
         def pinfo(audio, sub, start, **kw):
             if original_only:
-                audio = sub = None
+                # No subtitle (-1), not Jellyfin's default: the app switches subtitles inside the file itself. Left
+                # unset, Jellyfin judges the file with its own default subtitle, and a picture subtitle file next to
+                # the film (.idx/.sub, .sup) can't be sent beside it, so it refused the whole file.
+                audio, sub = None, -1
             return self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, **kw)
 
         def not_playable(info_, ms_=None):
