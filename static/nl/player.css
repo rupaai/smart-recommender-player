@@ -186,6 +186,9 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 /* Subtitle menu extras (M5): actions, the delay stepper. */
 .nl-menu .nl-menu-action { border-top: 1px solid var(--nl-line); border-radius: 0 0 10px 10px; }
 .nl-menu .nl-menu-action + .nl-menu-action { border-top: 0; border-radius: 10px; }
+.nl-menu .nl-menu-action-top { border-top: 0; border-bottom: 1px solid var(--nl-line); border-radius: 10px 10px 0 0; }
+.nl-ends { text-align: right; padding: 0 4px 4px; font-size: 0.85rem; color: var(--nl-ink-2); font-variant-numeric: tabular-nums; }
+.tv .nl-ends { font-size: 1.4rem; padding-bottom: 0.5rem; }
 .nl-stepper { display: flex; align-items: center; gap: 8px; min-height: var(--nl-tap); padding: 4px 12px; font-size: 0.95rem; }
 .nl-stepper-label { flex: 1; font-variant-numeric: tabular-nums; }
 .nl-menu .nl-stepper button { width: var(--nl-tap); min-height: 40px; justify-content: center; padding: 0; border: 1px solid var(--nl-line);

@@ -145,5 +145,50 @@ check("info: passthrough and converted copy and no jump yet", pass[0].indexOf("C
 check("info: 6 decoded channels", X.infoLines({ audioPath: "decoded", audioChannels: 6 }).indexOf("Sound: decoded on the TV, 6 channels out") >= 0);
 check("info: empty stats still give lines", X.infoLines(null).length >= 3);
 
+// ---- "Ends at" above the seek bar
+const now = Date.UTC(2026, 9, 28, 20, 0, 0);
+check("ends at: now + what is left", X.endsAt(now, 6000, 1200, 1) === now + 4800 * 1000);
+check("ends at: at 2x the rest takes half as long", X.endsAt(now, 6000, 1200, 2) === now + 2400 * 1000);
+check("ends at: past the end is now", X.endsAt(now, 100, 150, 1) === now);
+check("ends at: unknown length or speed shows nothing", X.endsAt(now, 0, 0, 1) === null && X.endsAt(now, NaN, 0, 1) === null
+  && X.endsAt(now, Infinity, 0, 1) === null);
+check("ends at: no speed counts as 1x", X.endsAt(now, 60, 0, undefined) === now + 60000);
+
+// ---- Back on the remote: hide the controls, then "press Back again", then leave
+check("back: controls on screen are hidden first (also after a seek)", X.backAction(true, 0, now) === "hide");
+check("back: controls hidden, first press asks", X.backAction(false, 0, now) === "arm");
+check("back: second press within 3 s leaves", X.backAction(false, now, now + 2500) === "leave");
+check("back: second press after 3 s asks again", X.backAction(false, now, now + X.BACK_AGAIN_MS + 1) === "arm");
+check("back: controls back on screen hide again, even when armed", X.backAction(true, now, now + 500) === "hide");
+// The whole sequence a viewer goes through: seek (controls show), Back, Back, Back.
+let armed = 0, visible = true, clock = now, leftAt = null;
+for (const step of ["hide", "arm", "leave"]) {
+  const a = X.backAction(visible, armed, clock);
+  check("back sequence: " + step, a === step, a);
+  if (a === "hide") { visible = false; armed = 0; } else if (a === "arm") { armed = clock; } else { leftAt = clock; }
+  clock += 800;
+}
+check("back sequence: three presses to leave from a visible bar, two from the picture", leftAt === now + 1600);
+
+// player.js wiring: it is too big to run in a vm (it needs the page, hls.js and the Jellyfin API).
+const playerJs = fs.readFileSync(path.join(__dirname, "..", "..", "static", "nl", "player.js"), "utf8");
+const tvKeyBody = playerJs.slice(playerJs.indexOf("function tvKey(e)"), playerJs.indexOf("// The skip / next-episode button"));
+check("player.js: Back uses backAction and does not show the controls first",
+  tvKeyBody.indexOf("X.backAction(controlsVisible(), S.backArmedAt, Date.now())") >= 0
+  && tvKeyBody.indexOf("showControls()") > tvKeyBody.indexOf("if (back) {"), tvKeyBody.slice(0, 400));
+check("player.js: hide clears the controls, arm shows the hint for the same 3 s",
+  tvKeyBody.indexOf('if (action === "hide") { hideControlsNow();') >= 0
+  && tvKeyBody.indexOf('toast("Press Back again to stop watching", X.BACK_AGAIN_MS)') >= 0);
+check("player.js: any other key cancels the pending leave", tvKeyBody.indexOf('if (S.backArmedAt) { S.backArmedAt = 0; $("nl-toast").classList.remove("on"); }') >= 0);
+check("player.js: the ends-at line is drawn with the progress", playerJs.indexOf("X.endsAt(Date.now(), d, cur, S.speed)") >= 0
+  && playerJs.indexOf('"Ends at " + new Date(ends)') >= 0);
+const subMenu = playerJs.slice(playerJs.indexOf("function openSubtitleMenu()"), playerJs.indexOf('openMenu("Subtitles", items)'));
+check("player.js: Subtitle settings is the first item of the subtitle menu, Find stays last",
+  subMenu.indexOf('items.unshift({ kind: "action", top: true, label: "Subtitle settings…"') >= 0
+  && subMenu.indexOf('items.push({ kind: "action", label: "Find subtitles…"') > subMenu.indexOf("items.unshift("));
+const html = fs.readFileSync(path.join(__dirname, "..", "..", "templates", "nl", "player.html"), "utf8");
+check("player.html: the ends-at line sits above the seek bar", html.indexOf('id="nl-ends"') > 0
+  && html.indexOf('id="nl-ends"') < html.indexOf('class="nl-seek-row"'));
+
 if (failed) { console.log(failed + " FAILED"); process.exit(1); }
 console.log("all player extras checks passed");

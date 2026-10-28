@@ -113,6 +113,7 @@
     segFocused: {},       // segments whose button already took the remote's focus
     segCur: null,         // the segment the button is showing for
     speed: 1,             // P17
+    backArmedAt: 0,       // when Back last asked "press Back again" (TV)
     quality: null,        // M10c, P19: this viewing's quality: null = the person's default, 0 = Auto, else kbit/s
     fit: "fit",           // M10c, P18: fit | fill | original (this viewing; the default is a setting)
     convertNoted: "",     // the conversion note already shown for this film
@@ -232,7 +233,7 @@
         // An action closes the menu; a cycle changes its value and stays open (the label is updated in place).
         b.setAttribute("role", "menuitem");
         label.textContent = it.kind === "cycle" ? it.getLabel() : it.label;
-        if (it.kind === "action") { b.className = "nl-menu-action"; }
+        if (it.kind === "action") { b.className = it.top ? "nl-menu-action nl-menu-action-top" : "nl-menu-action"; }
         b.addEventListener("click", function () {
           if (it.kind === "action") { closeMenu(); it.onSelect(); return; }
           it.onSelect();
@@ -357,6 +358,9 @@
     $("nl-elapsed").textContent = fmt(cur);
     $("nl-remaining").textContent = "−" + fmt(Math.max(0, d - cur));
     $("nl-total").textContent = fmt(d);
+    var ends = X.endsAt(Date.now(), d, cur, S.speed);
+    $("nl-ends").hidden = ends === null;
+    if (ends !== null) { $("nl-ends").textContent = "Ends at " + new Date(ends).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
     if (d !== S.ticksFor) { renderTicks(); }
   }
 
@@ -849,10 +853,11 @@
     var items = subtitleChoices().map(function (t) {
       return { label: t.label, selected: t.index === cur, onSelect: function () { chooseSubtitle(t.index); } };
     });
-    items.push({ kind: "action", label: "Find subtitles…", onSelect: openFinder });
+    // Settings first: a film can carry dozens of tracks, and the list would push it off the bottom.
     if (player.canStyleSubtitles || player.canDelaySubtitles) {
-      items.push({ kind: "action", label: "Subtitle settings…", onSelect: openSubtitleSettings });
+      items.unshift({ kind: "action", top: true, label: "Subtitle settings…", onSelect: openSubtitleSettings });
     }
+    items.push({ kind: "action", label: "Find subtitles…", onSelect: openFinder });
     openMenu("Subtitles", items);
   }
 
@@ -1640,13 +1645,21 @@
     if (!dir && !back && !ok) { return false; }
     e.preventDefault();
     if (e.repeat && (back || ok)) { return true; }
-    showControls();
 
-    // Back: close what is open, else leave.
+    // Back: close what is open; then hide the controls; then "press Back again" before leaving the film.
     if (back) {
-      if (S.menuOpen) { closeMenu(); } else if (reactOpen()) { closeReaction(); } else if (nextCardVisible()) { cancelNext(); } else if (segVisible()) { dismissSeg(); } else { leave(); }
+      if (S.menuOpen) { closeMenu(); } else if (reactOpen()) { closeReaction(); } else if (nextCardVisible()) { cancelNext(); } else if (segVisible()) { dismissSeg(); }
+      else if (!$("nl-error").hidden || !$("nl-resume").hidden) { leave(); }   // nothing playing to keep
+      else {
+        var action = X.backAction(controlsVisible(), S.backArmedAt, Date.now());
+        if (action === "hide") { hideControlsNow(); S.backArmedAt = 0; }
+        else if (action === "leave") { leave(); }
+        else { S.backArmedAt = Date.now(); toast("Press Back again to stop watching", X.BACK_AGAIN_MS); }
+      }
       return true;
     }
+    if (S.backArmedAt) { S.backArmedAt = 0; $("nl-toast").classList.remove("on"); }   // another key: no pending leave
+    showControls();
 
     // The skip / next-episode button has the remote: OK uses it, up/down reach the "always" switch, left/right still
     // skip like on the picture.
