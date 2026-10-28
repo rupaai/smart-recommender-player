@@ -1164,6 +1164,8 @@ async def _nl_play(
     except JellyfinUnavailable as e:
         raise HTTPException(status_code=503, detail=str(e))
     except NotPlayable as e:
+        # The reason only reached the screen before; keep it in the log so a refusal can be traced afterwards.
+        print(f"[NL] play {item_id} ({client or 'browser'}) refused: {e}", flush=True)
         if e.can_convert:
             return JSONResponse(status_code=415, content={"detail": str(e), "can_convert": True})
         raise HTTPException(status_code=415, detail=str(e))

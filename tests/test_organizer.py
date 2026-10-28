@@ -372,8 +372,30 @@ def test_numbered_title_organizes_under_its_own_title():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_vobsub_idx_moves_with_its_sub():
+    print("\n[11] VobSub: the .idx moves with its .sub")
+    tmp = fresh_tmp("vobsub")
+    try:
+        staging = os.path.join(tmp, "staging")
+        movie_target = os.path.join(tmp, "Movies")
+        make_file(os.path.join(staging, "Five.Cm.2007.1080p.mkv"), FAKE_VIDEO_BYTES)
+        make_file(os.path.join(staging, "Subs", "Five.Cm.2007.eng.sub"), FAKE_SUB_BYTES)
+        make_file(os.path.join(staging, "Subs", "Five.Cm.2007.eng.idx"), FAKE_SUB_BYTES)
+        make_file(os.path.join(staging, "Five.Cm.2007.fre.sub"), FAKE_SUB_BYTES)  # a text .sub: no .idx
+        outputs = organize_media_files(staging, movie_target, os.path.join(tmp, "Shows"), "Five Cm", 2007)
+        folder = os.path.join(movie_target, "Five Cm (2007)")
+        check("the .sub is beside the film", os.path.isfile(os.path.join(folder, "Five Cm (2007).en.sub")), outputs)
+        check("its .idx is beside it with the same name", os.path.isfile(os.path.join(folder, "Five Cm (2007).en.idx")), outputs)
+        check("no .idx left behind in staging", not os.path.exists(os.path.join(staging, "Subs", "Five.Cm.2007.eng.idx")))
+        check("a text .sub gets no .idx", os.path.isfile(os.path.join(folder, "Five Cm (2007).fr.sub"))
+              and not os.path.exists(os.path.join(folder, "Five Cm (2007).fr.idx")))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_parsers()
+    test_vobsub_idx_moves_with_its_sub()
     test_movie_organizer()
     test_same_title_copies_are_preserved()
     test_season_pack()

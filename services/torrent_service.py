@@ -714,6 +714,27 @@ def _subtitle_destination(
     return destination(candidate)
 
 
+def _move_idx_partner(sub: str, sub_dest: str, organized: List[str]) -> None:
+    """A VobSub picture subtitle is two files: the .sub pictures and the .idx index. Without its .idx a .sub can't be
+    read, so the .idx moves with it under the same new name. A .sub with no .idx is a text (MicroDVD) file: nothing to do."""
+    if os.path.splitext(sub)[1].lower() != ".sub":
+        return
+    stem = os.path.splitext(sub)[0]
+    idx = next((stem + e for e in (".idx", ".IDX", ".Idx") if os.path.isfile(stem + e)), None)
+    if idx is None:
+        return
+    idx_dest = os.path.splitext(sub_dest)[0] + ".idx"
+    if os.path.abspath(idx) == os.path.abspath(idx_dest):
+        return
+    shutil.copy2(idx, idx_dest)
+    try:
+        os.remove(idx)
+    except OSError:
+        pass
+    organized.append(idx_dest)
+    print(f"[Organizer] Subtitle index: {idx_dest}", flush=True)
+
+
 def organize_media_files(
     staging_dir: str,
     movie_target: str,
@@ -811,6 +832,7 @@ def organize_media_files(
                 pass
             organized.append(sub_dest)
             print(f"[Organizer] Subtitle: {sub_dest}", flush=True)
+            _move_idx_partner(sub, sub_dest, organized)
     else:
         # ---- TV: every episode in staging + paired subtitles ----
         show_dir = os.path.join(tv_target, folder_name)
@@ -896,6 +918,7 @@ def organize_media_files(
                 pass
             organized.append(sub_dest)
             print(f"[Organizer] Subtitle: {sub_dest}", flush=True)
+            _move_idx_partner(sub, sub_dest, organized)
 
     # Clean up the staging directory once it has been emptied
     if _remove_dir_tree_if_empty(staging_abs):
