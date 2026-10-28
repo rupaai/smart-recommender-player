@@ -320,6 +320,23 @@ def run(tmp):
     css_player = client.get("/static/nl/player.css").text
     check("player.css makes the page transparent in native mode and keeps the v1 fallback",
           "html.native body" in css_player and "background: transparent" in css_player and "native-v1" in css_player)
+    print("TV aurora look (2026-10-28): one small still sky image, aurora focus, nothing orange left")
+    tv_css = client.get("/static/nl/tv/tv.css").text
+    sky = client.get("/static/nl/tv/aurora-sky.webp")
+    check("the sky image is served and stays small (under 60 KB)",
+          sky.status_code == 200 and sky.content[:4] == b"RIFF" and len(sky.content) < 60_000, (sky.status_code, len(sky.content)))
+    check("tv.css paints the sky once on a fixed layer and never animates it",
+          "aurora-sky.webp" in tv_css and "position: fixed" in tv_css and "@keyframes" not in tv_css and "animation" not in tv_css)
+    check("tv.css and the TV player use the aurora focus, no orange focus left",
+          "--focus:" in tv_css and "255, 106, 43" not in tv_css and "#ff6a2b" not in tv_css
+          and "--nl-focus:" in css_player and "255, 106, 43" not in css_player.split("/* ---- TV (M3)")[1])
+    check("text that can sit on the sky (hints, empty downloads) keeps the night shadow",
+          ".tv-hint, .tv-dl-empty" in tv_css)
+    check("only the resume and 'How was it?' screens get the sky; help and errors stay see-through",
+          ".tv #nl-resume, .tv #nl-react {" in css_player and ".tv .nl-screen {" not in css_player)
+    check("the TV pages and player load the self-hosted Archivo face",
+          "Archivo-Variable.ttf" in tv_css and "Archivo-Variable.ttf" in css_player
+          and client.get("/static/fonts/Archivo-Variable.ttf").status_code == 200)
     js_player = client.get("/static/nl/player.js").text
     check("player.js keeps the web controls in native v2 and hides them only for v1",
           "isNativeV2" in js_player and "native-v1" in js_player)

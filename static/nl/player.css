@@ -131,8 +131,17 @@ svg .fill { fill: currentColor; stroke: none; }
 }
 
 /* ---- TV (M3): ?tv=1 or inside the Android app. 1920x1080 is the design size (1rem = 16px there),
-   text is at least 1.5rem, focus is a ring plus a glow, nothing needs a pointer. */
+   text is at least 1.5rem, nothing needs a pointer. Polar-night look, like the TV pages: the aurora green is the
+   remote's focus light (a ring plus a glow cast below) and the line of the film already played. */
+@font-face {
+  font-family: "Archivo";
+  src: local("Archivo"), url("/static/fonts/Archivo-Variable.ttf") format("truetype-variations");
+  font-weight: 100 900; font-stretch: 62% 125%; font-display: swap;
+}
 html.tv { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; }
+.nl-player.tv { --nl-accent: #46f0a6; --nl-accent-2: #2fd3c9; --nl-ink: #eef6f4; --nl-ink-2: #a9b9c6; --nl-dark: #04150e;
+  --nl-line: rgba(196, 228, 236, 0.22); --nl-panel: rgba(9, 14, 26, 0.95);
+  --nl-focus: 0 0 0 0.25rem var(--nl-accent), 0 0.9rem 2.5rem 0.2rem rgba(70, 240, 166, 0.36); }
 html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same base as the laptop pages */; }
 .nl-player.tv { --nl-tap: 5rem; font-size: 1.5rem; }
 .tv .nl-top, .tv .nl-bottom { padding-left: 5rem; padding-right: 5rem; }
@@ -152,27 +161,43 @@ html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same
 .tv .nl-center { display: none; }          /* OK pauses; no pointer to press the big button */
 .tv #nl-mute, .tv #nl-volume, .tv #nl-fs { display: none; }   /* the TV has its own volume and is always full screen */
 .tv :focus-visible, .tv :focus { outline: none; }
-.tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: #1d1b29; transform: scale(1.08);
-  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
-.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2rem 0.4rem rgba(255, 106, 43, 0.55); }
-.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0 1.5rem rgba(255, 106, 43, 0.4); }
-.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.25rem; padding: 0.75rem; }
-.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; }
+.tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: var(--nl-dark); transform: scale(1.08); box-shadow: var(--nl-focus); }
+.tv .nl-range::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--nl-accent), var(--nl-accent-2) var(--pct), rgba(238, 246, 244, 0.45) var(--pct), rgba(238, 246, 244, 0.45) var(--buf), rgba(238, 246, 244, 0.18) var(--buf)); }
+.tv .nl-range::-webkit-slider-thumb { background: var(--nl-ink); }
+.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0.6rem 2rem 0.3rem rgba(70, 240, 166, 0.5); }
+.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0.5rem 1.5rem rgba(70, 240, 166, 0.3); }
+.tv .nl-bottom { background: linear-gradient(transparent, rgba(4, 7, 14, 0.82)); }
+.tv .nl-top { background: linear-gradient(rgba(4, 7, 14, 0.75), transparent); }
+.tv .nl-title { font-weight: 700; letter-spacing: -0.01em; }
+.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.25rem; padding: 0.75rem;
+  box-shadow: inset 0 0.15rem 0 rgba(70, 240, 166, 0.55), 0 1.5rem 4rem rgba(0, 0, 0, 0.55); }
+.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; letter-spacing: 0; text-transform: none; font-weight: 700; color: var(--nl-ink-2); }
 .tv .nl-menu button { font-size: 1.5rem; min-height: 4.5rem; border-radius: 0.9rem; gap: 1rem; }
-.tv .nl-menu button:focus { background: var(--nl-ink); color: #1d1b29; box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu button:focus { background: var(--nl-ink); color: var(--nl-dark); box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu button:focus .tick { color: #0c8a57; }
 .tv .nl-menu .tick { width: 1.5rem; }
 .tv .nl-card { width: min(36rem, 100%); gap: 1.25rem; }
+/* The questions before and after a film (resume, "How was it?") sit under the same sky as the TV pages. Help and
+   errors keep the see-through dim so the paused picture still shows behind them. */
+.tv #nl-resume, .tv #nl-react { background: linear-gradient(rgba(7, 11, 21, 0.4), rgba(7, 11, 21, 0.4)), #070b15 url("/static/nl/tv/aurora-sky.webp") center top / 100% 70% no-repeat; }
+.tv .nl-card-title { text-shadow: 0 0.15rem 1.5rem rgba(0, 0, 0, 0.6); }
 .tv .nl-card-title { font-size: 2rem; }
-.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; }
-.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.06); background: var(--nl-ink); color: #1d1b29;
-  box-shadow: 0 0 0 0.25rem var(--nl-accent), 0 0 2.5rem 0.5rem rgba(255, 106, 43, 0.55); }
-.tv .nl-primary:focus { background: var(--nl-accent); border: 0.2rem solid var(--nl-ink); }
-.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.25rem; bottom: 3rem; }
+.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; transition: transform 0.16s ease, box-shadow 0.16s ease; }
+.tv .nl-primary { color: var(--nl-dark); }
+.tv .nl-secondary { background: rgba(7, 11, 21, 0.6); }
+.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.06); background: var(--nl-ink); color: var(--nl-dark); box-shadow: var(--nl-focus); }
+.tv .nl-primary:focus { background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0.9rem 2.5rem 0.3rem rgba(70, 240, 166, 0.5); }
+.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.25rem; bottom: 3rem;
+  box-shadow: inset 0 0.15rem 0 rgba(70, 240, 166, 0.55), 0 1.5rem 4rem rgba(0, 0, 0, 0.55); }
+.tv .nl-next-label { letter-spacing: 0; text-transform: none; font-weight: 700; }
 .controls-visible.tv .nl-next { bottom: calc(var(--nl-tap) * 2 + 6rem); }
 .tv .nl-next-label, .tv .nl-next-count { font-size: 1.5rem; }
 .tv .nl-next-title { font-size: 1.75rem; }
 .tv .nl-next-actions .nl-primary, .tv .nl-next-actions .nl-secondary { min-height: 4.5rem; }
 .tv .nl-buffering { width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; }
+.tv .nl-buffering span { border-width: 0.3rem; border-color: rgba(238, 246, 244, 0.16); border-top-color: var(--nl-accent); border-right-color: var(--nl-accent-2); }
+.tv .nl-toast { background: rgba(9, 14, 26, 0.9); box-shadow: inset 0 0 0 0.1rem rgba(70, 240, 166, 0.4); }
 
 /* Inside the Android app (bridge v2) Media3 draws the video BEHIND the WebView, so the page is
    transparent and the <video> element stays unused; our controls draw on top of the picture. */
@@ -195,7 +220,7 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
   border-radius: 999px; font-size: 1.3rem; font-weight: 700; }
 .tv .nl-stepper { min-height: 4.5rem; padding: 0.5rem 1.25rem; font-size: 1.5rem; gap: 1rem; }
 .tv .nl-menu .nl-stepper button { width: 5rem; min-height: 4rem; font-size: 2rem; border-radius: 999px; }
-.tv .nl-menu .nl-stepper button:focus { background: var(--nl-ink); color: #1d1b29; box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu .nl-stepper button:focus { background: var(--nl-ink); color: var(--nl-dark); box-shadow: 0 0 0 0.25rem var(--nl-accent); }
 
 /* ---- M7a polish: seek-bar thumbnails, chapter ticks, skip intro / next episode, speed, phone gestures. */
 .nl-player video, .nl-controls { touch-action: none; }   /* the page owns taps and swipes on the picture */
@@ -233,7 +258,8 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .tv .nl-seek-wrap { --nl-thumb-d: 2rem; }
 .tv .nl-ticks i { width: 0.25rem; height: 1.25rem; top: -0.625rem; margin-left: -0.125rem; }
 .tv .nl-thumb-time, .tv .nl-thumb-chapter { font-size: 1.5rem; padding: 0.25rem 1.25rem; }
-.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; }
+.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; border-color: var(--nl-accent); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6); }
+.tv .nl-ticks i { background: var(--nl-ink); }
 @media (max-width: 640px) {
   #nl-chapters, #nl-speed { padding: 0 6px; }
 }
