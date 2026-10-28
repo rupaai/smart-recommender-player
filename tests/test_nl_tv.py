@@ -5,6 +5,8 @@ Offline tests for Northern Lights M3a: the TV profile, client=tv selection and t
     uv run python tests/test_nl_tv.py
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -204,8 +206,12 @@ def run_original_file(ctx):
     fake.streams = TRUEHD_STREAMS
 
     fake.mode = "convert"
-    r = play(client="tv")
+    log = io.StringIO()
+    with contextlib.redirect_stdout(log):
+        r = play(client="tv")
     d = r.json()
+    check("the refusal and its reason are in the server log", "refused: This TV can't play the original file" in log.getvalue(),
+          log.getvalue()[-300:])
     check("no original from Jellyfin: 415 naming the reason, with the converted-copy flag",
           r.status_code == 415 and d.get("can_convert") is True and d["detail"].startswith("This TV can't play the original file as it is")
           and "AudioCodecNotSupported" in d["detail"], r.text[:300])
