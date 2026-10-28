@@ -232,6 +232,11 @@ def run_original_file(ctx):
     r = play(client="tv", allow_conversion=1)
     d = r.json()
     check("with allow_conversion: the converted stream", r.status_code == 200 and d["kind"] == "hls" and "master.m3u8" in d["url"], r.text[:300])
+    check("... and Jellyfin is told no subtitle for this file, so it doesn't burn in its own default (a broken .sub broke "
+          "5 Centimeters per Second's conversion)",
+          fake.bodies and all(b.get("SubtitleStreamIndex") == -1 for b in fake.bodies)
+          and str(fake.bodies[-1].get("MediaSourceId")).startswith("ms-"),
+          [(b.get("SubtitleStreamIndex"), b.get("MediaSourceId")) for b in fake.bodies])
     r = play(caps="v=h264;a=aac;h=h264.aac")
     check("the browser never gets the flag", "can_convert" not in r.text, r.text[:200])
 
