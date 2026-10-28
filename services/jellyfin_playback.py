@@ -594,9 +594,12 @@ class JellyfinPlayback:
         direct_play: bool = True,
         direct_stream: bool = True,
         max_bitrate: Optional[int] = None,
+        media_source_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """`max_bitrate` (bit/s, M10c) is the highest stream rate to allow, from the viewer's quality choice. It only ever
-        lowers the profile's own ceiling; a file above it cannot direct play, so Jellyfin converts it."""
+        lowers the profile's own ceiling; a file above it cannot direct play, so Jellyfin converts it.
+        `media_source_id`: Jellyfin applies the audio and subtitle choice only to the media source named here; without
+        it both are ignored and Jellyfin judges the file with its own default tracks."""
         profile = copy.deepcopy(profile or BROWSER_PROFILE)
         ceiling = int(profile.get("MaxStreamingBitrate") or MAX_STREAMING_BITRATE)
         if max_bitrate and max_bitrate < ceiling:
@@ -614,6 +617,8 @@ class JellyfinPlayback:
             "AutoOpenLiveStream": False,
         }
         params: Dict[str, Any] = {"UserId": self._user_id()}
+        if media_source_id:
+            body["MediaSourceId"] = params["MediaSourceId"] = media_source_id
         if audio_index is not None:
             body["AudioStreamIndex"] = params["AudioStreamIndex"] = audio_index
         if subtitle_index is not None:
@@ -887,6 +892,12 @@ class JellyfinPlayback:
                 # unset, Jellyfin judges the file with its own default subtitle, and a picture subtitle file next to
                 # the film (.idx/.sub, .sup) can't be sent beside it, so it refused the whole file.
                 audio, sub = None, -1
+                # Jellyfin only takes the -1 for the media source the request names (a film's own file: its item id).
+                info_ = self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, media_source_id=jf_id, **kw)
+                source = ((info_.get("MediaSources") or [{}])[0] or {}).get("Id")
+                if not source or source == jf_id:
+                    return info_
+                return self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, media_source_id=source, **kw)
             return self.playback_info(jf_id, profile, audio, sub, start, max_bitrate=cap, **kw)
 
         def not_playable(info_, ms_=None):
