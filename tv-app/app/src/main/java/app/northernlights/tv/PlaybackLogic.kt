@@ -65,6 +65,18 @@ fun embeddedTextGroupPosition(groups: List<TextGroupInfo>, order: Int, language:
     return sameLanguage[languageRank.coerceIn(0, sameLanguage.size - 1)]
 }
 
+/**
+ * Positions of track groups in the order of the file. Media3 lists groups renderer by renderer, so an audio track only
+ * the FFmpeg decoder plays (TrueHD, DTS-HD) comes after every other audio track, and picking "the 6th audio track" by
+ * Media3's list chose the one after it (Italian gave Hindi). [formatIds] are the groups' first format ids, which hold
+ * the file's track number ("3", or "0:3" when subtitles are side-loaded). If any id is not a number the list is kept.
+ */
+fun fileOrder(formatIds: List<String?>): List<Int> {
+    val numbers = formatIds.map { it?.substringAfterLast(':')?.toIntOrNull() }
+    if (numbers.any { it == null }) return formatIds.indices.toList()
+    return formatIds.indices.sortedBy { numbers[it] }
+}
+
 /** Largest subtitle delay either way, in seconds (the page's own limit). */
 const val MAX_SUBTITLE_DELAY_SECONDS = 60.0
 

@@ -74,6 +74,21 @@ class PlaybackLogicTest {
     }
 
     @Test
+    fun audioGroupsGoBackInFileOrder() {
+        // "Michael (2026)": TrueHD (track 2) is played by the FFmpeg decoder, so Media3 lists it after Russian (track 9).
+        // File order: TrueHD, AC3, Spanish, French, German, Italian, Hindi, Russian.
+        val media3 = listOf("3", "4", "5", "6", "7", "8", "9", "2")
+        val inFile = fileOrder(media3)
+        assertEquals("7", media3[inFile[5]]) // the 6th audio track (Italian) is track 7, not Hindi (8)
+        assertEquals("2", media3[inFile[0]])
+        // With side-loaded subtitles the ids carry a source prefix.
+        assertEquals(listOf(1, 0), fileOrder(listOf("0:5", "0:2")))
+        // Ids that are not track numbers: keep Media3's order.
+        assertEquals(listOf(0, 1), fileOrder(listOf("5", null)))
+        assertEquals(listOf(0, 1), fileOrder(listOf("b", "a")))
+    }
+
+    @Test
     fun delayIsClampedToAMinute() {
         assertEquals(1_250_000L, subtitleDelayUs(1.25))
         assertEquals(-500_000L, subtitleDelayUs(-0.5))

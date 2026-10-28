@@ -155,6 +155,8 @@ class PlayerController(
         var height = 0
         var hdr = ""
         var audioLabel = ""
+        val audioGroups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        val audioInFile = fileOrder(audioGroups.map { g -> if (g.length > 0) g.getTrackFormat(0).id else null })
         for (group in p.currentTracks.groups) {
             for (i in 0 until group.length) {
                 if (!group.isTrackSelected(i)) continue
@@ -164,7 +166,7 @@ class PlayerController(
                     height = f.height
                     hdr = hdrLabel(f.codecs, f.colorInfo?.colorTransfer ?: Format.NO_VALUE)
                 } else if (group.type == C.TRACK_TYPE_AUDIO) {
-                    audioLabel = audioTrackLabel(f)
+                    audioLabel = audioTrackLabel(f, audioInFile.indexOf(audioGroups.indexOf(group)))
                 }
             }
         }
@@ -184,9 +186,15 @@ class PlayerController(
         )
     }
 
-    private fun audioTrackLabel(f: Format): String {
-        val fromPage = if (appliedAudioOrder >= 0) playingAudioLabels.getOrNull(appliedAudioOrder) else null
-        return fromPage ?: f.label ?: f.language ?: ""
+    /**
+     * The info panel's audio line: the page's label of the track that is really playing ([place] is its place in the
+     * file), plus the language and track number Media3 reports, so a wrong pick shows on the TV.
+     */
+    private fun audioTrackLabel(f: Format, place: Int): String {
+        val fromPage = playingAudioLabels.getOrNull(place)
+        val playing = listOfNotNull(f.language, f.id?.let { "track ${it.substringAfterLast(':')}" }).joinToString(", ")
+        val name = fromPage ?: f.label ?: ""
+        return if (playing.isEmpty()) name else if (name.isEmpty()) playing else "$name ($playing)"
     }
     private var playingAudioLabels: List<String> = emptyList()
 
@@ -411,9 +419,11 @@ class PlayerController(
         val wanted = audioOrder
         if (wanted < 0 || wanted == appliedAudioOrder) return
         val groups = p.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
-        if (wanted >= groups.size) return
+        // The page's order is the file's; Media3's list puts tracks only FFmpeg decodes last.
+        val inFile = fileOrder(groups.map { g -> if (g.length > 0) g.getTrackFormat(0).id else null })
+        if (wanted >= inFile.size) return
         p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-            .setOverrideForType(TrackSelectionOverride(groups[wanted].mediaTrackGroup, 0))
+            .setOverrideForType(TrackSelectionOverride(groups[inFile[wanted]].mediaTrackGroup, 0))
             .build()
         appliedAudioOrder = wanted
     }
