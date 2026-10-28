@@ -13,7 +13,7 @@
   --text: #eef6f4; --text-2: #a9b9c6; --line: rgba(196, 228, 236, 0.2); --fill: rgba(196, 228, 236, 0.07);
   --action: #46f0a6; --action-ink: #04150e; --ready: #46f0a6; --warn: #f0c36a; --bad: #ff8f7f;
   --aurora-green: #46f0a6; --aurora-teal: #2fd3c9; --aurora-violet: #8f72ff; --aurora-rose: #ff6fae;
-  --aurora-line: linear-gradient(90deg, var(--aurora-green), var(--aurora-teal) 55%, var(--aurora-violet));
+  --aurora-line: linear-gradient(90deg, var(--aurora-green), var(--aurora-teal));
   --focus: 0 0 0 0.3rem var(--aurora-green), 0 1rem 3rem 0.25rem rgba(70, 240, 166, 0.34);
   --font-ui: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-display: "Archivo", "Roboto Condensed", "Helvetica Neue", "Arial Narrow", sans-serif;
@@ -63,7 +63,8 @@ button { font: inherit; color: inherit; }
   transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease; }
 .tv-btn { background: rgba(13, 20, 36, 0.72); }
 .tv-btn.is-primary { background: var(--action); border-color: var(--action); color: var(--action-ink); }
-.tv-pill[aria-pressed="true"] { background: rgba(70, 240, 166, 0.16); border-color: var(--aurora-green); color: var(--text); }
+/* Chosen (not focused): a green tint and green text, no ring; a green ring always means focus. */
+.tv-pill[aria-pressed="true"] { background: rgba(70, 240, 166, 0.18); border-color: transparent; color: var(--aurora-green); }
 .tv-pill:focus, .tv-btn:focus { transform: scale(1.08); background: var(--text); border-color: var(--text); color: var(--action-ink); box-shadow: var(--focus); }
 .tv-btn.is-primary:focus { background: var(--action); border-color: var(--text); color: var(--action-ink);
   box-shadow: 0 0 0 0.3rem var(--text), 0 1rem 3rem 0.4rem rgba(70, 240, 166, 0.5); }
@@ -75,7 +76,7 @@ button { font: inherit; color: inherit; }
 .tv-section { position: relative; z-index: 1; margin-top: 1.5rem; }
 .tv-section > h2 { display: flex; align-items: center; gap: 2rem; padding: 0 var(--side); font-size: 2.25rem; }
 /* Text that can sit on the sky keeps a soft night shadow so it reads over the brightest rays. */
-.tv-section > h2, .tv-hero-info, .tv-picks-note, .tv-status { text-shadow: 0 0.1rem 1.25rem rgba(4, 7, 14, 0.85), 0 0 0.3rem rgba(4, 7, 14, 0.6); }
+.tv-section > h2, .tv-hero-info, .tv-picks-note, .tv-status, .tv-hint, .tv-dl-empty, .tv-filters .tv-meta, .tv-name, .tv-meta { text-shadow: 0 0.1rem 1.25rem rgba(4, 7, 14, 0.85), 0 0 0.3rem rgba(4, 7, 14, 0.6); }
 .tv-hero-info .tv-btn, .tv-hero-info .tv-pill, .tv-hero-info .nl-progress { text-shadow: none; }
 .tv-row { display: flex; gap: 2rem; padding: 2rem var(--side) 3.5rem; overflow-x: hidden; }
 .tv-row-grid { padding-bottom: 2rem; }
@@ -106,12 +107,12 @@ button { font: inherit; color: inherit; }
 .tv-tick { position: absolute; top: 0.75rem; right: 0.75rem; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--ready); color: var(--action-ink);
   font-weight: 800; display: flex; align-items: center; justify-content: center; }
 .nl-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 0.5rem; background: rgba(0, 0, 0, 0.6); }
-.nl-progress span { display: block; height: 100%; background: var(--aurora-line); box-shadow: 0 0 0.75rem rgba(70, 240, 166, 0.6); }
+.nl-progress span { display: block; height: 100%; background: var(--aurora-line); }
 
 /* ---- title and show */
 .tv-detail { position: relative; }
 .tv-hero { position: relative; }
-.tv-backdrop { position: absolute; left: 0; right: 0; top: -9rem; height: 54rem; overflow: hidden; z-index: 0; }
+.tv-backdrop { background: var(--bg); position: absolute; left: 0; right: 0; top: -9rem; height: 54rem; overflow: hidden; z-index: 0; }
 .tv-backdrop img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0.5; }
 .tv-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(7, 11, 21, 0.15) 20%, var(--bg) 100%), linear-gradient(to right, rgba(7, 11, 21, 0.75), transparent 60%); }
 .tv-hero-body { position: relative; z-index: 1; display: grid; grid-template-columns: 20rem 1fr; gap: 4rem; padding: 3rem var(--side) 1rem; align-items: start; }

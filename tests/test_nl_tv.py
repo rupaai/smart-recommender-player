@@ -330,6 +330,10 @@ def run(tmp):
     check("tv.css and the TV player use the aurora focus, no orange focus left",
           "--focus:" in tv_css and "255, 106, 43" not in tv_css and "#ff6a2b" not in tv_css
           and "--nl-focus:" in css_player and "255, 106, 43" not in css_player.split("/* ---- TV (M3)")[1])
+    check("text that can sit on the sky (hints, empty downloads) keeps the night shadow",
+          ".tv-hint, .tv-dl-empty" in tv_css)
+    check("only the resume and 'How was it?' screens get the sky; help and errors stay see-through",
+          ".tv #nl-resume, .tv #nl-react {" in css_player and ".tv .nl-screen {" not in css_player)
     check("the TV pages and player load the self-hosted Archivo face",
           "Archivo-Variable.ttf" in tv_css and "Archivo-Variable.ttf" in css_player
           and client.get("/static/fonts/Archivo-Variable.ttf").status_code == 200)

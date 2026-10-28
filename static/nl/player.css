@@ -164,9 +164,9 @@ html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same
 .tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: var(--nl-dark); transform: scale(1.08); box-shadow: var(--nl-focus); }
 .tv .nl-range::-webkit-slider-runnable-track {
   background: linear-gradient(to right, var(--nl-accent), var(--nl-accent-2) var(--pct), rgba(238, 246, 244, 0.45) var(--pct), rgba(238, 246, 244, 0.45) var(--buf), rgba(238, 246, 244, 0.18) var(--buf)); }
-.tv .nl-range::-webkit-slider-thumb { background: var(--nl-ink); box-shadow: 0 0 1.25rem rgba(70, 240, 166, 0.6); }
-.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0 2rem 0.4rem rgba(70, 240, 166, 0.55); }
-.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0 1.5rem rgba(70, 240, 166, 0.35); }
+.tv .nl-range::-webkit-slider-thumb { background: var(--nl-ink); }
+.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0.6rem 2rem 0.3rem rgba(70, 240, 166, 0.5); }
+.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0.5rem 1.5rem rgba(70, 240, 166, 0.3); }
 .tv .nl-bottom { background: linear-gradient(transparent, rgba(4, 7, 14, 0.82)); }
 .tv .nl-top { background: linear-gradient(rgba(4, 7, 14, 0.75), transparent); }
 .tv .nl-title { font-weight: 700; letter-spacing: -0.01em; }
@@ -178,8 +178,9 @@ html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same
 .tv .nl-menu button:focus .tick { color: #0c8a57; }
 .tv .nl-menu .tick { width: 1.5rem; }
 .tv .nl-card { width: min(36rem, 100%); gap: 1.25rem; }
-/* Full-screen questions on the TV (resume, errors, "How was it?", help) sit under the same sky as the TV pages. */
-.tv .nl-screen { background: linear-gradient(rgba(7, 11, 21, 0.4), rgba(7, 11, 21, 0.4)), #070b15 url("/static/nl/tv/aurora-sky.webp") center top / 100% 70% no-repeat; }
+/* The questions before and after a film (resume, "How was it?") sit under the same sky as the TV pages. Help and
+   errors keep the see-through dim so the paused picture still shows behind them. */
+.tv #nl-resume, .tv #nl-react { background: linear-gradient(rgba(7, 11, 21, 0.4), rgba(7, 11, 21, 0.4)), #070b15 url("/static/nl/tv/aurora-sky.webp") center top / 100% 70% no-repeat; }
 .tv .nl-card-title { text-shadow: 0 0.15rem 1.5rem rgba(0, 0, 0, 0.6); }
 .tv .nl-card-title { font-size: 2rem; }
 .tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; transition: transform 0.16s ease, box-shadow 0.16s ease; }
@@ -257,7 +258,7 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .tv .nl-seek-wrap { --nl-thumb-d: 2rem; }
 .tv .nl-ticks i { width: 0.25rem; height: 1.25rem; top: -0.625rem; margin-left: -0.125rem; }
 .tv .nl-thumb-time, .tv .nl-thumb-chapter { font-size: 1.5rem; padding: 0.25rem 1.25rem; }
-.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; border-color: var(--nl-accent); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6), 0 0 2rem rgba(70, 240, 166, 0.3); }
+.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; border-color: var(--nl-accent); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6); }
 .tv .nl-ticks i { background: var(--nl-ink); }
 @media (max-width: 640px) {
   #nl-chapters, #nl-speed { padding: 0 6px; }
