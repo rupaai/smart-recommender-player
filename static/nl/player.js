@@ -775,9 +775,26 @@
     return S.textIndex === null ? -1 : S.textIndex;
   }
 
+  // The track picked here comes back the next time this movie or show plays (services/nl_track_memory.py).
+  // track null = subtitles off. Best effort: a failed save only means the next play starts with the defaults.
+  function rememberTrack(axis, track) {
+    if (!window.fetch || !S.stream) { return; }
+    var body = {};
+    if (S.sourceId) { body.source = S.sourceId; }
+    body[axis] = track ? {
+      index: track.index, language: track.language || "", label: track.label || "", codec: track.codec || "",
+      is_forced: !!track.is_forced, is_hearing_impaired: !!track.is_hearing_impaired,
+      picture: !!(track.picture || track.kind === "image")
+    } : { off: true };
+    fetch("/api/nl/tracks/" + encodeURIComponent(itemId), {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+    }).catch(function () { /* offline: nothing to remember */ });
+  }
+
   function chooseSubtitle(index) {
     var track = (S.stream.subtitle_tracks || []).filter(function (t) { return t.index === index; })[0];
     if (index === -1 || !track) {
+      rememberTrack("subtitle", null);
       S.textIndex = null;
       player.showTextTrack(null);
       if (S.burnIndex >= 0) { reloadStream({ subtitle: -1 }); }
@@ -785,6 +802,7 @@
     } else if (track.kind === "embedded") {
       // A picture subtitle inside the file: the TV app draws it (bridge v6); nothing is burned in.
       if (!player.canDrawEmbeddedSubtitles) { toast("This subtitle needs the newest TV app"); return; }
+      rememberTrack("subtitle", track);
       S.textIndex = index;
       player.showTextTrack(index);
       toast("Subtitles: " + track.label);
@@ -801,10 +819,12 @@
       ]);
     } else if (track.kind === "image") {
       S.textIndex = null;
+      rememberTrack("subtitle", track);
       player.showTextTrack(null);
       toast("Subtitles: " + track.label + " (loading)");
       reloadStream({ subtitle: index });
     } else {
+      rememberTrack("subtitle", track);
       S.textIndex = index;
       player.showTextTrack(index);
       toast("Subtitles: " + track.label);
@@ -824,6 +844,7 @@
     openMenu("Audio", tracks.map(function (t) {
       return { label: t.label, selected: t.index === S.audioIndex, onSelect: function () {
         if (t.index === S.audioIndex) { return; }
+        rememberTrack("audio", t);
         toast("Audio: " + t.label);
         // The TV plays the original file and switches track inside it (bridge v5); everything else gets a new stream.
         var order = (S.stream.audio_tracks || []).indexOf(t);
@@ -1115,7 +1136,8 @@
     $("nl-buffering").hidden = false;
     var params = {
       audio: change.audio !== undefined ? change.audio : S.audioIndex,
-      subtitle: change.subtitle !== undefined ? change.subtitle : (S.burnIndex >= 0 ? S.burnIndex : null),
+      // -1, not "the default": the page's own subtitle state is the truth here, not the remembered or preferred one.
+      subtitle: change.subtitle !== undefined ? change.subtitle : (S.burnIndex >= 0 ? S.burnIndex : -1),
       start: pos
     };
     S.retry = function () { hideError(); reloadStream(change); };
@@ -1131,7 +1153,12 @@
 
   function startFirst(opts) {
     opts = opts || {};
-    if (opts.fromNext) { S.allowConversion = false; S.subDelay = 0; player.setSubtitleDelay(0); }   // the delay belongs to one file
+    if (opts.fromNext) { S.allowConversion = false; S.subDelay = 0; player.setSubtitleDelay(0);   // the delay belongs to one file
+      // Track numbers belong to one file too: the next episode starts with the tracks the server picks for it (the
+      // ones remembered for the show, else the language prefs).
+      S.textIndex = null;
+      S.defaultSubDone = false;
+    }
     hideError();
     $("nl-buffering").hidden = false;
     S.retry = function () { startFirst(opts); };
@@ -1423,7 +1450,10 @@
   player.on("progress", function () { if (S.started && !S.stopped && !player.paused) { report("progress"); } });
   player.on("stopped", leave);   // Back in the native player: leave like the web player's back button
   player.on("audiochange", function (e) {
-    if (e && typeof e.index === "number" && e.index !== S.audioIndex) { reloadStream({ audio: e.index }); }
+    if (e && typeof e.index === "number" && e.index !== S.audioIndex) {
+      rememberTrack("audio", ((S.stream && S.stream.audio_tracks) || []).filter(function (t) { return t.index === e.index; })[0] || null);
+      reloadStream({ audio: e.index });
+    }
   });
   player.on("subtitlechange", function (e) {
     var index = e && typeof e.index === "number" ? e.index : -1;

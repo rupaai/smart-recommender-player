@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from services.device_profiles import BROWSER_PROFILE, TV_PROFILE
-from services import nl_picture, nl_settings
+from services import nl_picture, nl_settings, nl_track_memory
 from services.nl_people import lang_key, pick_audio_index, pick_subtitle_track
 from services.jellyfin_service import JellyfinService
 
@@ -860,7 +860,9 @@ class JellyfinPlayback:
         `prefer` ({audio_lang, subtitle_lang, subtitles_on}, from the viewer's prefs, M4) picks the
         default tracks when the caller did not ask for any: audio in the preferred language, and a
         subtitle track when subtitles are on by default (picture subtitles are burned in from the start;
-        a text track is reported as `default_subtitle_index` for the page to switch on)."""
+        a text track is reported as `default_subtitle_index` for the page to switch on).
+        `prefer["memory"]` ({audio, subtitle} from nl_track_memory) is the viewer's last choice for this title; it wins
+        over the language prefs when a track still matches, and a saved "Off" keeps subtitles off (forced ones too)."""
         sources = item.get("sources") or []
         if not sources:
             raise ItemNotFound("This item has no media file.")
@@ -922,15 +924,21 @@ class JellyfinPlayback:
                 raise NotPlayable(PICTURE_SUBTITLE_MESSAGE, can_convert=True)
 
         default_subtitle_index = -1
+        memory = (prefer or {}).get("memory") or {}
+        source_row = sources[0].get("id")
+        subs_off = nl_track_memory.is_off(memory.get("subtitle"))
         if prefer and (audio_index is None or subtitle_index is None):
             first = extract_tracks(ms, jf_id, ms.get("Id") or jf_id, embedded=original_only)
             want_audio, want_sub = audio_index, subtitle_index
             if audio_index is None:
-                pick = pick_audio_index(first["audio_tracks"], prefer.get("audio_lang"))
+                # The track chosen for this title last time, else the one in the preferred language.
+                kept = nl_track_memory.recall(first["audio_tracks"], memory.get("audio"), source_row)
+                pick = kept["index"] if kept else pick_audio_index(first["audio_tracks"], prefer.get("audio_lang"))
                 if pick is not None and pick != ms.get("DefaultAudioStreamIndex"):
                     want_audio = pick
-            if subtitle_index is None and prefer.get("subtitles_on"):
-                track = pick_subtitle_track(first["subtitle_tracks"], prefer.get("subtitle_lang"))
+            kept_sub = nl_track_memory.recall(first["subtitle_tracks"], memory.get("subtitle"), source_row)
+            if subtitle_index is None and not subs_off and (kept_sub or prefer.get("subtitles_on")):
+                track = kept_sub or pick_subtitle_track(first["subtitle_tracks"], prefer.get("subtitle_lang"))
                 if track is not None:
                     if track.get("kind") == "image":
                         if not original_only and not copy_video_only:
@@ -1011,7 +1019,7 @@ class JellyfinPlayback:
                 tracks["audio_tracks"][0]["index"] if tracks["audio_tracks"] else None
             )
 
-        if original_only and default_subtitle_index < 0 and prefer:
+        if original_only and default_subtitle_index < 0 and prefer and not subs_off:
             forced = forced_subtitle_index(tracks, selected_audio, prefer.get("subtitle_lang") or prefer.get("audio_lang"))
             if forced is not None:
                 default_subtitle_index = forced
