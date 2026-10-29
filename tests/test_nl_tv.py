@@ -320,23 +320,50 @@ def run(tmp):
     css_player = client.get("/static/nl/player.css").text
     check("player.css makes the page transparent in native mode and keeps the v1 fallback",
           "html.native body" in css_player and "background: transparent" in css_player and "native-v1" in css_player)
-    print("TV aurora look (2026-10-28): one small still sky image, aurora focus, nothing orange left")
+    print("TV soft aurora look: navy ground, three faint glows, cyan focus ring, DM Sans, nothing animated")
     tv_css = client.get("/static/nl/tv/tv.css").text
-    sky = client.get("/static/nl/tv/aurora-sky.webp")
-    check("the sky image is served and stays small (under 60 KB)",
-          sky.status_code == 200 and sky.content[:4] == b"RIFF" and len(sky.content) < 60_000, (sky.status_code, len(sky.content)))
-    check("tv.css paints the sky once on a fixed layer and never animates it",
-          "aurora-sky.webp" in tv_css and "position: fixed" in tv_css and "@keyframes" not in tv_css and "animation" not in tv_css)
-    check("tv.css and the TV player use the aurora focus, no orange focus left",
-          "--focus:" in tv_css and "255, 106, 43" not in tv_css and "#ff6a2b" not in tv_css
-          and "--nl-focus:" in css_player and "255, 106, 43" not in css_player.split("/* ---- TV (M3)")[1])
-    check("text that can sit on the sky (hints, empty downloads) keeps the night shadow",
-          ".tv-hint, .tv-dl-empty" in tv_css)
-    check("only the resume and 'How was it?' screens get the sky; help and errors stay see-through",
+    tv_player_css = css_player.split("/* ---- TV (M3)")[1].split("/* Inside the Android app")[0]
+    check("the bright sky image is gone (file removed, no CSS refers to it)",
+          client.get("/static/nl/tv/aurora-sky.webp").status_code == 404 and "aurora-sky" not in tv_css and "aurora-sky" not in css_player)
+    check("tv.css paints the glows once on one fixed layer, on the #0c1220 ground",
+          "--bg: #0c1220" in tv_css and "body::before" in tv_css and "position: fixed" in tv_css
+          and all(g in tv_css for g in ("rgba(32, 64, 140, 0.45)", "rgba(130, 36, 104, 0.30)", "rgba(28, 80, 96, 0.30)")))
+    check("no ongoing animation: no @keyframes and no animation in tv.css or the TV part of player.css",
+          "@keyframes" not in tv_css and "animation" not in tv_css and "@keyframes" not in tv_player_css and "animation" not in tv_player_css)
+    check("no backdrop-filter, blur / saturate filters or blend modes in the TV styles",
+          all(w not in c for c in (tv_css, tv_player_css) for w in ("backdrop-filter", "filter:", "blur(", "saturate(", "mix-blend-mode", "background-blend-mode")))
+    check("focus is a 2 px soft-cyan ring with a dark shadow; the old green and orange are gone",
+          "--ring: #8fd3ff" in tv_css and "--nl-ring: #8fd3ff" in tv_player_css
+          and all(w not in c.lower() for c in (tv_css, tv_player_css) for w in ("#46f0a6", "70, 240, 166", "#ff6a2b", "255, 106, 43", "#04150e")))
+    check("primary buttons and the progress / seek lines use the aurora gradient",
+          "linear-gradient(110deg, #7c3fc4, #c2307c 55%, #4a6cc0)" in tv_css and "linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec)" in tv_css
+          and "--nl-action" in tv_player_css)
+    check("the TV player's seek bar is a film strip: sprocket rows, played tint, thin playhead, chapter ticks as frame gaps, ring on focus",
+          ".nl-seek::-webkit-slider-runnable-track" in tv_player_css and tv_player_css.count("repeating-linear-gradient") >= 2
+          and "rgba(155, 93, 229, 0.35)" in tv_player_css and "#0b0e15" in tv_player_css and "width: 0.25rem" in tv_player_css
+          and ".nl-ticks i" in tv_player_css and ".nl-seek:focus::-webkit-slider-runnable-track { box-shadow: var(--nl-focus)" in tv_player_css)
+    check("the TV pages, the TV player and the subtitle sheet load the self-hosted DM Sans face (no Archivo in tv.css)",
+          "DMSans-Variable-latin.woff2" in tv_css and "DMSans-Variable-latin.woff2" in tv_player_css and "Archivo" not in tv_css
+          and "Archivo" not in tv_player_css and ".nls-tv.nls-host { font-family: \"DM Sans\"" in client.get("/static/nl/subtitles.css").text)
+    font = client.get("/static/fonts/DMSans-Variable-latin.woff2")
+    check("the DM Sans font file is served", font.status_code == 200 and font.content[:4] == b"wOF2", (font.status_code, font.content[:4]))
+    check("only the resume and 'How was it?' screens get the glows; help and errors stay see-through",
           ".tv #nl-resume, .tv #nl-react {" in css_player and ".tv .nl-screen {" not in css_player)
-    check("the TV pages and player load the self-hosted Archivo face",
-          "Archivo-Variable.ttf" in tv_css and "Archivo-Variable.ttf" in css_player
-          and client.get("/static/fonts/Archivo-Variable.ttf").status_code == 200)
+    tv_js = client.get("/static/nl/tv/tv.js").text
+    check("Continue watching stills carry a Series / Movie tag",
+          '"tv-kind"' in tv_js and '"Series"' in tv_js and '"Movie"' in tv_js and ".tv-kind" in tv_css and "text-transform: uppercase" in tv_css.split(".tv-kind")[1].split("}")[0])
+    check("posters start the meta line with the type, and the TV code wraps NL.metaLine (phone pages keep theirs)",
+          "function tvMetaLine" in tv_js and 'typeLabel(item), NL.metaLine(item)' in tv_js and '"Series" : "Movie"' in tv_js)
+    check("the focused poster shows a 'Details' chip with an inline SVG chevron (focus, .is-focused and laptop hover; CSS only)",
+          "detailsChip" in tv_js and "createElementNS" in tv_js and ".tv-card:focus .tv-details" in tv_css and ".tv-card.is-focused .tv-details" in tv_css
+          and "html.laptop .tv-card:hover .tv-details" in tv_css)
+    check("home says 'Press OK to open a title' once, beside the first poster row", "Press OK to open a title" in tv_js and "placeRowHint" in tv_js)
+    check("lights down: html class, opacity-only fade, once, under 0.8 s, skipped for reduced motion",
+          "nl-lights-down" in tv_js and "var LIGHTS_MS = 700" in tv_js and "lightsDone" in tv_js and "prefers-reduced-motion: reduce" in tv_js
+          and "reducedMotion()" in tv_js and "html.nl-lights-down" in tv_css and "transition: opacity 0.4s" in tv_css
+          and "prefers-reduced-motion: reduce" in tv_css.split("Lights down")[1])
+    check("the nav, hairlines and text use the soft palette (#eef0f6, #9aa3b8, 0.14 hairlines)",
+          all(c in tv_css for c in ("--text: #eef0f6", "--text-2: #9aa3b8", "rgba(238, 240, 246, 0.14)")))
     js_player = client.get("/static/nl/player.js").text
     check("player.js keeps the web controls in native v2 and hides them only for v1",
           "isNativeV2" in js_player and "native-v1" in js_player)

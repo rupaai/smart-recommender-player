@@ -49,6 +49,31 @@
 
   /* ----------------------------------------------------------------- cards */
 
+  // The type leads the meta line on the TV ("Movie · 2021 · 2 h 35 min", "Series · 2021 · 1 season"); the phone pages keep NL.metaLine as it is.
+  function typeLabel(item) { return item.media_type === "tv" ? "Series" : "Movie"; }
+  function tvMetaLine(item) {
+    return [typeLabel(item), NL.metaLine(item)].filter(Boolean).join(" · ");
+  }
+
+  // "Details ›" on the focused poster (CSS shows it on focus and on laptop hover): OK opens the title's page. The chevron is an inline SVG.
+  function detailsChip() {
+    var chip = el("span", "tv-details", "Details");
+    chip.setAttribute("aria-hidden", "true");
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2.5");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    var path = document.createElementNS(ns, "path");
+    path.setAttribute("d", "M9 5l7 7-7 7");
+    svg.appendChild(path);
+    chip.appendChild(svg);
+    return chip;
+  }
+
   function posterCard(item) {
     var li = el("li", "tv-item");
     var a = el("a", "tv-card");
@@ -62,10 +87,11 @@
       art.appendChild(el("span", "tv-badge", item.badge));
     }
     if (item.together && window.NLCouple) { art.appendChild(window.NLCouple.togetherBadge(true)); }   // M9a
+    art.appendChild(detailsChip());
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", item.title));
-    a.appendChild(el("div", "tv-meta", NL.metaLine(item)));
-    var label = item.title + (item.year ? " (" + item.year + ")" : "");
+    a.appendChild(el("div", "tv-meta", tvMetaLine(item)));
+    var label = typeLabel(item) + ": " + item.title + (item.year ? " (" + item.year + ")" : "");
     if (item.progress) { label += ", " + item.progress + " percent watched"; } else if (item.badge) { label += ", " + item.badge; }
     if (item.together) { label += ", watched together"; }
     a.setAttribute("aria-label", label);
@@ -81,10 +107,13 @@
     var art = el("div", "tv-art tv-still");
     NL.fillImage(art, [c.image, c.poster_url], c.title);
     art.appendChild(NL.progressBar(c.progress));
+    var kind = c.kind === "episode" ? "Series" : "Movie";
+    art.appendChild(el("span", "tv-kind", kind));
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", c.title));
-    a.appendChild(el("div", "tv-meta", c.subtitle || ""));
-    a.setAttribute("aria-label", "Continue " + c.title + (c.subtitle ? ", " + c.subtitle : "") + ", " + c.progress + " percent watched");
+    // Series already say "S1 · E2 · Name"; a movie says "Movie · 2016" so the line never starts with a bare year.
+    a.appendChild(el("div", "tv-meta", c.kind === "episode" ? (c.subtitle || "") : [kind, c.subtitle].filter(Boolean).join(" · ")));
+    a.setAttribute("aria-label", "Continue " + kind + ": " + c.title + (c.subtitle ? ", " + c.subtitle : "") + ", " + c.progress + " percent watched");
     li.appendChild(a);
     return li;
   }
@@ -107,6 +136,21 @@
   function emptyRow(sectionId, listId) {
     document.getElementById(listId).textContent = "";
     document.getElementById(sectionId).hidden = true;
+  }
+
+  // One quiet line on the home page, beside the first poster row: OK on a poster opens its page.
+  function placeRowHint() {
+    Array.prototype.forEach.call(document.querySelectorAll(".tv-row-hint"), function (n) { n.remove(); });
+    var ids = ["tv-picks", "tv-recent-added", "tv-recent-watched", "tv-movies", "tv-shows"];
+    for (var i = 0; i < ids.length; i++) {
+      var section = document.getElementById(ids[i]);
+      if (section && !section.hidden) {
+        var hint = el("span", "tv-row-hint", "Press OK to open a title");
+        hint.setAttribute("aria-hidden", "true");
+        section.querySelector("h2").appendChild(hint);
+        return;
+      }
+    }
   }
 
   function initHome() {
@@ -135,6 +179,7 @@
       else if (!movieRow) { note.textContent = "You’ve watched every movie on the shelf."; }
       else if (!showRow) { note.textContent = "You’ve watched every show on the shelf."; }
       else { note.textContent = ""; }
+      placeRowHint();
       return any;
     }
 
@@ -164,6 +209,7 @@
         document.getElementById("tv-filters").hidden = false;
       }
       any = fillLibrary(r[1], r[2], unwatchedOn, data) || any;
+      placeRowHint();
       setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
       window.NLFocus.start();
     }).catch(function () {
@@ -174,10 +220,42 @@
 
   /* ----------------------------------------------------------------- title */
 
-  function button(text, href, primary) {
+  /* Lights down: pressing Play fades the glows and the page to dark (opacity only, 0.4 s, once), leaves only the title,
+   * small and dim, and goes to the player after 0.7 s. Never more than 0.8 s; with reduced motion it goes straight away. */
+  var LIGHTS_MS = 700;
+  var lightsDone = false;
+  function reducedMotion() {
+    try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (e) { return false; }
+  }
+  function lightsDown(title, url) {
+    var cover = el("div", "tv-lights");
+    cover.setAttribute("aria-hidden", "true");
+    cover.appendChild(el("span", null, title || ""));
+    body.appendChild(cover);
+    void cover.offsetWidth;        // paint the start state, so the fade has something to fade from
+    document.documentElement.classList.add("nl-lights-down");
+    // Coming back (Back from the player, or the page restored from cache): the lights are on again.
+    window.addEventListener("pageshow", function (ev) {
+      if (!ev.persisted) { return; }
+      lightsDone = false;
+      document.documentElement.classList.remove("nl-lights-down");
+      if (cover.parentNode) { cover.parentNode.removeChild(cover); }
+    });
+    window.setTimeout(function () { window.location.href = url; }, LIGHTS_MS);
+  }
+  function withLightsDown(a, title) {
+    a.addEventListener("click", function (ev) {
+      if (ev.defaultPrevented || lightsDone || reducedMotion() || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) { return; }
+      ev.preventDefault();
+      lightsDone = true;
+      lightsDown(title, a.href);
+    });
+  }
+  function button(text, href, primary, lightsTitle) {
     var a = el("a", "tv-btn" + (primary ? " is-primary" : ""), text);
     a.href = tvHref(href);
     a.setAttribute("data-nl-focus", "");
+    if (lightsTitle) { withLightsDown(a, lightsTitle); }
     return a;
   }
 
@@ -246,13 +324,13 @@
     if (t.media_type === "tv") {
       actions.appendChild(button("Episodes", t.show_href, true));
       if (t.seasons && t.seasons.length) {
-        actions.appendChild(button("Start from S" + t.seasons[0].number + " · E1", t.play_href, false));
+        actions.appendChild(button("Start from S" + t.seasons[0].number + " · E1", t.play_href, false, t.title));
       }
     } else if (t.can_resume) {
-      actions.appendChild(button("Resume from " + NL.fmtClock(t.resume_seconds), t.resume_href, true));
-      actions.appendChild(button("Start over", t.restart_href, false));
+      actions.appendChild(button("Resume from " + NL.fmtClock(t.resume_seconds), t.resume_href, true, t.title));
+      actions.appendChild(button("Start over", t.restart_href, false, t.title));
     } else {
-      actions.appendChild(button(t.played ? "Watch again" : "Play", t.play_href, true));
+      actions.appendChild(button(t.played ? "Watch again" : "Play", t.play_href, true, t.title));
     }
     var subNote = el("p", "tv-meta");
     subNote.setAttribute("role", "status");
@@ -525,7 +603,7 @@
 
     var actions = el("div", "tv-actions");
     actions.setAttribute("data-nl-row", "actions");
-    if (s.next_up) { actions.appendChild(button(s.next_up.text, s.next_up.href, true)); }
+    if (s.next_up) { actions.appendChild(button(s.next_up.text, s.next_up.href, true, s.title)); }
     actions.appendChild(autoplaySwitch());
     var pact = window.NLCouple ? pactSwitch() : null;
     if (pact) { actions.appendChild(pact); }
@@ -607,6 +685,7 @@
     var art = el("div", "tv-art tv-poster");
     NL.fillImage(art, [r.poster_url], r.title);
     art.appendChild(el("span", "tv-badge" + (ready ? "" : " is-away"), r.label));
+    if (ready) { art.appendChild(detailsChip()); }
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", r.title));
     var sub = r.kind === "episode" ? r.subtitle : [r.kind === "show" ? "Show" : "Movie", r.year].filter(Boolean).join(" · ");
@@ -781,11 +860,12 @@
     a.setAttribute("data-nl-focus", "");
     var art = el("div", "tv-art tv-poster");
     NL.fillImage(art, [item.poster_url, item.image_fallback], item.title);
+    art.appendChild(detailsChip());
     a.appendChild(art);
     a.appendChild(el("div", "tv-name", item.title));
-    a.appendChild(el("div", "tv-meta", NL.metaLine(item)));
+    a.appendChild(el("div", "tv-meta", tvMetaLine(item)));
     a.appendChild(el("p", "tv-reason", item.reason || ""));
-    a.setAttribute("aria-label", item.title + (item.year ? " (" + item.year + ")" : "") + ". " + (item.reason || ""));
+    a.setAttribute("aria-label", typeLabel(item) + ": " + item.title + (item.year ? " (" + item.year + ")" : "") + ". " + (item.reason || ""));
     li.appendChild(a);
     return li;
   }
@@ -816,6 +896,7 @@
       }
       section.hidden = !items.length && !value;
       list.hidden = !items.length;
+      placeRowHint();
     }
 
     function load(refocus) {
@@ -857,7 +938,7 @@
       var li = el("li", "tv-wl-item");
       var info = el("div", "tv-wl-info");
       info.appendChild(el("h3", "tv-wl-title", c.title));
-      info.appendChild(el("p", "tv-meta", [NL.metaLine({ year: c.year, runtime: c.runtime, media_type: c.media_type }), fact(c)].filter(Boolean).join(" · ")));
+      info.appendChild(el("p", "tv-meta", [tvMetaLine({ year: c.year, runtime: c.runtime, media_type: c.media_type }), fact(c)].filter(Boolean).join(" · ")));
       li.appendChild(info);
       var acts = el("div", "tv-wl-actions");
       acts.setAttribute("data-nl-row", "wl-" + c.id);

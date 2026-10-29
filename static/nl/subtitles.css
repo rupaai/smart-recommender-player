@@ -45,12 +45,12 @@
 .nls-host :focus { outline: none; }
 .nls-host :focus-visible, .nls-host .nls-row:focus, .nls-host .nls-btn:focus { outline: 2px solid #ff6a2b; outline-offset: 0; }
 
-/* ---- TV: a sheet on the right, 1920x1080 design size, text at least 1.5rem. Focus = white fill with an aurora-green ring,
- * no glow (it bled over the neighbouring rows). */
-.nls-tv.nls-host { justify-content: flex-end; align-items: stretch; padding: 0;
+/* ---- TV: a sheet on the right, 1920x1080 design size, text at least 1.5rem. Soft aurora look: focus = a 2 px soft-cyan ring on a dark fill,
+ * a small shadow only (nothing bleeds over the neighbouring rows). */
+.nls-tv.nls-host { font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; justify-content: flex-end; align-items: stretch; padding: 0;
   background: linear-gradient(90deg, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.55) 60%, rgba(0, 0, 0, 0.75)); }
 .nls-tv .nls-panel { width: 56rem; max-width: 100%; max-height: none; height: 100%; gap: 1.5rem; padding: 4rem 3.5rem 3rem;
-  border: 0; border-left: 0.1rem solid rgba(255, 255, 255, 0.12); border-radius: 0; background: rgba(9, 14, 26, 0.97); box-shadow: -2rem 0 6rem rgba(0, 0, 0, 0.5); }
+  border: 0; border-left: 0.0625rem solid rgba(238, 240, 246, 0.14); border-radius: 0; background: rgba(12, 18, 32, 0.98); box-shadow: -2rem 0 6rem rgba(0, 0, 0, 0.5); }
 .nls-tv .nls-head { flex-direction: column; gap: 1.5rem; }
 .nls-tv .nls-title { font-size: 2.75rem; }
 .nls-tv .nls-sub { margin-top: 0.5rem; font-size: 1.5rem; }
@@ -63,14 +63,13 @@
 .nls-tv .nls-name { font-size: 1.6rem; }
 .nls-tv .nls-meta { font-size: 1.5rem; }
 .nls-tv .nls-badge { font-size: 1.5rem; padding: 0 1rem; }
-.nls-tv .nls-row.is-exact { box-shadow: none; background: rgba(70, 240, 166, 0.08); }
+.nls-tv .nls-row.is-exact { box-shadow: none; background: rgba(238, 240, 246, 0.08); }
 .nls-tv .nls-foot { font-size: 1.5rem; }
 .nls-tv .nls-lang-row { min-height: 4.5rem; }
-.nls-tv.nls-host .nls-row:focus, .nls-tv.nls-host .nls-btn:focus { outline: none; background: #eef6f4; color: #04150e; border-color: #eef6f4;
-  box-shadow: inset 0 0 0 0.25rem #46f0a6; }
+.nls-tv.nls-host .nls-row:focus, .nls-tv.nls-host .nls-btn:focus { outline: none; background: #141c2f; color: #eef0f6; border-color: transparent;
+  box-shadow: inset 0 0 0 0.25rem #8fd3ff; }
 .nls-tv.nls-host .nls-row:focus::before, .nls-tv.nls-host .nls-row:focus + .nls-row::before { border-top-color: transparent; }
-.nls-tv.nls-host .nls-row:focus .nls-meta, .nls-tv.nls-host .nls-btn:focus .nls-btn-label { color: #3d4a57; }
-.nls-tv.nls-host .nls-btn:focus { box-shadow: 0 0 0 0.25rem #46f0a6; }
+.nls-tv.nls-host .nls-btn:focus { box-shadow: 0 0 0 0.25rem #8fd3ff, 0 1rem 2rem rgba(0, 0, 0, 0.45); }
 
 @media (max-width: 640px) {
   .nls-host:not(.nls-tv) { padding: 0; align-items: flex-end; }
