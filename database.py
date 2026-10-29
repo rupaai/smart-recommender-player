@@ -151,6 +151,7 @@ class DatabaseManager:
             self._migrate_v20_nl_settings(cursor)
             self._migrate_v21_download_requests(cursor)
             self._migrate_v22_wishmatch_profiles(cursor)
+            self._migrate_v23_nl_track_memory(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -984,6 +985,67 @@ class DatabaseManager:
         if version < 22:
             cursor.execute("PRAGMA user_version = 22;")
             print("[Database] Migration v22 applied: wishmatch_profiles added.")
+
+    def _migrate_v23_nl_track_memory(self, cursor: sqlite3.Cursor) -> None:
+        """The audio and subtitle track each viewer last chose for a movie or show (services/nl_track_memory.py).
+        One row per viewer key and title; `audio_json` / `subtitle_json` hold the chosen track (or {"off": true}),
+        NULL = never chosen. Additive only."""
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS nl_track_memory (
+                viewer_key TEXT NOT NULL,
+                media_item_id INTEGER NOT NULL,
+                audio_json TEXT,
+                subtitle_json TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (viewer_key, media_item_id)
+            );
+            """
+        )
+        if version < 23:
+            cursor.execute("PRAGMA user_version = 23;")
+            print("[Database] Migration v23 applied: nl_track_memory added.")
+
+    def get_track_memory(self, viewer_key: str, media_item_id: int) -> Dict[str, Any]:
+        """{audio, subtitle} remembered for a title: this viewer's own choice, else the latest one anyone made for it
+        (so a film picked as "Both of us" keeps its tracks when one person watches it again). Missing axes are None."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT viewer_key, audio_json, subtitle_json FROM nl_track_memory WHERE media_item_id = ? "
+                "ORDER BY viewer_key = ? DESC, updated_at DESC;",
+                (media_item_id, viewer_key),
+            ).fetchall()
+        out: Dict[str, Any] = {"audio": None, "subtitle": None}
+        for row in rows:
+            for axis in ("audio", "subtitle"):
+                if out[axis] is None and row[f"{axis}_json"]:
+                    try:
+                        value = json.loads(row[f"{axis}_json"])
+                    except ValueError:
+                        continue
+                    if isinstance(value, dict):
+                        out[axis] = value
+        return out
+
+    def set_track_memory(self, viewer_key: str, media_item_id: int, audio: Optional[Dict[str, Any]] = None,
+                         subtitle: Optional[Dict[str, Any]] = None) -> None:
+        """Saves the given (already cleaned) choices; an axis left as None keeps what was there."""
+        def dump(v: Optional[Dict[str, Any]]) -> Optional[str]:
+            return json.dumps(v, separators=(",", ":")) if v is not None else None
+
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO nl_track_memory (viewer_key, media_item_id, audio_json, subtitle_json, updated_at)
+                VALUES (?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                ON CONFLICT(viewer_key, media_item_id) DO UPDATE SET
+                    audio_json = COALESCE(excluded.audio_json, audio_json),
+                    subtitle_json = COALESCE(excluded.subtitle_json, subtitle_json),
+                    updated_at = excluded.updated_at;
+                """,
+                (viewer_key, media_item_id, dump(audio), dump(subtitle)),
+            )
 
     def get_wishmatch_profile(self, person_id: int) -> Optional[Dict[str, Any]]:
         """The written taste profile of a person, or None. likes / dislikes come back as lists."""

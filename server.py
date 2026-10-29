@@ -72,6 +72,7 @@ from services import nl_health
 from services import nl_reactions
 from services import nl_settings
 from services import nl_together
+from services import nl_track_memory
 from services.media_cleanup import FIRST_RUN_DELAY, RUN_EVERY, MediaCleanup
 from services.nl_choose import NLChoose, clean_tz
 from services.nl_people import (
@@ -1149,6 +1150,8 @@ async def _nl_play(
         if chosen is None:
             raise HTTPException(status_code=404, detail="That episode isn't in the library.")
     item = {**item, "sources": [chosen]}
+    # The tracks this viewer (or anyone) last chose for this movie or show come back first.
+    prefer = {**prefer, "memory": db.get_track_memory(viewer.key, item_id)}
     try:
         profile = profile_for(client, caps)
         info = await asyncio.to_thread(
@@ -1216,7 +1219,9 @@ async def nl_cast_play(
 
 
 def _stream_for_viewer(item, audio, subtitle, start, profile, prefer, max_kbps=None, device="This browser", allow_conversion=False, copy_video_only=False):
-    if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on") or prefer.get("subtitle_lang")):
+    memory = (prefer or {}).get("memory") or {}
+    if prefer and not (prefer.get("audio_lang") or prefer.get("subtitles_on") or prefer.get("subtitle_lang")
+                       or memory.get("audio") or memory.get("subtitle")):
         prefer = None
     if prefer:
         return jellyfin_playback.stream_for(item, audio, subtitle, start, profile, prefer=prefer, max_kbps=max_kbps, device=device, allow_conversion=allow_conversion, copy_video_only=copy_video_only)
@@ -1292,6 +1297,36 @@ async def nl_subtitle_search(
     if not found["results"]:
         found["message"] = f"No subtitles found for {found['language_name']}."
     return found
+
+
+class NLTrackChoice(BaseModel):
+    source: Optional[int] = Field(None, ge=1, description="media_sources.id the tracks belong to (the episode)")
+    audio: Optional[Dict[str, Any]] = Field(None, description="the chosen audio track {index, language, label, ...}")
+    subtitle: Optional[Dict[str, Any]] = Field(None, description='the chosen subtitle track, or {"off": true}')
+
+
+@app.post("/api/nl/tracks/{item_id}")
+async def nl_remember_tracks(request: Request, item_id: int, req: NLTrackChoice) -> Dict[str, Any]:
+    """Remembers the audio and/or subtitle track the viewer just picked for this movie or show; the next
+    /api/nl/play of the title starts with them (services/nl_track_memory.py)."""
+    item = db.get_nl_title(item_id)
+    if not item or not item.get("sources"):
+        raise HTTPException(status_code=404, detail="Media file not found.")
+    source_id = req.source if req.source is not None else item["sources"][0]["id"]
+    if not any(s["id"] == source_id for s in item["sources"]):
+        raise HTTPException(status_code=404, detail="That episode isn't in the library.")
+    try:
+        audio = nl_track_memory.clean_choice(req.audio, source_id)
+        subtitle = nl_track_memory.clean_choice(req.subtitle, source_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if audio and audio.get("off"):
+        raise HTTPException(status_code=400, detail="Audio can't be switched off.")
+    if audio is None and subtitle is None:
+        raise HTTPException(status_code=400, detail="Send an audio or a subtitle choice.")
+    viewer = _nl_viewer_or_default(request)
+    await asyncio.to_thread(db.set_track_memory, viewer.key, item_id, audio, subtitle)
+    return {"success": True}
 
 
 class NLSubtitleDownload(BaseModel):
