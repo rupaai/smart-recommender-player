@@ -340,7 +340,7 @@ def run(tmp):
           and "--nl-action" in tv_player_css)
     check("the TV player's seek bar is a film strip: sprocket rows, played tint, thin playhead, chapter ticks as frame gaps, ring on focus",
           ".nl-seek::-webkit-slider-runnable-track" in tv_player_css and tv_player_css.count("repeating-linear-gradient") >= 2
-          and "rgba(155, 93, 229, 0.35)" in tv_player_css and "#0b0e15" in tv_player_css and "width: 0.25rem" in tv_player_css
+          and "rgba(155, 93, 229, 0.7)" in tv_player_css and "#0b0e15" in tv_player_css and "width: 0.25rem" in tv_player_css
           and ".nl-ticks i" in tv_player_css and ".nl-seek:focus::-webkit-slider-runnable-track { box-shadow: var(--nl-focus)" in tv_player_css)
     check("the TV pages, the TV player and the subtitle sheet load the self-hosted DM Sans face (no Archivo in tv.css)",
           "DMSans-Variable-latin.woff2" in tv_css and "DMSans-Variable-latin.woff2" in tv_player_css and "Archivo" not in tv_css
@@ -358,10 +358,27 @@ def run(tmp):
           "detailsChip" in tv_js and "createElementNS" in tv_js and ".tv-card:focus .tv-details" in tv_css and ".tv-card.is-focused .tv-details" in tv_css
           and "html.laptop .tv-card:hover .tv-details" in tv_css)
     check("home says 'Press OK to open a title' once, beside the first poster row", "Press OK to open a title" in tv_js and "placeRowHint" in tv_js)
-    check("lights down: html class, opacity-only fade, once, under 0.8 s, skipped for reduced motion",
-          "nl-lights-down" in tv_js and "var LIGHTS_MS = 700" in tv_js and "lightsDone" in tv_js and "prefers-reduced-motion: reduce" in tv_js
-          and "reducedMotion()" in tv_js and "html.nl-lights-down" in tv_css and "transition: opacity 0.4s" in tv_css
-          and "prefers-reduced-motion: reduce" in tv_css.split("Lights down")[1])
+    curtain_css = tv_css.split("---- Curtain")[1].split("---- M6")[0]
+    curtain_js = tv_js.split("Curtain: Play parts")[1].split("function button(")[0]
+    check("curtain: two dark halves and an aurora line, parting by transform transitions; big aurora-gradient title; no filters or keyframes",
+          all(c in curtain_css for c in (".tv-curtain-top", ".tv-curtain-bottom", ".tv-curtain-line", "translateY(-100%)", "translateY(100%)",
+                                         "transition: transform 1.4s ease-in-out", "linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec)", "box-shadow",
+                                         "font-size: 9rem", "font-weight: 700", "background-clip: text"))
+          and "position: fixed; inset: 0" in curtain_css and "filter" not in curtain_css and "@keyframes" not in curtain_css and "animation" not in curtain_css
+          and "nl-lights-down" not in (tv_js + tv_css))
+    check("curtain: once, 1.8 s in all (under 2.2 s), modifier clicks open normally, reduced motion goes straight away, pageshow only after it starts",
+          "var CURTAIN_MS = 1400" in curtain_js and "var CURTAIN_HOLD_MS = 400" in curtain_js and "curtainStarted" in curtain_js
+          and "reducedMotion()" in curtain_js and "prefers-reduced-motion: reduce" in curtain_js
+          and "ev.metaKey" in curtain_js and "ev.persisted" in curtain_js and curtain_js.index("function curtain(") < curtain_js.index('"pageshow"'))
+    css_seek = tv_player_css.split("Film-strip seek bar")[1].split(".tv .nl-menu {")[0]
+    check("seek bar is slim and steady: aurora layer is full width (not sized by --pct), no focus width change, one thumb width, track <= 1.5rem",
+          "var(--pct, 0%) 100%" not in css_seek and "100% 100%, 100% 100%" in css_seek
+          and "transparent var(--pct, 0%)" in css_seek
+          and ".nl-seek:focus::-webkit-slider-thumb" not in tv_player_css and "transform" not in css_seek and "transition" not in css_seek
+          and tv_player_css.count(".tv .nl-seek-wrap { --nl-thumb-d:") == 1 and ".tv .nl-seek-wrap { --nl-thumb-d: 0.25rem; }" in tv_player_css
+          and "::-webkit-slider-thumb { width: 0.25rem;" in css_seek
+          and "::-webkit-slider-runnable-track { height: 1.25rem;" in css_seek and ".tv .nl-seek { height: 2.5rem; }" in css_seek
+          and "min-width: 11em" in css_seek and "tabular-nums" in css_seek)
     check("the nav, hairlines and text use the soft palette (#eef0f6, #9aa3b8, 0.14 hairlines)",
           all(c in tv_css for c in ("--text: #eef0f6", "--text-2: #9aa3b8", "rgba(238, 240, 246, 0.14)")))
     js_player = client.get("/static/nl/player.js").text
