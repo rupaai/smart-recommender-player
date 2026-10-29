@@ -361,7 +361,7 @@ def test_static():
     html = read("templates/nl/player.html")
     check("player.js loads the extras once per episode and tolerates failure", "/api/nl/player-extras/" in js and "function loadExtras" in js and "optional" in js)
     check("player.js: thumbnails on hover and scrub, and on the TV when skipping",
-          "function showThumb" in js and 'seek.addEventListener("pointermove"' in js and "flashThumb(t, t / d)" in js and "remote && hasTrickplay()" in js)
+          "function showThumb" in js and 'seek.addEventListener("pointermove"' in js and "flashThumb(r.target, r.target / d)" in js and "remote && hasTrickplay()" in js)
     check("player.js: chapter ticks and the chapters menu", "function renderTicks" in js and "function openChaptersMenu" in js)
     check("player.js: skip intro, next episode, always-skip, auto skip once per segment",
           "function checkSegments" in js and "Skip intro" in html and "Next episode" in html and "S.autoSkipped[key]" in js and "/skip-intro" in js)

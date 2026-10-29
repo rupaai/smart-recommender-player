@@ -173,10 +173,50 @@
     return qs;
   }
 
+  // Quick skip presses group into one seek: each press moves a pending target, the seek fires once the presses stop.
+  // o: {position(), duration(), seek(t), setTimeout, clearTimeout, ms}. press() returns {target, total}.
+  function skipper(o) {
+    var target = null, start = 0, timer = null;
+    function flush() {
+      if (timer !== null) { o.clearTimeout(timer); timer = null; }
+      if (target === null) { return false; }
+      var t = target;
+      target = null;
+      o.seek(t);
+      return true;
+    }
+    function press(delta) {
+      var d = o.duration();
+      if (target === null) { start = o.position(); target = start; }
+      target = Math.max(0, d ? Math.min(target + delta, d - 0.1) : target + delta);
+      if (timer !== null) { o.clearTimeout(timer); }
+      timer = o.setTimeout(flush, o.ms);
+      return { target: target, total: Math.round(target - start) };
+    }
+    function cancel() {
+      if (timer !== null) { o.clearTimeout(timer); timer = null; }
+      target = null;
+    }
+    return { press: press, flush: flush, cancel: cancel, pending: function () { return target; } };
+  }
+
+  // The buffering spinner shows only if playback still waits after `ms`; a seek inside the buffer blips for a moment.
+  // o: {show(), hide(), setTimeout, clearTimeout, ms}.
+  function spinner(o) {
+    var timer = null;
+    function stop() { if (timer !== null) { o.clearTimeout(timer); timer = null; } }
+    return {
+      wait: function () { if (timer === null) { timer = o.setTimeout(function () { timer = null; o.show(); }, o.ms); } },
+      clear: function () { stop(); o.hide(); }
+    };
+  }
+
   var api = {
     BACK_AGAIN_MS: BACK_AGAIN_MS,
     backAction: backAction,
     endsAt: endsAt,
+    skipper: skipper,
+    spinner: spinner,
     inputMode: inputMode,
     playDeviceParams: playDeviceParams,
     pageRoot: pageRoot,
