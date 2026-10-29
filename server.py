@@ -1172,6 +1172,12 @@ async def _nl_play(
         if e.can_convert:
             return JSONResponse(status_code=415, content={"detail": str(e), "can_convert": True})
         raise HTTPException(status_code=415, detail=str(e))
+    memory = prefer["memory"]
+    if memory.get("audio") or memory.get("subtitle"):
+        # Remembered tracks (nl_track_memory): what was saved, and what this play starts with.
+        print(f"[NL] play {item_id} ({client or 'browser'}, {viewer.key}) remembered audio={_track_note(memory.get('audio'))} "
+              f"subtitle={_track_note(memory.get('subtitle'))} -> audio {info.get('audio_index')}"
+              f" (order {info.get('audio_order')}), subtitle {info.get('default_subtitle_index')}", flush=True)
     info["quality"] = {**(info.get("quality") or {}), "default_kbps": prefs.quality_kbps, "options": nl_settings.quality_options()}
     info["media_item_id"] = item_id
     info["media_type"] = item.get("media_type") or "movie"
@@ -1326,7 +1332,15 @@ async def nl_remember_tracks(request: Request, item_id: int, req: NLTrackChoice)
         raise HTTPException(status_code=400, detail="Send an audio or a subtitle choice.")
     viewer = _nl_viewer_or_default(request)
     await asyncio.to_thread(db.set_track_memory, viewer.key, item_id, audio, subtitle)
+    print(f"[NL] tracks saved for {item_id} ({viewer.key}): audio={_track_note(audio)} subtitle={_track_note(subtitle)}", flush=True)
     return {"success": True}
+
+
+def _track_note(choice: Optional[Dict[str, Any]]) -> str:
+    """A saved track in a log line: "off", "-" (not chosen) or index/language."""
+    if not choice:
+        return "-"
+    return "off" if choice.get("off") else f"{choice.get('index')}/{choice.get('language') or '?'}"
 
 
 class NLSubtitleDownload(BaseModel):
