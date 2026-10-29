@@ -190,5 +190,68 @@ const html = fs.readFileSync(path.join(__dirname, "..", "..", "templates", "nl",
 check("player.html: the ends-at line sits above the seek bar", html.indexOf('id="nl-ends"') > 0
   && html.indexOf('id="nl-ends"') < html.indexOf('class="nl-seek-row"'));
 
+// ---- quick skips group into one seek; the buffering spinner waits before it shows
+function fakeClock() {
+  const c = { now: 0, jobs: [], next: 1 };
+  c.setTimeout = (f, ms) => { const id = c.next++; c.jobs.push({ id, at: c.now + ms, f }); return id; };
+  c.clearTimeout = (id) => { c.jobs = c.jobs.filter((j) => j.id !== id); };
+  c.advance = (ms) => {
+    const end = c.now + ms;
+    for (;;) {
+      const due = c.jobs.filter((j) => j.at <= end).sort((a, b) => a.at - b.at)[0];
+      if (!due) { break; }
+      c.jobs = c.jobs.filter((j) => j !== due);
+      c.now = due.at;
+      due.f();
+    }
+    c.now = end;
+  };
+  return c;
+}
+{
+  const clk = fakeClock();
+  const seeks = [];
+  let pos = 100;   // the native player's currentTime lags: it never moves in this test
+  const sk = X.skipper({ position: () => pos, duration: () => 600, seek: (t) => seeks.push(t), setTimeout: clk.setTimeout, clearTimeout: clk.clearTimeout, ms: 350 });
+  let r;
+  for (let i = 0; i < 10; i++) { r = sk.press(5); clk.advance(100); }
+  check("ten quick skips of 5 s: no seek while presses keep coming", seeks.length === 0, seeks);
+  check("the pending target is summed from the first position, not the stale one", sk.pending() === 150 && r.target === 150 && r.total === 50, r);
+  clk.advance(350);
+  check("then exactly one seek with the summed target", seeks.length === 1 && seeks[0] === 150, seeks);
+  check("the pending target clears after the seek", sk.pending() === null);
+  sk.press(-5); sk.press(-5);
+  sk.flush();
+  check("flush seeks at once and leaves nothing for the timer", seeks.length === 2 && seeks[1] === 90 && clk.jobs.length === 0, seeks);
+  sk.press(5); sk.cancel(); clk.advance(1000);
+  check("cancel drops the pending skip", seeks.length === 2 && sk.pending() === null);
+  pos = 595;
+  r = sk.press(30);
+  check("a skip is clamped to the end", r.target === 599.9, r);
+  pos = 3;
+  sk.flush();
+  r = sk.press(-30);
+  check("a skip is clamped to the start", r.target === 0, r);
+}
+{
+  const clk = fakeClock();
+  const log = [];
+  const sp = X.spinner({ show: () => log.push("show"), hide: () => log.push("hide"), setTimeout: clk.setTimeout, clearTimeout: clk.clearTimeout, ms: 700 });
+  sp.wait(); clk.advance(699);
+  check("spinner is not shown before 700 ms", log.length === 0, log);
+  sp.clear(); clk.advance(2000);
+  check("playing within 700 ms: the spinner never shows", log.join() === "hide", log);
+  log.length = 0;
+  sp.wait(); clk.advance(300); sp.wait(); clk.advance(399);
+  check("a second waiting does not restart the delay", log.length === 0, log);
+  clk.advance(1);
+  check("still waiting after 700 ms: the spinner shows", log.join() === "show", log);
+  sp.clear();
+  check("clear hides it again", log.join() === "show,hide", log);
+}
+const pj = fs.readFileSync(path.join(root, "player.js"), "utf8");
+check("player.js: skipBy goes through the grouped skipper and the spinner is delayed",
+  /var r = skips\.press\(sign \* S\.skip\)/.test(pj) && !/player\.on\("waiting", function \(\) \{ \$\("nl-buffering"\)\.hidden = false/.test(pj) && /player\.on\("waiting", function \(\) \{ bufferSpinner\.wait\(\)/.test(pj));
+
 if (failed) { console.log(failed + " FAILED"); process.exit(1); }
 console.log("all player extras checks passed");

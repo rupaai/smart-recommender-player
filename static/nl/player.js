@@ -8,6 +8,8 @@
   var TV_HIDE_AFTER_MS = 5000;
   var PROGRESS_EVERY_MS = 10000;
   var LONG_PRESS_MS = 500;
+  var SKIP_GROUP_MS = 350;      // skip presses closer together than this make one seek
+  var SPINNER_AFTER_MS = 700;   // the buffering spinner waits this long before it shows
   var UNREACHABLE = "Can’t reach the movie server. Is mars on?";
   var CONVERT_FAILED = "The server couldn’t convert this video.";
   var CONVERT_DETAIL = "Jellyfin failed to transcode it. Check Jellyfin’s FFmpeg log.";
@@ -328,6 +330,7 @@
     $("nl-center").style.display = playing ? "none" : "";
   }
   function togglePlay() {
+    skips.flush();
     if (player.paused) {
       var d = duration();
       if (d && player.currentTime >= d - 0.5) { player.seek(0); }
@@ -337,19 +340,27 @@
       player.pause();
     }
   }
+  // Quick presses group into one seek (SKIP_GROUP_MS after the last one): the native player flushes its decoders on every seek.
+  var skips = X.skipper({
+    position: function () { return player.currentTime; },
+    duration: duration,
+    seek: function (t) { player.seek(t); renderProgress(); },
+    setTimeout: function (f, ms) { return setTimeout(f, ms); },
+    clearTimeout: function (t) { clearTimeout(t); },
+    ms: SKIP_GROUP_MS
+  });
   function skipBy(sign) {
     var d = duration();
-    var t = player.currentTime + sign * S.skip;
-    t = Math.max(0, d ? Math.min(t, d - 0.1) : t);
-    player.seek(t);
-    toast((sign < 0 ? "−" : "+") + S.skip + "s");
+    var r = skips.press(sign * S.skip);
+    toast((r.total < 0 ? "−" : "+") + Math.abs(r.total) + "s");
     renderProgress();
-    if (remote && hasTrickplay() && d) { flashThumb(t, t / d); }   // P21: the remote sees where it lands
+    if (remote && hasTrickplay() && d) { flashThumb(r.target, r.target / d); }   // P21: the remote sees where it lands
   }
 
   function renderProgress() {
     var d = duration();
-    var cur = S.scrubbing ? Number($("nl-seek").value) : player.currentTime;
+    var pend = skips.pending();
+    var cur = S.scrubbing ? Number($("nl-seek").value) : (pend !== null ? pend : player.currentTime);
     var seek = $("nl-seek");
     seek.max = d || 0;
     if (!S.scrubbing) { seek.value = cur; }
@@ -1317,6 +1328,7 @@
   });
 
   player.on("error", function (e) {
+    bufferSpinner.clear();
     if (S.switching || !S.stream) { return; }
     if (e && e.server) { // Jellyfin's transcode failed: reloading would fail the same way
       showError(CONVERT_FAILED, CONVERT_DETAIL);
@@ -1339,19 +1351,28 @@
   function showControlsUnlessQuiet() { if (Date.now() >= S.quietUntil) { showControls(); } }
   player.on("play", function () { renderPlayState(); showControlsUnlessQuiet(); });
   player.on("pause", function () {
+    bufferSpinner.clear();
     renderPlayState();
     showControls();
     if (S.started && !S.stopped && !video.ended) { report("progress"); }
   });
-  player.on("playing", function () { renderPlayState(); onPlaying(); showControlsUnlessQuiet(); });
-  player.on("waiting", function () { $("nl-buffering").hidden = false; });
+  player.on("playing", function () { bufferSpinner.clear(); renderPlayState(); onPlaying(); showControlsUnlessQuiet(); });
+  var bufferSpinner = X.spinner({
+    show: function () { $("nl-buffering").hidden = false; },
+    hide: function () { $("nl-buffering").hidden = true; },
+    setTimeout: function (f, ms) { return setTimeout(f, ms); },
+    clearTimeout: function (t) { clearTimeout(t); },
+    ms: SPINNER_AFTER_MS
+  });
+  player.on("waiting", function () { bufferSpinner.wait(); });
   player.on("loadedmetadata", function () { renderProgress(); renderTicks(); });
   player.on("timeupdate", function () { renderProgress(); checkNext(); checkSegments(); });
   player.on("seeked", function () {
-    $("nl-buffering").hidden = true;
+    bufferSpinner.clear();
     if (S.started && !S.stopped) { report("progress"); }
   });
   player.on("ended", function () {
+    bufferSpinner.clear();
     renderPlayState();
     showControls();
     S.ended = true;
@@ -1416,6 +1437,7 @@
   player.on("volumechange", renderVolume);
 
   function leave(completed) {
+    skips.cancel();
     stopReporting(true);
     if (completed) { watchSession.finish(); } else { watchSession.cancel(); }
     if (casting()) { castKit.cast.end(true); }   // leaving the player stops the TV too (no remote page to control it)
@@ -1491,6 +1513,7 @@
 
   var seek = $("nl-seek");
   seek.addEventListener("input", function () {
+    skips.cancel();   // the bar was dragged: the dragged position wins
     S.scrubbing = true;
     renderProgress();
     var d = duration();
@@ -1645,6 +1668,7 @@
     if (!dir && !back && !ok) { return false; }
     e.preventDefault();
     if (e.repeat && (back || ok)) { return true; }
+    if (back || ok) { skips.flush(); }   // a pending skip lands before OK / Back acts
 
     // Back: close what is open; then hide the controls; then "press Back again" before leaving the film.
     if (back) {
