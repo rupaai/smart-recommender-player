@@ -83,6 +83,16 @@
     return "arm";
   }
 
+  /* ---- A picture subtitle (VobSub, PGS) in its own file next to the film: Jellyfin has to burn it into a converted
+   * copy. The TV and the laptop ask before leaving the original; a burn-in that failed once is not tried again. ---- */
+  var BURN_START_MS = 45000;   // a burned-in copy that has not started by then has failed (Jellyfin's ffmpeg gave up)
+  function pictureSubtitleStep(o) {
+    o = o || {};
+    if (o.failed) { return "failed"; }
+    if (!o.converted && !o.casting && (o.device === "tv" || o.device === "laptop")) { return "ask"; }
+    return "burn";
+  }
+
   /* ---- TV info panel: the app's stats() numbers in plain words ---- */
   function num(v) { return typeof v === "number" && isFinite(v) ? v : null; }
   function infoLines(st) {
@@ -214,6 +224,8 @@
   var api = {
     BACK_AGAIN_MS: BACK_AGAIN_MS,
     backAction: backAction,
+    BURN_START_MS: BURN_START_MS,
+    pictureSubtitleStep: pictureSubtitleStep,
     endsAt: endsAt,
     skipper: skipper,
     spinner: spinner,

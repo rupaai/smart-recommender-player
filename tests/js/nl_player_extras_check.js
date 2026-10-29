@@ -170,6 +170,16 @@ for (const step of ["hide", "arm", "leave"]) {
 }
 check("back sequence: three presses to leave from a visible bar, two from the picture", leftAt === now + 1600);
 
+// Picture subtitle files next to the film (5 Centimeters per Second's VobSub .idx/.sub): never "loading" forever.
+const P = X.pictureSubtitleStep;
+check("picture sub: the TV on the original file asks (the server never burns in there)", P({ device: "tv" }) === "ask");
+check("picture sub: the laptop on the original asks", P({ device: "laptop" }) === "ask");
+check("picture sub: a converted copy burns it in", P({ device: "tv", converted: true }) === "burn");
+check("picture sub: the phone/browser burns it in as before", P({ device: "browser" }) === "burn");
+check("picture sub: casting burns it in", P({ device: "laptop", casting: true }) === "burn");
+check("picture sub: one that failed is not tried again", P({ device: "tv", converted: true, failed: true }) === "failed");
+check("picture sub: a burn-in gets 45 s to start", X.BURN_START_MS === 45000);
+
 // player.js wiring: it is too big to run in a vm (it needs the page, hls.js and the Jellyfin API).
 const playerJs = fs.readFileSync(path.join(__dirname, "..", "..", "static", "nl", "player.js"), "utf8");
 const tvKeyBody = playerJs.slice(playerJs.indexOf("function tvKey(e)"), playerJs.indexOf("// The skip / next-episode button"));
@@ -182,6 +192,22 @@ check("player.js: hide clears the controls, arm shows the hint for the same 3 s"
 check("player.js: any other key cancels the pending leave", tvKeyBody.indexOf('if (S.backArmedAt) { S.backArmedAt = 0; $("nl-toast").classList.remove("on"); }') >= 0);
 check("player.js: the ends-at line is drawn with the progress", playerJs.indexOf("X.endsAt(Date.now(), d, cur, S.speed)") >= 0
   && playerJs.indexOf('"Ends at " + new Date(ends)') >= 0);
+const chooseBody = playerJs.slice(playerJs.indexOf("function chooseSubtitle(index)"), playerJs.indexOf("function cycleSubtitle()"));
+check("player.js: the picture subtitle question offers Find a text subtitle",
+  chooseBody.indexOf('{ kind: "action", label: "Find a text subtitle", onSelect: openFinder }') >= 0);
+check("player.js: a failed picture subtitle only says so", /pictureStep\(index\) === "failed"\) \{\s*toast\(/.test(chooseBody));
+check("player.js: every new stream watches its burn-in", playerJs.indexOf("S.burnStarted = false;\n    watchBurnIn(stream, startAt);") >= 0);
+check("player.js: an error before a burned-in copy starts drops the subtitle, not the film",
+  playerJs.indexOf("if (S.burnIndex >= 0 && !S.burnStarted) { burnFailed(); return; }") >= 0
+  && playerJs.indexOf("if (S.burnIndex >= 0 && !S.burnStarted)") < playerJs.indexOf("showError(CONVERT_FAILED, CONVERT_DETAIL)"));
+const burnBody = playerJs.slice(playerJs.indexOf("function burnFailed()"), playerJs.indexOf("function watchBurnIn("));
+check("player.js: burnFailed reloads without it from where it was, and forgets it",
+  burnBody.indexOf("reloadStream({ subtitle: -1, start: S.burnFrom })") >= 0 && burnBody.indexOf('rememberTrack("subtitle", null)') >= 0
+  && burnBody.indexOf("S.burnFailed[S.burnIndex] = true") >= 0);
+check("player.js: reloadStream takes a start position", playerJs.indexOf('typeof change.start === "number" ? change.start') >= 0);
+check("player.js: playing or the first picture ends the watch",
+  /function onPlaying\(\) \{[\s\S]{0,80}S\.burnStarted = true;/.test(playerJs)
+  && /"loadedmetadata", function \(\) \{\s*S\.burnStarted = true;/.test(playerJs));
 const subMenu = playerJs.slice(playerJs.indexOf("function openSubtitleMenu()"), playerJs.indexOf('openMenu("Subtitles", items)'));
 check("player.js: Subtitle settings is the first item of the subtitle menu, Find stays last",
   subMenu.indexOf('items.unshift({ kind: "action", top: true, label: "Subtitle settings…"') >= 0

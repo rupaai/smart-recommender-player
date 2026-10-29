@@ -26,8 +26,9 @@ const js = fs.readFileSync(path.join(root, "player.js"), "utf8");
 check("fetchPlay builds the device part with playDeviceParams", /NLPlayerExtras\.playDeviceParams\(\{[\s\S]{0,200}isLaptop: isLaptop[\s\S]{0,120}allowConversion: S\.allowConversion/.test(js));
 check("no other place adds allow_conversion", (js.match(/allow_conversion/g) || []).length <= 1 && js.indexOf('isNative && S.allowConversion') < 0);
 check("the convert button shows for the TV and the laptop", js.indexOf('$("nl-convert").hidden = !(canConvert && (isNative || isLaptop))') >= 0);
-check("a picture subtitle on the laptop asks first, then sets allowConversion and switches",
-  /track\.kind === "image" && isLaptop && !S\.allowConversion && !casting\(\)[\s\S]{0,700}Play a converted copy[\s\S]{0,200}S\.allowConversion = true;\s*chooseSubtitle\(index\)[\s\S]{0,200}Keep the original/.test(js));
+check("a picture subtitle on the laptop and the TV asks first, then sets allowConversion and switches",
+  /device: isNative \? "tv" : \(isLaptop \? "laptop" : "browser"\)/.test(js) &&
+  /track\.kind === "image" && pictureStep\(index\) === "ask"\)[\s\S]{0,900}Play a converted copy[\s\S]{0,200}S\.allowConversion = true;\s*chooseSubtitle\(index\)[\s\S]{0,200}Keep the original/.test(js));
 check("the question carries the plain sentence", js.indexOf("This subtitle is a picture. Showing it needs a converted copy (lower quality).") >= 0);
 check("the next episode forgets the agreement (as the TV does)", /opts\.fromNext\) \{ S\.allowConversion = false;/.test(js));
 check("the old burn-in branch is still there for the phone", /track\.kind === "image"\) \{\s*S\.textIndex = null;[\s\S]{0,200}reloadStream\(\{ subtitle: index \}\)/.test(js));

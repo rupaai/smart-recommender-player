@@ -85,6 +85,10 @@
     skip: 10,
     audioIndex: null,
     burnIndex: -1,        // picture subtitle currently burned in by Jellyfin, -1 = none
+    burnFailed: {},       // picture subtitles whose burn-in failed this viewing (index: true)
+    burnTimer: null,
+    burnFrom: 0,          // where the burned-in stream was asked to start (its position before it plays is 0)
+    burnStarted: false,   // the current stream has shown its first picture
     textIndex: null,      // text subtitle currently shown, null = none
     started: false,       // "start" sent for the current stream
     stopped: true,        // "stop" sent (or nothing started yet)
@@ -740,6 +744,8 @@
   }
   function onPlaying() {
     S.errors = 0;
+    S.burnStarted = true;
+    clearTimeout(S.burnTimer);
     $("nl-buffering").hidden = true;
     if (!S.started) {
       S.started = true;
@@ -791,6 +797,33 @@
     }).catch(function () { /* offline: nothing to remember */ });
   }
 
+  function pictureStep(index) {
+    return X.pictureSubtitleStep({
+      failed: !!S.burnFailed[index], converted: S.allowConversion, casting: casting(),
+      device: isNative ? "tv" : (isLaptop ? "laptop" : "browser")
+    });
+  }
+  // A burned-in picture subtitle whose converted copy never started (a broken .idx/.sub makes Jellyfin's ffmpeg fail):
+  // go back to the film without it, from where it was, instead of "loading" forever. Not tried again this viewing, and
+  // not remembered, so the next play starts without it.
+  function burnFailed() {
+    clearTimeout(S.burnTimer);
+    if (S.burnIndex < 0) { return; }
+    S.burnFailed[S.burnIndex] = true;
+    rememberTrack("subtitle", null);
+    hideError();
+    reloadStream({ subtitle: -1, start: S.burnFrom });
+    toast("This subtitle couldn’t be shown. Try Find subtitles for a text one.", 6000);
+  }
+  function watchBurnIn(stream, startAt) {
+    clearTimeout(S.burnTimer);
+    S.burnFrom = startAt || 0;
+    if (S.burnIndex < 0) { return; }
+    S.burnTimer = setTimeout(function () {
+      if (S.stream === stream && !S.burnStarted) { burnFailed(); }
+    }, X.BURN_START_MS);
+  }
+
   function chooseSubtitle(index) {
     var track = (S.stream.subtitle_tracks || []).filter(function (t) { return t.index === index; })[0];
     if (index === -1 || !track) {
@@ -807,10 +840,14 @@
       player.showTextTrack(index);
       toast("Subtitles: " + track.label);
       if (S.burnIndex >= 0) { reloadStream({ subtitle: -1 }); }
-    } else if (track.kind === "image" && isLaptop && !S.allowConversion && !casting()) {
-      // Burning a picture subtitle in re-encodes the video: the laptop asks first instead of doing it quietly.
+    } else if (track.kind === "image" && pictureStep(index) === "failed") {
+      toast("This subtitle couldn’t be shown. Try Find subtitles for a text one.", 5000);
+    } else if (track.kind === "image" && pictureStep(index) === "ask") {
+      // Burning a picture subtitle in re-encodes the video: the TV and the laptop ask first instead of doing it quietly.
+      // (On the TV's original file the server drops a burn-in request, so going ahead would only say "loading" forever.)
       openMenu("Picture subtitle", [
-        { kind: "note", text: "This subtitle is a picture. Showing it needs a converted copy (lower quality)." },
+        { kind: "note", text: "This subtitle is a picture. Showing it needs a converted copy (lower quality). A text subtitle shows on the original." },
+        { kind: "action", label: "Find a text subtitle", onSelect: openFinder },
         { kind: "action", label: "Play a converted copy", onSelect: function () {
           S.allowConversion = true;
           chooseSubtitle(index);
@@ -1077,6 +1114,8 @@
     S.stopped = true;
     S.audioIndex = stream.audio_index;
     S.burnIndex = stream.subtitle_index >= 0 ? stream.subtitle_index : -1;
+    S.burnStarted = false;
+    watchBurnIn(stream, startAt);
     renderTrackButtons();
     player.load({ url: stream.url, kind: stream.kind, startAt: startAt, native: isNative ? nativeMeta(stream) : undefined,
       cast: casting() ? stream : undefined });
@@ -1130,7 +1169,7 @@
   function reloadStream(change) {
     if (!S.stream || S.switching) { return; }
     S.switching = true;
-    var pos = player.currentTime || 0;
+    var pos = typeof change.start === "number" ? change.start : (player.currentTime || 0);
     var resume = !player.paused;
     stopReporting(false);
     $("nl-buffering").hidden = false;
@@ -1357,6 +1396,7 @@
   player.on("error", function (e) {
     bufferSpinner.clear();
     if (S.switching || !S.stream) { return; }
+    if (S.burnIndex >= 0 && !S.burnStarted) { burnFailed(); return; }   // the burn-in, not the film, is broken
     if (e && e.server) { // Jellyfin's transcode failed: reloading would fail the same way
       showError(CONVERT_FAILED, CONVERT_DETAIL);
       return;
@@ -1392,7 +1432,11 @@
     ms: SPINNER_AFTER_MS
   });
   player.on("waiting", function () { bufferSpinner.wait(); });
-  player.on("loadedmetadata", function () { renderProgress(); renderTicks(); });
+  player.on("loadedmetadata", function () {
+    S.burnStarted = true;   // the converted copy has its first picture, so a burn-in works (also when it stays paused)
+    clearTimeout(S.burnTimer);
+    renderProgress(); renderTicks();
+  });
   player.on("timeupdate", function () { renderProgress(); checkNext(); checkSegments(); });
   player.on("seeked", function () {
     bufferSpinner.clear();
