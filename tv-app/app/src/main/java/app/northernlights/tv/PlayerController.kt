@@ -285,7 +285,11 @@ class PlayerController(
         ticks = 0
         clearPendingSeek()
 
+        // Side-loaded subtitles load once as a single sample. Media3 1.5's default parses them during extraction, as a
+        // media source of their own merged with the film, and a seek that cannot be served from that source's
+        // queues downloads the whole subtitle file again before the film may continue. See NlRenderersFactory.
         val mediaSourceFactory = DefaultMediaSourceFactory(activity)
+            .experimentalParseSubtitlesDuringExtraction(false)
             .setDataSourceFactory(
                 if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
             )

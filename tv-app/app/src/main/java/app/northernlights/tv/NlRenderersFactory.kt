@@ -78,6 +78,10 @@ class NlRenderersFactory(context: Context, private val look: SubtitleLook) : Def
         extensionRendererMode: Int,
         out: ArrayList<Renderer>,
     ) {
-        out.add(DelayedTextRenderer(TextRenderer(look.textOutput(output), outputLooper), look))
+        // Legacy decoding: the player is built with subtitle parsing during extraction off (see PlayerController), so
+        // the renderer parses each subtitle sample itself (WebVTT, and the picture / SSA tracks inside the file).
+        val text = TextRenderer(look.textOutput(output), outputLooper)
+        text.experimentalSetLegacyDecodingEnabled(true)
+        out.add(DelayedTextRenderer(text, look))
     }
 }
