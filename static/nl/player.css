@@ -131,17 +131,24 @@ svg .fill { fill: currentColor; stroke: none; }
 }
 
 /* ---- TV (M3): ?tv=1 or inside the Android app. 1920x1080 is the design size (1rem = 16px there),
-   text is at least 1.5rem, nothing needs a pointer. Polar-night look, like the TV pages: the aurora green is the
-   remote's focus light (a ring plus a glow cast below) and the line of the film already played. */
+   text is at least 1.5rem, nothing needs a pointer. Soft aurora look, like the TV pages: deep navy, a 2 px soft-cyan ring
+   for the remote's focus (only focus uses it), the aurora gradient only on the main button and the progress / seek lines.
+   The seek bar looks like a strip of film. Nothing here animates. */
 @font-face {
-  font-family: "Archivo";
-  src: local("Archivo"), url("/static/fonts/Archivo-Variable.ttf") format("truetype-variations");
-  font-weight: 100 900; font-stretch: 62% 125%; font-display: swap;
+  font-family: "DM Sans";
+  src: url("/static/fonts/DMSans-Variable-latin.woff2") format("woff2");
+  font-weight: 400 700; font-style: normal; font-display: swap;
 }
 html.tv { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; }
-.nl-player.tv { --nl-accent: #46f0a6; --nl-accent-2: #2fd3c9; --nl-ink: #eef6f4; --nl-ink-2: #a9b9c6; --nl-dark: #04150e;
-  --nl-line: rgba(196, 228, 236, 0.22); --nl-panel: rgba(9, 14, 26, 0.95);
-  --nl-focus: 0 0 0 0.25rem var(--nl-accent), 0 0.9rem 2.5rem 0.2rem rgba(70, 240, 166, 0.36); }
+html.tv, html.tv body, .nl-player.tv { font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.nl-player.tv { --nl-accent: #eef0f6; --nl-ink: #eef0f6; --nl-ink-2: #9aa3b8; --nl-dark: #0c1220; --nl-ring: #8fd3ff;
+  --nl-line: rgba(238, 240, 246, 0.14); --nl-panel: rgba(12, 18, 32, 0.97);
+  --nl-aurora: linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec);
+  --nl-action: linear-gradient(110deg, #7c3fc4, #c2307c 55%, #4a6cc0);
+  --nl-glow: radial-gradient(70% 75% at 18% 10%, rgba(32, 64, 140, 0.45), rgba(32, 64, 140, 0) 70%),
+    radial-gradient(55% 70% at 92% 35%, rgba(130, 36, 104, 0.30), rgba(130, 36, 104, 0) 70%),
+    radial-gradient(60% 60% at 45% 105%, rgba(28, 80, 96, 0.30), rgba(28, 80, 96, 0) 70%);
+  --nl-focus: 0 0 0 0.25rem var(--nl-ring), 0 1.5rem 3.25rem rgba(0, 0, 0, 0.45); }
 html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same base as the laptop pages */; }
 .nl-player.tv { --nl-tap: 5rem; font-size: 1.5rem; }
 .tv .nl-top, .tv .nl-bottom { padding-left: 5rem; padding-right: 5rem; }
@@ -150,54 +157,65 @@ html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same
 .tv .nl-title { font-size: 2.25rem; }
 .tv .nl-episode { font-size: 1.5rem; }
 .tv .nl-time { font-size: 1.5rem; min-width: 4.5em; }
-.tv .nl-btn { border-radius: 1rem; padding: 0 1.25rem; }
+.tv .nl-btn { border-radius: 1.25rem; padding: 0 1.25rem; }
 .tv .nl-btn svg { width: 3rem; height: 3rem; }
 .tv .nl-skip svg { width: 3.5rem; height: 3.5rem; }
 .tv .nl-text-btn { font-size: 1.5rem; }
-.tv .nl-chip { height: 4rem; min-width: 5.5rem; padding: 0 1.5rem; font-size: 1.5rem; margin-left: 1rem; }
-.tv .nl-range::-webkit-slider-runnable-track { height: 0.5rem; border-radius: 0.25rem; }
-.tv .nl-range::-webkit-slider-thumb { width: 2rem; height: 2rem; margin-top: -0.75rem; }
+.tv .nl-chip { height: 4rem; min-width: 5.5rem; padding: 0 1.5rem; font-size: 1.5rem; margin-left: 1rem; border-radius: 1.25rem; }
 .tv .nl-toast { font-size: 1.5rem; padding: 0.75rem 2rem; }
 .tv .nl-center { display: none; }          /* OK pauses; no pointer to press the big button */
 .tv #nl-mute, .tv #nl-volume, .tv #nl-fs { display: none; }   /* the TV has its own volume and is always full screen */
 .tv :focus-visible, .tv :focus { outline: none; }
-.tv .nl-btn:focus, .tv .nl-chip:focus { background: var(--nl-ink); color: var(--nl-dark); transform: scale(1.08); box-shadow: var(--nl-focus); }
-.tv .nl-range::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, var(--nl-accent), var(--nl-accent-2) var(--pct), rgba(238, 246, 244, 0.45) var(--pct), rgba(238, 246, 244, 0.45) var(--buf), rgba(238, 246, 244, 0.18) var(--buf)); }
-.tv .nl-range::-webkit-slider-thumb { background: var(--nl-ink); }
-.tv .nl-seek:focus::-webkit-slider-thumb { transform: scale(1.4); background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0.6rem 2rem 0.3rem rgba(70, 240, 166, 0.5); }
-.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: 0 0.5rem 1.5rem rgba(70, 240, 166, 0.3); }
-.tv .nl-bottom { background: linear-gradient(transparent, rgba(4, 7, 14, 0.82)); }
-.tv .nl-top { background: linear-gradient(rgba(4, 7, 14, 0.75), transparent); }
-.tv .nl-title { font-weight: 700; letter-spacing: -0.01em; }
-.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.25rem; padding: 0.75rem;
-  box-shadow: inset 0 0.15rem 0 rgba(70, 240, 166, 0.55), 0 1.5rem 4rem rgba(0, 0, 0, 0.55); }
-.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; letter-spacing: 0; text-transform: none; font-weight: 700; color: var(--nl-ink-2); }
-.tv .nl-menu button { font-size: 1.5rem; min-height: 4.5rem; border-radius: 0.9rem; gap: 1rem; }
-.tv .nl-menu button:focus { background: var(--nl-ink); color: var(--nl-dark); box-shadow: 0 0 0 0.25rem var(--nl-accent); }
-.tv .nl-menu button:focus .tick { color: #0c8a57; }
-.tv .nl-menu .tick { width: 1.5rem; }
+.tv .nl-btn:focus, .tv .nl-chip:focus { background: rgba(12, 18, 32, 0.9); color: var(--nl-ink); transform: scale(1.05); box-shadow: var(--nl-focus); }
+.tv .nl-bottom { background: linear-gradient(transparent, rgba(8, 11, 20, 0.85)); }
+.tv .nl-top { background: linear-gradient(rgba(8, 11, 20, 0.75), transparent); }
+.tv .nl-title { font-weight: 600; letter-spacing: -0.01em; }
+
+/* Film-strip seek bar (TV player): a dark strip with sprocket holes along the top and bottom edges, a lighter band for
+   the frames, the part already played tinted with the aurora gradient, a thin white playhead. Chapters are gaps between
+   frames. The input underneath is a normal range, so Left / Right still skip. */
+.tv .nl-seek-wrap { --nl-thumb-d: 0.25rem; }
+.tv .nl-seek { height: 5rem; }
+.tv .nl-seek::-webkit-slider-runnable-track { height: 3.75rem; border-radius: 0.75rem; background-color: #0b0e15;
+  background-repeat: no-repeat;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.35) 0 0.75rem, transparent 0.75rem 1.75rem),
+    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.35) 0 0.75rem, transparent 0.75rem 1.75rem),
+    linear-gradient(90deg, rgba(155, 93, 229, 0.35), rgba(226, 71, 154, 0.35), rgba(127, 178, 236, 0.35)),
+    linear-gradient(90deg, transparent var(--pct, 0%), rgba(238, 240, 246, 0.1) var(--pct, 0%), rgba(238, 240, 246, 0.1) var(--buf, 0%), transparent var(--buf, 0%)),
+    linear-gradient(rgba(238, 240, 246, 0.16), rgba(238, 240, 246, 0.16));
+  background-size: 100% 0.375rem, 100% 0.375rem, var(--pct, 0%) 100%, 100% 100%, 100% 1.75rem;
+  background-position: 0 0.375rem, 0 calc(100% - 0.375rem), 0 0, 0 0, 0 50%; }
+.tv .nl-seek::-webkit-slider-thumb { width: 0.25rem; height: 3.75rem; margin-top: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0.25rem rgba(0, 0, 0, 0.5); }
+.tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: var(--nl-focus); }
+.tv .nl-seek:focus::-webkit-slider-thumb { width: 0.375rem; }
+.tv .nl-ticks i { top: -0.875rem; width: 0.5rem; height: 1.75rem; margin-left: -0.25rem; border-radius: 0; background: #0b0e15; box-shadow: none; }
+.tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.5rem; padding: 0.75rem;
+  box-shadow: 0 1.5rem 3.25rem rgba(0, 0, 0, 0.45); }
+.tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--nl-ink-2); }
+.tv .nl-menu button { font-size: 1.5rem; min-height: 4.5rem; border-radius: 1.25rem; gap: 1rem; }
+.tv .nl-menu button:focus { background: var(--surface-2, #1b2540); color: var(--nl-ink); box-shadow: 0 0 0 0.25rem var(--nl-ring); }
+.tv .nl-menu .tick { width: 1.5rem; color: var(--nl-ink); }
 .tv .nl-card { width: min(36rem, 100%); gap: 1.25rem; }
-/* The questions before and after a film (resume, "How was it?") sit under the same sky as the TV pages. Help and
+/* The questions before and after a film (resume, "How was it?") sit on the same night and glows as the TV pages. Help and
    errors keep the see-through dim so the paused picture still shows behind them. */
-.tv #nl-resume, .tv #nl-react { background: linear-gradient(rgba(7, 11, 21, 0.4), rgba(7, 11, 21, 0.4)), #070b15 url("/static/nl/tv/aurora-sky.webp") center top / 100% 70% no-repeat; }
-.tv .nl-card-title { text-shadow: 0 0.15rem 1.5rem rgba(0, 0, 0, 0.6); }
-.tv .nl-card-title { font-size: 2rem; }
-.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; border-radius: 999px; transition: transform 0.16s ease, box-shadow 0.16s ease; }
-.tv .nl-primary { color: var(--nl-dark); }
-.tv .nl-secondary { background: rgba(7, 11, 21, 0.6); }
-.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.06); background: var(--nl-ink); color: var(--nl-dark); box-shadow: var(--nl-focus); }
-.tv .nl-primary:focus { background: var(--nl-accent); box-shadow: 0 0 0 0.25rem var(--nl-ink), 0 0.9rem 2.5rem 0.3rem rgba(70, 240, 166, 0.5); }
-.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.25rem; bottom: 3rem;
-  box-shadow: inset 0 0.15rem 0 rgba(70, 240, 166, 0.55), 0 1.5rem 4rem rgba(0, 0, 0, 0.55); }
-.tv .nl-next-label { letter-spacing: 0; text-transform: none; font-weight: 700; }
+.tv #nl-resume, .tv #nl-react { background: var(--nl-glow), #0c1220; }
+.tv .nl-card-title { font-size: 2rem; font-weight: 600; letter-spacing: -0.01em; }
+.tv .nl-primary, .tv .nl-secondary { min-height: 5rem; font-size: 1.5rem; font-weight: 600; border-radius: 1.25rem; transition: transform 0.16s ease, box-shadow 0.16s ease; }
+.tv .nl-primary { background: var(--nl-action); color: #fff; font-weight: 700; }
+.tv .nl-secondary { background: transparent; border: 0.125rem solid var(--nl-line); }
+.tv .nl-primary:focus, .tv .nl-secondary:focus { transform: scale(1.05); box-shadow: var(--nl-focus); }
+.tv .nl-secondary:focus { background: #141c2f; border-color: transparent; }
+.tv .nl-next { right: 5rem; width: 36rem; padding: 1.5rem; gap: 0.75rem; border-radius: 1.5rem; bottom: 3rem;
+  box-shadow: 0 1.5rem 3.25rem rgba(0, 0, 0, 0.45); }
+.tv .nl-next-label { letter-spacing: 0; text-transform: none; font-weight: 600; }
 .controls-visible.tv .nl-next { bottom: calc(var(--nl-tap) * 2 + 6rem); }
 .tv .nl-next-label, .tv .nl-next-count { font-size: 1.5rem; }
 .tv .nl-next-title { font-size: 1.75rem; }
 .tv .nl-next-actions .nl-primary, .tv .nl-next-actions .nl-secondary { min-height: 4.5rem; }
 .tv .nl-buffering { width: 5rem; height: 5rem; margin: -2.5rem 0 0 -2.5rem; }
-.tv .nl-buffering span { border-width: 0.3rem; border-color: rgba(238, 246, 244, 0.16); border-top-color: var(--nl-accent); border-right-color: var(--nl-accent-2); }
-.tv .nl-toast { background: rgba(9, 14, 26, 0.9); box-shadow: inset 0 0 0 0.1rem rgba(70, 240, 166, 0.4); }
+.tv .nl-buffering span { border-width: 0.3rem; border-color: rgba(238, 240, 246, 0.16); border-top-color: var(--nl-ink); border-right-color: var(--nl-ink-2); }
+.tv .nl-toast { background: rgba(12, 18, 32, 0.92); box-shadow: inset 0 0 0 0.0625rem var(--nl-line); }
 
 /* Inside the Android app (bridge v2) Media3 draws the video BEHIND the WebView, so the page is
    transparent and the <video> element stays unused; our controls draw on top of the picture. */
@@ -220,7 +238,7 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
   border-radius: 999px; font-size: 1.3rem; font-weight: 700; }
 .tv .nl-stepper { min-height: 4.5rem; padding: 0.5rem 1.25rem; font-size: 1.5rem; gap: 1rem; }
 .tv .nl-menu .nl-stepper button { width: 5rem; min-height: 4rem; font-size: 2rem; border-radius: 999px; }
-.tv .nl-menu .nl-stepper button:focus { background: var(--nl-ink); color: var(--nl-dark); box-shadow: 0 0 0 0.25rem var(--nl-accent); }
+.tv .nl-menu .nl-stepper button:focus { background: #1b2540; color: var(--nl-ink); box-shadow: 0 0 0 0.25rem var(--nl-ring); }
 
 /* ---- M7a polish: seek-bar thumbnails, chapter ticks, skip intro / next episode, speed, phone gestures. */
 .nl-player video, .nl-controls { touch-action: none; }   /* the page owns taps and swipes on the picture */
@@ -255,11 +273,10 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .controls-visible.tv .nl-seg { bottom: calc(var(--nl-tap) * 2 + 6rem); }
 .tv .nl-seg .nl-primary { min-height: 5rem; }
 .tv .nl-seg .nl-secondary { min-height: 4rem; font-size: 1.5rem; }
+.tv .nl-seg .nl-secondary[aria-pressed="true"] { background: rgba(238, 240, 246, 0.08); border-color: transparent; }
 .tv .nl-seek-wrap { --nl-thumb-d: 2rem; }
-.tv .nl-ticks i { width: 0.25rem; height: 1.25rem; top: -0.625rem; margin-left: -0.125rem; }
 .tv .nl-thumb-time, .tv .nl-thumb-chapter { font-size: 1.5rem; padding: 0.25rem 1.25rem; }
-.tv .nl-thumb-img { border-width: 0.25rem; border-radius: 1rem; border-color: var(--nl-accent); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6); }
-.tv .nl-ticks i { background: var(--nl-ink); }
+.tv .nl-thumb-img { border-width: 0.125rem; border-radius: 1rem; border-color: rgba(238, 240, 246, 0.7); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6); }
 @media (max-width: 640px) {
   #nl-chapters, #nl-speed { padding: 0 6px; }
 }
@@ -302,5 +319,5 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .tv.laptop .nl-chip:focus:not(:focus-visible) { background: rgba(255, 255, 255, 0.08); }
 .tv.laptop .nl-btn:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.12); }
 .tv.laptop .nl-chip:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.18); }
-.tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-thumb { transform: none; box-shadow: none; }
+.tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-thumb { width: 0.25rem; }
 .tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-runnable-track { box-shadow: none; }

@@ -1,32 +1,36 @@
-/* Northern Lights on the TV (M3): 10-foot layout, polar-night look.
+/* Northern Lights on the TV (M3): 10-foot layout, soft aurora look.
  * 1920x1080 is the design size: 1rem is 16px there and the whole page scales with the viewport.
- * Every text size is at least 1.5rem (24px at 1920). A dark night ground for the living room with an aurora
- * sky behind the top of every page (one still image, painted once, its own layer so scrolling never repaints it).
- * The remote's focus is the aurora's light: a green ring with a soft glow cast below, plus a scale. Never hover. */
+ * Every text size is at least 1.5rem. A deep navy night with three faint, wide glows painted once on one fixed layer
+ * (CSS gradients only: no image, nothing moving, no blur filters, so scrolling never repaints them).
+ * The remote's focus is a 2 px soft-cyan ring, a dark shadow below and a small scale. Only focus uses the cyan ring.
+ * The aurora gradient is only for the main button and the progress / seek lines. Never hover (except the laptop). */
 @font-face {
-  font-family: "Archivo";
-  src: local("Archivo"), url("/static/fonts/Archivo-Variable.ttf") format("truetype-variations");
-  font-weight: 100 900; font-stretch: 62% 125%; font-display: swap;
+  font-family: "DM Sans";
+  src: url("/static/fonts/DMSans-Variable-latin.woff2") format("woff2");
+  font-weight: 400 700; font-style: normal; font-display: swap;
 }
 :root {
-  --bg: #070b15; --surface: #111a2b; --surface-2: #1b2640;
-  --text: #eef6f4; --text-2: #a9b9c6; --line: rgba(196, 228, 236, 0.2); --fill: rgba(196, 228, 236, 0.07);
-  --action: #46f0a6; --action-ink: #04150e; --ready: #46f0a6; --warn: #f0c36a; --bad: #ff8f7f;
-  --aurora-green: #46f0a6; --aurora-teal: #2fd3c9; --aurora-violet: #8f72ff; --aurora-rose: #ff6fae;
-  --aurora-line: linear-gradient(90deg, var(--aurora-green), var(--aurora-teal));
-  --focus: 0 0 0 0.3rem var(--aurora-green), 0 1rem 3rem 0.25rem rgba(70, 240, 166, 0.34);
-  --font-ui: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-display: "Archivo", "Roboto Condensed", "Helvetica Neue", "Arial Narrow", sans-serif;
+  --bg: #0c1220; --surface: #141c2f; --surface-2: #1b2540;
+  --text: #eef0f6; --text-2: #9aa3b8; --line: rgba(238, 240, 246, 0.14); --fill: rgba(238, 240, 246, 0.08);
+  --ink-dark: #0c1220; --ready: #7fd3b0; --warn: #f0c36a; --bad: #ff9a8a;
+  --aurora-line: linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec);
+  --action: linear-gradient(110deg, #7c3fc4, #c2307c 55%, #4a6cc0);
+  --ring: #8fd3ff;
+  --focus: 0 0 0 0.25rem var(--ring), 0 1.5rem 3.25rem rgba(0, 0, 0, 0.45);
+  --glow: radial-gradient(70% 75% at 18% 10%, rgba(32, 64, 140, 0.45), rgba(32, 64, 140, 0) 70%),
+    radial-gradient(55% 70% at 92% 35%, rgba(130, 36, 104, 0.30), rgba(130, 36, 104, 0) 70%),
+    radial-gradient(60% 60% at 45% 105%, rgba(28, 80, 96, 0.30), rgba(28, 80, 96, 0) 70%);
+  --font-ui: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: var(--font-ui);
   --side: 6rem;
 }
 * { box-sizing: border-box; }
 html { font-size: min(100vw / 120, 100vh / 67.5) /* 16px at 1920x1080 */; color-scheme: dark; overflow: hidden; background: var(--bg); }
 body { margin: 0; background: transparent; color: var(--text); font-family: var(--font-ui); font-size: 1.5rem; line-height: 1.4;
   -webkit-font-smoothing: antialiased; min-height: 100vh; padding-bottom: 12rem; overflow: hidden; }
-/* The sky: fixed behind everything, fading into the night by two thirds of the screen. */
-body::before { content: ""; position: fixed; left: 0; right: 0; top: 0; height: 70vh; z-index: -1; pointer-events: none;
-  background: var(--bg) url("/static/nl/tv/aurora-sky.webp") center top / 100% 100% no-repeat; transform: translateZ(0); }
-::selection { background: rgba(70, 240, 166, 0.35); color: var(--text); }
+/* The glows: one fixed layer behind everything, painted once. */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background: var(--glow); transition: opacity 0.4s ease; }
+::selection { background: rgba(143, 211, 255, 0.35); color: var(--text); }
 a { color: inherit; text-decoration: none; }
 
 /* ---- Laptop browser (/player): the same 10-foot layout, a little smaller, scrolled with the wheel or trackpad */
@@ -36,7 +40,7 @@ html.laptop .tv-row, html.laptop .tv-seasons { overflow-x: auto; scrollbar-width
 html.laptop .tv-row::-webkit-scrollbar, html.laptop .tv-seasons::-webkit-scrollbar { display: none; }
 html.laptop [data-nl-focus]:not(input) { cursor: pointer; }
 ul { list-style: none; margin: 0; padding: 0; }
-h1, h2 { margin: 0; font-family: var(--font-display); font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; text-wrap: balance; }
+h1, h2 { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; line-height: 1.1; text-wrap: balance; }
 button { font: inherit; color: inherit; }
 :focus { outline: none; }
 .tv-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -44,40 +48,40 @@ button { font: inherit; color: inherit; }
 
 /* ---- bar */
 .tv-bar { position: relative; display: flex; align-items: center; gap: 4rem; padding: 2.25rem var(--side) 2.25rem; }
-.tv-brand { font-family: var(--font-display); font-stretch: 125%; font-weight: 600; text-transform: uppercase; font-size: 1.75rem; line-height: 1;
-  letter-spacing: 0.22em; }
+.tv-brand { font-weight: 500; text-transform: uppercase; font-size: 1.5rem; line-height: 1; letter-spacing: 0.2em; color: #b8bfd0; }
 .tv-bar-row { flex: 1; display: flex; align-items: center; gap: 4rem; min-width: 0; }
-.tv-nav { display: flex; gap: 1.25rem; padding: 0.75rem 0.5rem; }
+.tv-nav { display: flex; gap: 0.75rem; padding: 0.75rem 0.5rem; }
+/* The nav pills are quiet: no border, the page you are on has the soft tint. */
+.tv-nav .tv-pill { border-color: transparent; background: transparent; color: var(--text-2); font-weight: 500; }
+.tv-page-home .tv-nav .tv-pill:nth-child(1), .tv-page-downloads .tv-nav .tv-pill:nth-child(2), .tv-page-search .tv-nav .tv-pill:nth-child(3) {
+  background: var(--fill); color: var(--text); font-weight: 600; }
 /* The person, in the top-right corner: a round initial and the name, no pill, so it never reads as a tab. */
 .tv-account { margin-left: auto; display: inline-flex; align-items: center; gap: 1rem; padding: 0.5rem 1.5rem 0.5rem 0.5rem; border-radius: 999px;
-  color: var(--text); font-size: 1.5rem; font-weight: 700; transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease; }
+  color: var(--text); font-size: 1.5rem; font-weight: 600; transition: transform 0.16s ease, box-shadow 0.16s ease; }
 .tv-account-avatar { width: 3.5rem; height: 3.5rem; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none;
-  background: linear-gradient(150deg, var(--aurora-green), var(--aurora-teal) 45%, var(--aurora-violet)); color: var(--action-ink);
-  font-family: var(--font-display); font-weight: 800; font-size: 1.75rem; text-transform: uppercase; }
-.tv-account:focus { transform: scale(1.06); background: var(--text); color: var(--action-ink); box-shadow: var(--focus); }
-.tv-foil { display: none; }   /* the sky replaces the old foil rule */
+  background: var(--fill); border: 0.125rem solid var(--line); color: var(--text);
+  font-weight: 600; font-size: 1.5rem; text-transform: uppercase; }
+.tv-account:focus { transform: scale(1.05); box-shadow: var(--focus); background: var(--surface); }
+.tv-foil { display: none; }
 
 /* ---- pills and buttons */
-.tv-pill, .tv-btn { display: inline-flex; align-items: center; justify-content: center; gap: 1rem; min-height: 4.5rem; padding: 0 2.5rem; border-radius: 999px;
-  border: 0.15rem solid var(--line); background: rgba(7, 11, 21, 0.55); color: var(--text); font-size: 1.5rem; font-weight: 700; cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, color 0.16s ease; }
-.tv-btn { background: rgba(13, 20, 36, 0.72); }
-.tv-btn.is-primary { background: var(--action); border-color: var(--action); color: var(--action-ink); }
-/* Chosen (not focused): a green tint and green text, no ring; a green ring always means focus. */
-.tv-pill[aria-pressed="true"] { background: rgba(70, 240, 166, 0.18); border-color: transparent; color: var(--aurora-green); }
-.tv-pill:focus, .tv-btn:focus { transform: scale(1.08); background: var(--text); border-color: var(--text); color: var(--action-ink); box-shadow: var(--focus); }
-.tv-btn.is-primary:focus { background: var(--action); border-color: var(--text); color: var(--action-ink);
-  box-shadow: 0 0 0 0.3rem var(--text), 0 1rem 3rem 0.4rem rgba(70, 240, 166, 0.5); }
-.tv-switch-state { padding: 0.1rem 1rem; border-radius: 999px; background: rgba(196, 228, 236, 0.16); }
-.tv-switch[aria-checked="true"] .tv-switch-state { background: var(--ready); color: var(--action-ink); }
+.tv-pill, .tv-btn { display: inline-flex; align-items: center; justify-content: center; gap: 1rem; min-height: 4.5rem; padding: 0 2.5rem; border-radius: 1.25rem;
+  border: 0.125rem solid var(--line); background: transparent; color: var(--text); font-size: 1.5rem; font-weight: 600; cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease; }
+.tv-btn.is-primary { background: var(--action); border-color: transparent; color: #fff; font-weight: 700; }
+/* Chosen (not focused): a soft tint and brighter text, no ring; a cyan ring always means focus. */
+.tv-pill[aria-pressed="true"] { background: var(--fill); border-color: transparent; color: var(--text); }
+.tv-pill:focus, .tv-btn:focus { transform: scale(1.05); background-color: var(--surface); border-color: transparent; box-shadow: var(--focus); }
+.tv-btn.is-primary:focus { background: var(--action); }
+.tv-nav .tv-pill:focus { background: var(--surface); }
+.tv-switch-state { padding: 0.1rem 1rem; border-radius: 999px; background: var(--fill); }
+.tv-switch[aria-checked="true"] .tv-switch-state { background: var(--ready); color: var(--ink-dark); }
 
 /* ---- sections and rows */
 .tv-status { margin: 4rem var(--side); font-size: 2rem; color: var(--text-2); }
 .tv-section { position: relative; z-index: 1; margin-top: 1.5rem; }
-.tv-section > h2 { display: flex; align-items: center; gap: 2rem; padding: 0 var(--side); font-size: 2.25rem; }
-/* Text that can sit on the sky keeps a soft night shadow so it reads over the brightest rays. */
-.tv-section > h2, .tv-hero-info, .tv-picks-note, .tv-status, .tv-hint, .tv-dl-empty, .tv-filters .tv-meta, .tv-name, .tv-meta { text-shadow: 0 0.1rem 1.25rem rgba(4, 7, 14, 0.85), 0 0 0.3rem rgba(4, 7, 14, 0.6); }
-.tv-hero-info .tv-btn, .tv-hero-info .tv-pill, .tv-hero-info .nl-progress { text-shadow: none; }
+.tv-section > h2 { display: flex; align-items: baseline; gap: 2rem; padding: 0 var(--side); font-size: 2.25rem; }
+.tv-row-hint { font-size: 1.5rem; font-weight: 400; letter-spacing: 0; color: var(--text-2); }
 .tv-row { display: flex; gap: 2rem; padding: 2rem var(--side) 3.5rem; overflow-x: hidden; }
 .tv-row-grid { padding-bottom: 2rem; }
 .tv-seasons { display: flex; gap: 1.25rem; padding: 2rem var(--side) 0.5rem; overflow-x: hidden; }
@@ -86,27 +90,35 @@ button { font: inherit; color: inherit; }
 
 /* ---- cards */
 .tv-card { display: block; }
-.tv-art { position: relative; overflow: hidden; border-radius: 0.9rem; background: var(--surface); border: 0.1rem solid var(--line);
-  box-shadow: 0 0.75rem 2rem rgba(0, 0, 0, 0.35); transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.tv-art { position: relative; overflow: hidden; border-radius: 1.5rem; background: var(--surface); border: 0.0625rem solid rgba(238, 240, 246, 0.08);
+  transition: transform 0.18s ease, box-shadow 0.18s ease; }
 .tv-poster { aspect-ratio: 2 / 3; }
 .tv-still { aspect-ratio: 16 / 9; }
 .tv-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .nl-fallback { height: 100%; display: flex; align-items: center; justify-content: center; text-align: center; padding: 1rem; color: var(--text-2);
-  font-family: var(--font-display); font-stretch: 80%; font-weight: 700; font-size: 2rem; line-height: 1.1;
-  background: linear-gradient(180deg, rgba(47, 211, 201, 0.12), rgba(143, 114, 255, 0.1)); }
-.tv-card:focus .tv-art { transform: scale(1.08); border-color: var(--aurora-green); box-shadow: var(--focus); }
-.tv-name { margin-top: 0.75rem; font-weight: 700; font-size: 1.5rem; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  font-family: var(--font-display); font-weight: 600; font-size: 2rem; line-height: 1.1; background: var(--surface-2); }
+.tv-card:focus .tv-art { transform: scale(1.06); box-shadow: var(--focus); }
+.tv-name { margin-top: 1.25rem; font-weight: 600; font-size: 1.5rem; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .tv-item-wide .tv-name { -webkit-line-clamp: 1; }
 .tv-meta { color: var(--text-2); font-size: 1.5rem; }
-.tv-card:focus .tv-name { color: var(--aurora-green); }
 .tv-card.is-played .tv-art img { opacity: 0.5; }
 .tv-card.is-away { opacity: 0.55; }
-.tv-badge { position: absolute; top: 0.75rem; left: 0.75rem; background: rgba(7, 11, 21, 0.82); color: var(--aurora-green); font-size: 1.5rem; font-weight: 700;
-  line-height: 1; padding: 0.45rem 0.9rem; border-radius: 999px; box-shadow: inset 0 0 0 0.1rem rgba(70, 240, 166, 0.45); }
-.tv-badge.is-away { color: var(--text); box-shadow: inset 0 0 0 0.1rem var(--line); }
-.tv-tick { position: absolute; top: 0.75rem; right: 0.75rem; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--ready); color: var(--action-ink);
-  font-weight: 800; display: flex; align-items: center; justify-content: center; }
-.nl-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 0.5rem; background: rgba(0, 0, 0, 0.6); }
+.tv-badge { position: absolute; top: 0.75rem; left: 0.75rem; background: rgba(8, 11, 20, 0.82); color: var(--text); font-size: 1.5rem; font-weight: 600;
+  line-height: 1; padding: 0.45rem 0.9rem; border-radius: 0.75rem; }
+.tv-badge.is-away { color: var(--text-2); }
+/* Series / Movie tag on Continue watching stills. */
+.tv-kind { position: absolute; top: 0.75rem; left: 0.75rem; background: rgba(8, 11, 20, 0.78); color: var(--text); font-size: 1.5rem; font-weight: 600;
+  line-height: 1; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.5rem 0.9rem; border-radius: 0.75rem; }
+/* "Details" chip on the focused poster: says that OK opens a page. */
+.tv-details { display: none; position: absolute; left: 0.75rem; right: 0.75rem; bottom: 1.25rem; align-items: center; justify-content: center; gap: 0.35rem;
+  padding: 0.4rem 0; border-radius: 0.75rem; background: rgba(8, 11, 20, 0.82); color: var(--text); font-size: 1.5rem; font-weight: 600; line-height: 1.2; }
+.tv-details svg { width: 1.5rem; height: 1.5rem; flex: none; }
+.tv-card:focus .tv-details, .tv-card.is-focused .tv-details { display: flex; }
+html.laptop .tv-card:hover .tv-details { display: flex; }
+.tv-card:focus .tv-together, .tv-card.is-focused .tv-together { display: none; }
+.tv-tick { position: absolute; top: 0.75rem; right: 0.75rem; width: 2.5rem; height: 2.5rem; border-radius: 50%; background: rgba(8, 11, 20, 0.82); color: var(--text);
+  font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.nl-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 0.5rem; background: rgba(0, 0, 0, 0.55); }
 .nl-progress span { display: block; height: 100%; background: var(--aurora-line); }
 
 /* ---- title and show */
@@ -114,44 +126,44 @@ button { font: inherit; color: inherit; }
 .tv-hero { position: relative; }
 .tv-backdrop { background: var(--bg); position: absolute; left: 0; right: 0; top: -9rem; height: 54rem; overflow: hidden; z-index: 0; }
 .tv-backdrop img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0.5; }
-.tv-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(7, 11, 21, 0.15) 20%, var(--bg) 100%), linear-gradient(to right, rgba(7, 11, 21, 0.75), transparent 60%); }
+.tv-backdrop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(8, 11, 20, 0.15) 20%, var(--bg) 100%), linear-gradient(to right, rgba(8, 11, 20, 0.75), transparent 60%); }
 .tv-hero-body { position: relative; z-index: 1; display: grid; grid-template-columns: 20rem 1fr; gap: 4rem; padding: 3rem var(--side) 1rem; align-items: start; }
 .tv-hero-poster { box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.55); }
 .tv-hero-info { min-width: 0; }
-.tv-title { font-size: 5rem; font-stretch: 85%; font-weight: 800; letter-spacing: -0.02em; }
+.tv-title { font-size: 5rem; font-weight: 700; letter-spacing: -0.025em; }
 .tv-facts { margin: 1rem 0 0; color: var(--text-2); font-weight: 700; }
 .tv-genres { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.25rem 0 0; }
 .tv-genres li { padding: 0.15rem 1.1rem; border-radius: 999px; background: var(--fill); color: var(--text); font-weight: 600; }
 .tv-overview { margin: 1.75rem 0 0; max-width: 62rem; line-height: 1.5; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .tv-actions { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 2.5rem 0 0; padding: 0.75rem 0.5rem; }
 .tv-detail-progress { display: flex; align-items: center; gap: 1.5rem; margin-top: 1.5rem; max-width: 36rem; }
-.tv-detail-progress .nl-progress { position: relative; flex: 1; height: 0.6rem; border-radius: 0.3rem; overflow: hidden; background: rgba(196, 228, 236, 0.14); }
+.tv-detail-progress .nl-progress { position: relative; flex: 1; height: 0.6rem; border-radius: 0.3rem; overflow: hidden; background: rgba(238, 240, 246, 0.14); }
 
 /* ---- search */
 .tv-search-form { padding: 2rem var(--side) 0.5rem; }
 .tv-search-row { padding: 0.75rem 0.5rem; }
-.tv-search-row input { width: 100%; max-width: 70rem; height: 5.5rem; padding: 0 2.5rem; border-radius: 999px; border: 0.15rem solid var(--line);
-  background: rgba(7, 11, 21, 0.6); color: var(--text); font: inherit; font-size: 2rem; font-weight: 600; caret-color: var(--aurora-green); }
+.tv-search-row input { width: 100%; max-width: 70rem; height: 5.5rem; padding: 0 2.5rem; border-radius: 1.25rem; border: 0.125rem solid var(--line);
+  background: rgba(8, 11, 20, 0.6); color: var(--text); font: inherit; font-size: 2rem; font-weight: 600; caret-color: var(--text); }
 .tv-search-row input::placeholder { color: var(--text-2); }
-.tv-search-row input:focus { border-color: var(--aurora-green); transform: scale(1.02); transform-origin: left center; box-shadow: var(--focus); }
+.tv-search-row input:focus { border-color: transparent; transform: scale(1.02); transform-origin: left center; box-shadow: var(--focus); }
 .tv-hint { margin: 1rem var(--side) 0; color: var(--text-2); }
 .tv-phone { display: flex; align-items: center; gap: 2.5rem; margin: 1.75rem var(--side) 0; padding: 1.5rem 2rem; max-width: 56rem;
-  border-radius: 1.5rem; background: rgba(17, 26, 43, 0.85); border: 0.15rem solid var(--line); }
+  border-radius: 1.5rem; background: rgba(20, 28, 47, 0.85); border: 0.15rem solid var(--line); }
 .tv-phone[hidden] { display: none; }
 .tv-phone-qr { flex: none; width: 13rem; height: 13rem; border-radius: 0.75rem; overflow: hidden; background: #fff; }
 .tv-phone-qr svg { display: block; width: 100%; height: 100%; }
 .tv-phone-title { margin: 0; font-size: 1.5rem; color: var(--text-2); font-weight: 700; }
-.tv-phone-code { margin: 0.4rem 0 0; font-size: 4.25rem; font-weight: 800; letter-spacing: 0.12em; line-height: 1; font-variant-numeric: tabular-nums;
+.tv-phone-code { margin: 0.4rem 0 0; font-size: 4.25rem; font-weight: 700; letter-spacing: 0.12em; line-height: 1; font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.tv-phone-how { margin: 0.9rem 0 0; font-size: 1.25rem; color: var(--text-2); line-height: 1.35; }
+.tv-phone-how { margin: 0.9rem 0 0; font-size: 1.5rem; color: var(--text-2); line-height: 1.35; }
 
 /* ---- who's watching, me (M4) */
 .tv-who-row { gap: 3rem; justify-content: center; padding-top: 5rem; }
 .tv-who-item { width: 18rem; text-align: center; }
 .tv-who-art { aspect-ratio: 1 / 1; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-display); font-weight: 800; font-size: 8rem; line-height: 1; color: var(--action-ink);
-  background: linear-gradient(160deg, var(--aurora-green), var(--aurora-teal) 50%, var(--aurora-violet)); transition: transform 0.18s ease, box-shadow 0.18s ease; }
-.tv-who-item:nth-child(2) .tv-who-art { background: linear-gradient(160deg, var(--aurora-teal), var(--aurora-violet) 55%, var(--aurora-rose)); }
+  font-weight: 600; font-size: 8rem; line-height: 1; color: var(--text); background: rgba(32, 64, 140, 0.6); border: 0.125rem solid var(--line);
+  transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.tv-who-item:nth-child(2) .tv-who-art { background: rgba(130, 36, 104, 0.55); }
 .tv-who-card:focus .tv-who-art { transform: scale(1.08); box-shadow: var(--focus); }
 .tv-who-item:nth-child(3) .tv-who-art { background: var(--surface-2); color: var(--text); }
 .tv-who-card .tv-name { font-size: 2rem; }
@@ -161,6 +173,18 @@ button { font: inherit; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .tv-pill, .tv-btn, .tv-art, .tv-account, .tv-who-art { transition: none; }
+}
+
+/* ---- Lights down: Play on a title or show page fades the glows and the page to dark, once, with opacity only (tv.js adds the class,
+   then goes to the player after at most 0.8 s). Only the title stays, small and dim. */
+.tv-lights { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: #050608; opacity: 0;
+  pointer-events: none; transition: opacity 0.4s ease; }
+.tv-lights span { font-size: 1.5rem; font-weight: 500; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(238, 240, 246, 0.6); text-align: center; padding: 0 var(--side); }
+html.nl-lights-down body::before, html.nl-lights-down .tv-bar, html.nl-lights-down #tv-main { opacity: 0; transition: opacity 0.4s ease; }
+html.nl-lights-down .tv-lights { opacity: 1; }
+.tv-bar, #tv-main { transition: opacity 0.4s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .tv-lights, html.nl-lights-down body::before, html.nl-lights-down .tv-bar, html.nl-lights-down #tv-main { transition: none; }
 }
 
 /* ---- M6: picks for two, watchlist, yes / maybe / pass, runtime chips */
@@ -180,10 +204,10 @@ button { font: inherit; color: inherit; }
 .tv-wl-list { padding: 1.5rem var(--side) 0; display: grid; gap: 1rem; }
 .tv-wl-item { display: flex; align-items: center; justify-content: space-between; gap: 3rem; padding: 0.5rem 0; border-top: 0.1rem solid var(--line); }
 .tv-wl-info { min-width: 0; flex: 1; }
-.tv-wl-title { margin: 0; font-family: var(--font-display); font-stretch: 85%; font-weight: 700; font-size: 2.5rem; line-height: 1.1; }
+.tv-wl-title { margin: 0; font-family: var(--font-display); font-weight: 600; letter-spacing: -0.01em; font-size: 2.5rem; line-height: 1.1; }
 .tv-wl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1.25rem; padding: 0.75rem 0.5rem; }
-.nl-toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 40; max-width: 70%; background: var(--text); color: var(--action-ink); box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
-  padding: 1rem 2rem; border-radius: 1rem; font-size: 1.5rem; font-weight: 800; }
+.nl-toast { position: fixed; left: 50%; bottom: 3rem; transform: translateX(-50%); z-index: 40; max-width: 70%; background: var(--text); color: var(--ink-dark); box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.5);
+  padding: 1rem 2rem; border-radius: 1rem; font-size: 1.5rem; font-weight: 700; }
 
 /* ---- M7b: Unwatched only, hide from home, Cast & crew, Tech details, More like this */
 .tv-filters { display: flex; gap: 1.25rem; padding: 1.25rem var(--side) 0; }
@@ -195,23 +219,23 @@ button { font: inherit; color: inherit; }
 .nl-fold-caret { width: 1rem; height: 1rem; border-right: 0.2rem solid currentColor; border-bottom: 0.2rem solid currentColor; transform: rotate(45deg); }
 .nl-fold.is-open .nl-fold-caret { transform: rotate(-135deg); }
 .nl-fold-body { padding: 0 0.5rem; max-width: 100rem; }
-.nl-fold-sub { margin: 1rem 0 0.5rem; font-size: 1.5rem; font-weight: 800; text-transform: uppercase; color: var(--text-2); }
+.nl-fold-sub { margin: 1rem 0 0.5rem; font-size: 1.5rem; font-weight: 700; text-transform: uppercase; color: var(--text-2); }
 .nl-people { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem 3rem; }
 .nl-person { display: flex; align-items: center; gap: 1.25rem; min-width: 0; }
-.nl-person-photo { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; overflow: hidden; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-weight: 800; }
+.nl-person-photo { flex: none; width: 4.5rem; height: 4.5rem; border-radius: 50%; overflow: hidden; background: var(--surface-2); display: flex; align-items: center; justify-content: center; font-weight: 700; }
 .nl-person-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .nl-person-photo .nl-fallback { background: none; border: 0; padding: 0; font-size: 2rem; }
-.nl-person-name { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nl-person-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nl-person-text { min-width: 0; }
 .nl-person-text .nl-meta { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nl-tech { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 2.5rem; margin: 0.5rem 0 0; }
-.nl-tech dt { color: var(--text-2); font-weight: 800; }
+.nl-tech dt { color: var(--text-2); font-weight: 700; }
 .nl-tech dd { margin: 0; }
 .tv-trailer-note { margin: 1rem 0 0; color: var(--text-2); }
 
 /* M9a: seen together, the watch-together switch, "Mark unwatched" mode */
 .tv-together { position: absolute; left: 0.75rem; bottom: 1.2rem; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.9rem; border-radius: 999px;
-  background: var(--surface); color: var(--text); font-size: 1.4rem; font-weight: 800; line-height: 1.2; outline: 0.1rem solid var(--line); }
+  background: var(--surface); color: var(--text); font-size: 1.5rem; font-weight: 700; line-height: 1.2; outline: 0.1rem solid var(--line); }
 .tv-together .nl-together-rings { position: relative; flex: none; width: 1.9rem; height: 1.1rem; }
 .tv-together .nl-together-rings::before, .tv-together .nl-together-rings::after { content: ""; position: absolute; top: 0; width: 1.1rem; height: 1.1rem; box-sizing: border-box; border: 0.2rem solid currentColor; border-radius: 50%; }
 .tv-together .nl-together-rings::before { left: 0; }
@@ -223,14 +247,14 @@ button { font: inherit; color: inherit; }
 .tv-choose { padding: 0 var(--side) 3rem; }
 .tv-choose[hidden] { display: none; }
 .tv-choose-title { font-size: 3.4rem; margin: 1rem 0 0; }
-.tv-choose-turn { margin: 0.5rem 0 0; font-family: var(--font-display); font-stretch: 85%; font-weight: 800; font-size: 3rem; color: var(--aurora-green); }
+.tv-choose-turn { margin: 0.5rem 0 0; font-weight: 600; font-size: 3rem; color: var(--text); }
 .tv-choose-turn[hidden], .tv-choose-turn:empty { display: none; }
 .tv-choose-block { margin-top: 1rem; }
 .nl-choose-label { margin: 1.4rem 0 0; font-size: 1.6rem; font-weight: 700; color: var(--text-2); }
 .tv-choose-group { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.75rem 0.5rem; }
 .tv-choose-actions { padding: 1rem 0.5rem; }
 .tv-pick { margin-top: 1rem; }
-.tv-pick-card { display: grid; grid-template-columns: 22rem 1fr; gap: 3rem; align-items: start; padding: 1.5rem; border-radius: 1.2rem; background: rgba(17, 26, 43, 0.85); border: 0.1rem solid var(--line); }
+.tv-pick-card { display: grid; grid-template-columns: 22rem 1fr; gap: 3rem; align-items: start; padding: 1.5rem; border-radius: 1.2rem; background: rgba(20, 28, 47, 0.85); border: 0.1rem solid var(--line); }
 .tv-pick-title { font-size: 3.4rem; margin: 0; }
 .tv-pick-reason { margin: 0.8rem 0 0; font-size: 1.9rem; font-weight: 600; }
 .tv-pick-actions { padding: 1.5rem 0 0; display: flex; flex-wrap: wrap; gap: 1rem; }
@@ -241,21 +265,20 @@ button { font: inherit; color: inherit; }
 .tv-vetoes > h2 { display: block; }
 
 /* M9c: spoiler hiding (W11) */
-.tv-card.is-spoiler .tv-art img { filter: blur(1.1rem); transform: scale(1.15); }
+.tv-card.is-spoiler .tv-art img { opacity: 0; }   /* hidden outright: no blur filters on the TV */
 
 /* ---- M10a: Downloads */
 .tv-downloads { padding-bottom: 2rem; }
 .tv-dl-list { padding: 1.5rem var(--side) 0; display: grid; gap: 1rem; }
 .tv-dl-item { display: flex; align-items: center; justify-content: space-between; gap: 3rem; padding: 0.75rem 0; border-top: 0.1rem solid var(--line); }
 .tv-dl-main { min-width: 0; flex: 1; }
-.tv-dl-title { font-size: 2.5rem; font-stretch: 85%; }
-.tv-dl-tag { display: inline-block; margin-top: 0.5rem; font-size: 1.5rem; font-weight: 800; padding: 0.15rem 1rem; border-radius: 999px; border: 0.15rem solid var(--line); color: var(--text-2); }
+.tv-dl-title { font-size: 2.5rem; letter-spacing: -0.01em; }
+.tv-dl-tag { display: inline-block; margin-top: 0.5rem; font-size: 1.5rem; font-weight: 700; padding: 0.15rem 1rem; border-radius: 999px; border: 0.15rem solid var(--line); color: var(--text-2); }
 .is-ready > .tv-dl-main .tv-dl-tag { color: var(--ready); border-color: currentColor; }
 .is-failed > .tv-dl-main .tv-dl-tag { color: var(--bad); border-color: currentColor; }
 .tv-dl-meta { margin: 0.5rem 0 0; color: var(--text-2); }
 .tv-dl-bar { margin-top: 0.75rem; height: 0.75rem; border-radius: 0.4rem; background: var(--surface-2); overflow: hidden; }
 .tv-dl-fill { display: block; height: 100%; width: 0; background: var(--aurora-line); transition: width 0.4s ease; }
-.is-importing .tv-dl-fill { background: var(--aurora-violet); }
 .tv-dl-error { margin: 0.5rem 0 0; color: var(--bad); font-weight: 700; }
 .tv-dl-error:empty { display: none; }
 .tv-dl-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 1.25rem; padding: 0.75rem 0.5rem; }
