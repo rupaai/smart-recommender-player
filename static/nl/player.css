@@ -171,25 +171,30 @@ html.tv.laptop { font-size: min(100vw / 140, 100vh / 80) /* the laptop app: same
 .tv .nl-top { background: linear-gradient(rgba(8, 11, 20, 0.75), transparent); }
 .tv .nl-title { font-weight: 600; letter-spacing: -0.01em; }
 
-/* Film-strip seek bar (TV player): a dark strip with sprocket holes along the top and bottom edges, a lighter band for
-   the frames, the part already played tinted with the aurora gradient, a thin white playhead. Chapters are gaps between
-   frames. The input underneath is a normal range, so Left / Right still skip. */
+/* Film-strip seek bar (TV player): a slim dark strip with tiny sprocket dashes along the top and bottom edges, a thin
+   lighter band for the frames, the part already played tinted with the aurora gradient, a thin white playhead. Chapters
+   are gaps between frames. The input underneath is a normal range, so Left / Right still skip.
+   Steady on seek: the aurora gradient is drawn once at full width and never resized; a cover layer on top hides the part
+   not played yet (buffered part a little lighter), so only the edge moves and the colours stay put. Nothing here changes
+   size on focus or on a time update. --nl-thumb-d is the playhead width, the one place chapter ticks are placed from. */
 .tv .nl-seek-wrap { --nl-thumb-d: 0.25rem; }
-.tv .nl-seek { height: 5rem; }
-.tv .nl-seek::-webkit-slider-runnable-track { height: 3.75rem; border-radius: 0.75rem; background-color: #0b0e15;
+.tv .nl-seek { height: 2.5rem; }
+.tv .nl-seek::-webkit-slider-runnable-track { height: 1.25rem; border-radius: 0.25rem; background-color: #0b0e15;
   background-repeat: no-repeat;
   background-image:
-    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.35) 0 0.75rem, transparent 0.75rem 1.75rem),
-    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.35) 0 0.75rem, transparent 0.75rem 1.75rem),
-    linear-gradient(90deg, rgba(155, 93, 229, 0.35), rgba(226, 71, 154, 0.35), rgba(127, 178, 236, 0.35)),
-    linear-gradient(90deg, transparent var(--pct, 0%), rgba(238, 240, 246, 0.1) var(--pct, 0%), rgba(238, 240, 246, 0.1) var(--buf, 0%), transparent var(--buf, 0%)),
-    linear-gradient(rgba(238, 240, 246, 0.16), rgba(238, 240, 246, 0.16));
-  background-size: 100% 0.375rem, 100% 0.375rem, var(--pct, 0%) 100%, 100% 100%, 100% 1.75rem;
-  background-position: 0 0.375rem, 0 calc(100% - 0.375rem), 0 0, 0 0, 0 50%; }
-.tv .nl-seek::-webkit-slider-thumb { width: 0.25rem; height: 3.75rem; margin-top: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0.25rem rgba(0, 0, 0, 0.5); }
+    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.4) 0 0.25rem, transparent 0.25rem 0.5rem),
+    repeating-linear-gradient(90deg, rgba(238, 240, 246, 0.4) 0 0.25rem, transparent 0.25rem 0.5rem),
+    linear-gradient(rgba(238, 240, 246, 0.14), rgba(238, 240, 246, 0.14)),
+    linear-gradient(90deg, transparent var(--pct, 0%), #161c2b var(--pct, 0%), #161c2b var(--buf, 0%), #0b0e15 var(--buf, 0%)),
+    linear-gradient(90deg, rgba(155, 93, 229, 0.7), rgba(226, 71, 154, 0.7), rgba(127, 178, 236, 0.7));
+  background-size: 100% 0.1875rem, 100% 0.1875rem, 100% 0.5rem, 100% 100%, 100% 100%;
+  background-position: 0 0.125rem, 0 calc(100% - 0.125rem), 0 50%, 0 0, 0 0; }
+.tv .nl-seek::-webkit-slider-thumb { width: 0.25rem; height: 1.25rem; margin-top: 0; border-radius: 0; background: #fff; box-shadow: 0 0 0.25rem rgba(0, 0, 0, 0.5); }
 .tv .nl-seek:focus::-webkit-slider-runnable-track { box-shadow: var(--nl-focus); }
-.tv .nl-seek:focus::-webkit-slider-thumb { width: 0.375rem; }
-.tv .nl-ticks i { top: -0.875rem; width: 0.5rem; height: 1.75rem; margin-left: -0.25rem; border-radius: 0; background: #0b0e15; box-shadow: none; }
+.tv .nl-ticks i { top: -0.625rem; width: 0.375rem; height: 1.25rem; margin-left: -0.1875rem; border-radius: 0; background: #0b0e15; box-shadow: none; }
+/* The labels keep one width, so "-1:55:00" and "-59:59" never resize the bar. */
+.tv .nl-time { font-variant-numeric: tabular-nums; min-width: 5em; }
+.tv .nl-time-end { min-width: 11em; }
 .tv .nl-menu { min-width: 24rem; right: 5rem; bottom: calc(var(--nl-tap) * 2 + 6rem); border-radius: 1.5rem; padding: 0.75rem;
   box-shadow: 0 1.5rem 3.25rem rgba(0, 0, 0, 0.45); }
 .tv .nl-menu-title { font-size: 1.5rem; padding: 0.75rem 1.25rem 0.5rem; letter-spacing: 0; text-transform: none; font-weight: 600; color: var(--nl-ink-2); }
@@ -274,7 +279,6 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .tv .nl-seg .nl-primary { min-height: 5rem; }
 .tv .nl-seg .nl-secondary { min-height: 4rem; font-size: 1.5rem; }
 .tv .nl-seg .nl-secondary[aria-pressed="true"] { background: rgba(238, 240, 246, 0.08); border-color: transparent; }
-.tv .nl-seek-wrap { --nl-thumb-d: 2rem; }
 .tv .nl-thumb-time, .tv .nl-thumb-chapter { font-size: 1.5rem; padding: 0.25rem 1.25rem; }
 .tv .nl-thumb-img { border-width: 0.125rem; border-radius: 1rem; border-color: rgba(238, 240, 246, 0.7); box-shadow: 0 0.75rem 2.5rem rgba(0, 0, 0, 0.6); }
 @media (max-width: 640px) {
@@ -319,5 +323,4 @@ html.native, html.native body, .nl-player.native { background: transparent !impo
 .tv.laptop .nl-chip:focus:not(:focus-visible) { background: rgba(255, 255, 255, 0.08); }
 .tv.laptop .nl-btn:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.12); }
 .tv.laptop .nl-chip:focus:not(:focus-visible):hover { background: rgba(255, 255, 255, 0.18); }
-.tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-thumb { width: 0.25rem; }
 .tv.laptop .nl-seek:focus:not(:focus-visible)::-webkit-slider-runnable-track { box-shadow: none; }

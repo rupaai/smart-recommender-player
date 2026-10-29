@@ -175,17 +175,20 @@ html.laptop .tv-card:hover .tv-details { display: flex; }
   .tv-pill, .tv-btn, .tv-art, .tv-account, .tv-who-art { transition: none; }
 }
 
-/* ---- Lights down: Play on a title or show page fades the glows and the page to dark, once, with opacity only (tv.js adds the class,
-   then goes to the player after at most 0.8 s). Only the title stays, small and dim. */
-.tv-lights { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: #050608; opacity: 0;
-  pointer-events: none; transition: opacity 0.4s ease; }
-.tv-lights span { font-size: 1.5rem; font-weight: 500; letter-spacing: 0.24em; text-transform: uppercase; color: rgba(238, 240, 246, 0.6); text-align: center; padding: 0 var(--side); }
-html.nl-lights-down body::before, html.nl-lights-down .tv-bar, html.nl-lights-down #tv-main { opacity: 0; transition: opacity 0.4s ease; }
-html.nl-lights-down .tv-lights { opacity: 1; }
-.tv-bar, #tv-main { transition: opacity 0.4s ease; }
-@media (prefers-reduced-motion: reduce) {
-  .tv-lights, html.nl-lights-down body::before, html.nl-lights-down .tv-bar, html.nl-lights-down #tv-main { transition: none; }
-}
+/* ---- Curtain: Play on a title or show page parts two dark halves from a thin aurora line in the middle and shows the title
+   big in aurora colours (tv.js adds the overlay, then is-open; it goes to the player 0.4 s after, 1.8 s in all). Transform and
+   opacity transitions only, once. Gradient text is Labiba's request (2026-10-29). */
+.tv-curtain { position: fixed; inset: 0; z-index: 50; pointer-events: none; background: #0f1628; display: flex; align-items: center; justify-content: center; padding: 0 var(--side); }
+.tv-curtain-title { margin: 0; width: fit-content; max-width: 100%; text-align: center; font-size: 9rem; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em;
+  overflow-wrap: anywhere; color: #e2479a; background: linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.tv-curtain-top, .tv-curtain-bottom { position: absolute; left: 0; right: 0; height: 50%; background: #05070d; transition: transform 1.4s ease-in-out; }
+.tv-curtain-top { top: 0; }
+.tv-curtain-bottom { bottom: 0; }
+.tv-curtain-line { position: absolute; left: 0; right: 0; top: 50%; height: 0.125rem; margin-top: -0.0625rem; background: linear-gradient(90deg, #9b5de5, #e2479a, #7fb2ec);
+  box-shadow: 0 0 1rem 0.125rem rgba(226, 71, 154, 0.55), 0 0 3rem 0.5rem rgba(155, 93, 229, 0.35); transition: opacity 1.2s ease-in-out; }
+.tv-curtain.is-open .tv-curtain-top { transform: translateY(-100%); }
+.tv-curtain.is-open .tv-curtain-bottom { transform: translateY(100%); }
+.tv-curtain.is-open .tv-curtain-line { opacity: 0; }
 
 /* ---- M6: picks for two, watchlist, yes / maybe / pass, runtime chips */
 .tv-picks-note { margin: 0.5rem var(--side) 0; color: var(--text-2); }

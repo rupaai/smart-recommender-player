@@ -220,42 +220,44 @@
 
   /* ----------------------------------------------------------------- title */
 
-  /* Lights down: pressing Play fades the glows and the page to dark (opacity only, 0.4 s, once), leaves only the title,
-   * small and dim, and goes to the player after 0.7 s. Never more than 0.8 s; with reduced motion it goes straight away. */
-  var LIGHTS_MS = 700;
-  var lightsDone = false;
+  /* Curtain: Play parts two dark halves from an aurora line in the middle and shows the title big in aurora colours, then goes
+   * to the player 0.4 s after it is open (1.8 s in all). Once. Reduced motion: straight away. Motion is CSS transitions only. */
+  var CURTAIN_MS = 1400;
+  var CURTAIN_HOLD_MS = 400;
+  var curtainStarted = false;
   function reducedMotion() {
     try { return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches); } catch (e) { return false; }
   }
-  function lightsDown(title, url) {
-    var cover = el("div", "tv-lights");
+  function curtain(title, url) {
+    var cover = el("div", "tv-curtain");
     cover.setAttribute("aria-hidden", "true");
-    cover.appendChild(el("span", null, title || ""));
+    cover.appendChild(el("h2", "tv-curtain-title", title || ""));
+    ["tv-curtain-top", "tv-curtain-bottom", "tv-curtain-line"].forEach(function (c) { cover.appendChild(el("div", c)); });
     body.appendChild(cover);
-    void cover.offsetWidth;        // paint the start state, so the fade has something to fade from
-    document.documentElement.classList.add("nl-lights-down");
-    // Coming back (Back from the player, or the page restored from cache): the lights are on again.
-    window.addEventListener("pageshow", function (ev) {
+    void cover.offsetWidth;        // paint it closed first, so the opening has something to move from
+    cover.classList.add("is-open");
+    // Back from the player (page restored from cache): the curtain is gone again.
+    window.addEventListener("pageshow", function restore(ev) {
       if (!ev.persisted) { return; }
-      lightsDone = false;
-      document.documentElement.classList.remove("nl-lights-down");
+      window.removeEventListener("pageshow", restore);
+      curtainStarted = false;
       if (cover.parentNode) { cover.parentNode.removeChild(cover); }
     });
-    window.setTimeout(function () { window.location.href = url; }, LIGHTS_MS);
+    window.setTimeout(function () { window.location.href = url; }, CURTAIN_MS + CURTAIN_HOLD_MS);
   }
-  function withLightsDown(a, title) {
+  function withCurtain(a, title) {
     a.addEventListener("click", function (ev) {
-      if (ev.defaultPrevented || lightsDone || reducedMotion() || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) { return; }
+      if (ev.defaultPrevented || curtainStarted || reducedMotion() || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button) { return; }
       ev.preventDefault();
-      lightsDone = true;
-      lightsDown(title, a.href);
+      curtainStarted = true;
+      curtain(title, a.href);
     });
   }
-  function button(text, href, primary, lightsTitle) {
+  function button(text, href, primary, curtainTitle) {
     var a = el("a", "tv-btn" + (primary ? " is-primary" : ""), text);
     a.href = tvHref(href);
     a.setAttribute("data-nl-focus", "");
-    if (lightsTitle) { withLightsDown(a, lightsTitle); }
+    if (curtainTitle) { withCurtain(a, curtainTitle); }
     return a;
   }
 
