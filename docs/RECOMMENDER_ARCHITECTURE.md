@@ -1,5 +1,7 @@
 # Recommender Architecture
 
+> **2026-10-31:** the TIGER ("generative") engine described here was removed; the app now uses Wishmatch with this legacy engine as its fallback. Read [docs/guides/wishmatch.md](guides/wishmatch.md) for how recommendations work today. The legacy parts below still apply.
+
 How a "what should we watch?" request turns into a list of films, as the code behaves on 2026-10-08 (after the series-order and history fixes).
 
 > **One-line summary:** there are two engines. A rules-and-scores engine ("legacy") and a small sequence model ("generative" / TIGER). A router chooses one per request. Right now the generative engine answers almost every request. It has been running on a very weak signal (see [What "learning" means today](#what-learning-means-today)).
