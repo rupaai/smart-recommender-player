@@ -37,6 +37,7 @@ def hrefs(html):
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     client, ids, server = ctx["client"], ctx["ids"], ctx["server"]
+    state = ctx["state"]
     from services import nl_people as np
 
     alpha, show = ids["Alpha"], ids["Sigma"]
@@ -56,7 +57,7 @@ def run(tmp):
     r = client.get("/player", follow_redirects=True)
     check("/player ends on the laptop home", r.status_code == 200 and 'data-surface="laptop"' in r.text)
 
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": "a" * 32, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": "b" * 32, "profile_id": 2},
     ]))

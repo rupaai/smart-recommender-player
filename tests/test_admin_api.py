@@ -65,6 +65,7 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ["MODELS_DIR"] = os.path.join(models, "current")
     os.environ.pop("ADMIN_TOKEN", None)
     import server  # noqa: E402
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
     from services import model_bundle
 
@@ -75,9 +76,9 @@ with tempfile.TemporaryDirectory() as tmp:
     conn.close()
 
     # Real models are not built in CI: pretend loading them works.
-    server.generative_retriever.reload = lambda: True
-    server.vibe_index.reload = lambda: True
-    server.vibe_index.is_ready = lambda: True
+    state.generative_retriever.reload = lambda: True
+    state.vibe_index.reload = lambda: True
+    state.vibe_index.is_ready = lambda: True
     real_smoke = model_bundle.smoke_test
     model_bundle.smoke_test = lambda folder, db: None
     client = TestClient(server.app)
@@ -157,12 +158,12 @@ with tempfile.TemporaryDirectory() as tmp:
 
     print("reload failure restores the old model")
     model_bundle.smoke_test = lambda folder, db: None
-    state = {"fail_next": False}
-    real = server.reload_models
+    flags = {"fail_next": False}
+    real = state.reload_models
 
     def flaky():
-        if state["fail_next"]:
-            state["fail_next"] = False
+        if flags["fail_next"]:
+            flags["fail_next"] = False
             raise RuntimeError("boom")
         real()
 
@@ -170,7 +171,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # Install through the module with the flaky reloader (the app's router holds the original).
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as f:
         f.write(model_bundle2)
-    state["fail_next"] = True
+    flags["fail_next"] = True
     try:
         model_bundle.install_bundle(f.name, db_path=db_file, current_link=link, reload_models=flaky)
         check("failed reload raises", False)

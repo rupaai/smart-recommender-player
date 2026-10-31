@@ -274,6 +274,7 @@ class FakeRecommender:
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     client.follow_redirects = False
     from services import nl_people as np
 
@@ -295,7 +296,7 @@ def run(tmp):
     db.rate_item(arrival, profile_id=1, user_rating=9.0, status="seen")
     db.rate_item(arrival, profile_id=2, user_rating=8.0, status="seen")
 
-    nobody = server.nl_people
+    nobody = state.nl_people
 
     # ------------------------------------------------------------------ nobody configured
     print("no people configured: one implicit viewer")
@@ -322,8 +323,8 @@ def run(tmp):
     check("the chips are offered", [c["label"] for c in wl["chips"]] == ["Under 90 min", "Under 2 h"])
 
     fake_rec = FakeRecommender()
-    real_rec = server.recommender_service.recommend
-    server.recommender_service.recommend = fake_rec.recommend
+    real_rec = state.recommender_service.recommend
+    state.recommender_service.recommend = fake_rec.recommend
     fake_rec.pool = [
         {"id": delta, "title": "Delta", "genres": "Comedy", "rating": 7.8, "recommendation_score": 8.0},
         {"id": zeta, "title": "Zeta", "genres": "Sci-Fi, Drama", "rating": 7.9, "recommendation_score": 7.0},
@@ -383,15 +384,15 @@ def run(tmp):
     check("an empty answer from the recommender also falls back", p["engine"] == "fallback" and p["items"], p)
 
     print("the real recommender in this image")
-    server.recommender_service.recommend = real_rec
+    state.recommender_service.recommend = real_rec
     r = client.get("/api/nl/picks")
     p = r.json()
     check("the real thing answers 200 on the test library (recommender or fallback, either is fine)", r.status_code == 200 and p["engine"] in ("recommender", "fallback") and all(i["reason"] for i in p["items"]), (r.status_code, r.text[:300]))
     check("whatever it returns is on the shelf, once each", len({i["id"] for i in p["items"]}) == len(p["items"]) and all(i["id"] in (alpha, beta, delta, epsilon, zeta) for i in p["items"]), [i["id"] for i in p["items"]])
-    server.recommender_service.recommend = fake_rec.recommend
+    state.recommender_service.recommend = fake_rec.recommend
 
     # ----------------------------------------------------------------- two people
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -514,8 +515,8 @@ def run(tmp):
     r = client.get("/nl/movies", headers=cookie("labiba"))
     check("web nav links the watchlist", "/nl/watchlist" in r.text)
 
-    server.nl_people = nobody
-    server.recommender_service.recommend = real_rec
+    state.nl_people = nobody
+    state.recommender_service.recommend = real_rec
 
 
 SECRET_KEY = nl_fake.SECRET

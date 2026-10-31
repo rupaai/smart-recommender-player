@@ -167,6 +167,7 @@ def main():
         os.environ["DATABASE_PATH"] = os.path.join(tmp, "c.db")
         os.environ["MODELS_DIR"] = os.path.join(tmp, "models")
         import server  # noqa: E402 - needs the env set first
+        from web import state  # noqa: E402
         from fastapi.testclient import TestClient
         client = TestClient(server.app)
 
@@ -183,7 +184,7 @@ def main():
         r = client.get("/api/rec/movies/profile/1")
         check("GET returns what was stored", r.status_code == 200 and r.json()["summary"] == "You like quiet films.", r.text)
         check("an empty summary is refused", client.put("/api/rec/movies/profile/1", json={"summary": "  "}).status_code == 422)
-        check("the server's own database has it", server.db.get_wishmatch_profile(2)["likes"] == ["silly"])
+        check("the server's own database has it", state.db.get_wishmatch_profile(2)["likes"] == ["silly"])
 
     print("\n[Ollama] The default: the bake-off winner, free")
     o_db = twm.catalogue()

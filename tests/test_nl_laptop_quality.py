@@ -150,10 +150,11 @@ class LaptopJellyfin(nl_fake.FakeJellyfin):
 def run_api(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids = ctx["server"], ctx["client"], ctx["ids"]
+    state = ctx["state"]
     fake = LaptopJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha = ids["Alpha"]
 
     def play(**params):

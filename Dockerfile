@@ -23,6 +23,7 @@ RUN apt-get update \
 
 COPY server.py database.py scanner.py enricher.py recommender_rules.yaml ./
 COPY services ./services
+COPY web ./web
 COPY packages ./packages
 COPY templates ./templates
 COPY static ./static

@@ -186,14 +186,15 @@ def run(tmp):
     extra = {"northern_lights": {"tools": {"jellystat": "http://mars:3000", "uptime_kuma": "javascript:alert(1)"}}}
     ctx = nl_fake.boot(tmp, extra)
     server, client, ids = ctx["server"], ctx["client"], ctx["ids"]
+    state = ctx["state"]
     client.follow_redirects = False
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     session = FakeSession(svc.movie_dir, svc.tv_dir)
     svc.session = session
-    server.nl_health_state.forget()
-    server.downloads_store.clear()
-    server.downloads_store[1] = {"status": "downloading", "total_size": 10, "progress": 4, "download_speed": 5}
-    server.downloads_store[2] = {"status": "connecting"}
+    state.nl_health_state.forget()
+    state.downloads_store.clear()
+    state.downloads_store[1] = {"status": "downloading", "total_size": 10, "progress": 4, "download_speed": 5}
+    state.downloads_store[2] = {"status": "connecting"}
 
     print("H3 the compact status")
     r = client.get("/api/nl/health")
@@ -204,16 +205,16 @@ def run(tmp):
     body = r.text
     check("no key, no address, no path in the reply", SECRET not in body and "jellyfin.test" not in body and "http" not in body and tmp not in body and "X-Emby" not in body, body)
     session.folders_status = 401
-    server.nl_health_state.forget()
+    state.nl_health_state.forget()
     d = client.get("/api/nl/health").json()
     check("a refused key shows as a problem with its own words", d["jellyfin"]["ok"] is False and d["level"] == "bad" and "refused" in d["jellyfin"]["label"], d["jellyfin"])
     session.folders_status = 200
     session.down = True
-    server.nl_health_state.forget()
+    state.nl_health_state.forget()
     d = client.get("/api/nl/health").json()
     check("Jellyfin down is a problem, still a 200 (the page keeps working)", d["jellyfin"]["ok"] is False and d["level"] == "bad" and "not answering" in d["jellyfin"]["label"], d)
     session.down = False
-    server.nl_health_state.forget()
+    state.nl_health_state.forget()
     check("and back up", client.get("/api/nl/health").json()["jellyfin"]["ok"] is True)
 
     print("H4 the admin data")
@@ -237,7 +238,7 @@ def run(tmp):
     check("the repair summary leaks nothing", SECRET not in r.text and "X-Emby" not in r.text)
 
     print("no tools configured")
-    server.config.pop("northern_lights", None)
+    state.config.pop("northern_lights", None)
     a = client.get("/api/nl/admin").json()
     check("an unset tool has no link at all", a["tools"] == {"links": [], "ignored": []}, a["tools"])
 

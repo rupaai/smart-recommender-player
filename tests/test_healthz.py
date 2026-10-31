@@ -59,6 +59,7 @@ def test_healthz(tmp):
     os.environ["GIT_SHA"] = "abc1234"
     os.environ.pop("HOMELAB_VERSION", None)
     import server  # noqa: E402 - needs DATABASE_PATH set first
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
 
     client = TestClient(server.app)
@@ -94,19 +95,19 @@ def test_healthz(tmp):
     body = client.get("/healthz").json()
     check("unreadable manifest gives null bundle", body.get("ok") is True and body.get("model_bundle") is None, body)
 
-    real_get_connection = server.db.get_connection
+    real_get_connection = state.db.get_connection
 
     def broken_get_connection(*args, **kwargs):
         raise sqlite3.OperationalError("unable to open database file")
 
-    server.db.get_connection = broken_get_connection
+    state.db.get_connection = broken_get_connection
     try:
         r = client.get("/healthz")
         body = r.json()
         check("503 when SELECT 1 fails", r.status_code == 503, r.status_code)
         check("503 body is ok false with error", body.get("ok") is False and "unable to open" in body.get("error", ""), body)
     finally:
-        server.db.get_connection = real_get_connection
+        state.db.get_connection = real_get_connection
 
     # A database that opens and reads fine but cannot be written must fail too.
     @contextlib.contextmanager
@@ -117,12 +118,12 @@ def test_healthz(tmp):
         finally:
             conn.close()
 
-    server.db.get_connection = read_only_connection
+    state.db.get_connection = read_only_connection
     try:
         r = client.get("/healthz")
         check("503 when the database is read-only", r.status_code == 503 and r.json().get("ok") is False, r.text)
     finally:
-        server.db.get_connection = real_get_connection
+        state.db.get_connection = real_get_connection
 
     r = client.get("/healthz")
     check("200 again once the DB is back", r.status_code == 200 and r.json().get("ok") is True, r.text)

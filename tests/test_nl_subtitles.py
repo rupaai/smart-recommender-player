@@ -172,17 +172,18 @@ def run(tmp):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")
     import server
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
 
     fake = FakeJellyfin()
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     svc.base_url = "http://jellyfin.test:8096"
     svc.api_key = SECRET
     svc.user_id = "user1"
     svc.session = fake
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     client = TestClient(server.app)
-    server.db.register_source_file(FILE, "A", 2020)
+    state.db.register_source_file(FILE, "A", 2020)
     item_id = 1
 
     print("GET /api/nl/subtitles/{id}")
@@ -242,7 +243,7 @@ def run(tmp):
     check("404 on search: plugin_missing", client.get(f"/api/nl/subtitles/{item_id}").json()["code"] == "plugin_missing")
     fake.search_status = 200
     fake.down = True
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     r = client.get(f"/api/nl/subtitles/{item_id}")
     check("Jellyfin down: 503 with a message", r.status_code == 503 and r.json()["code"] == "unavailable" and "Jellyfin" in r.json()["detail"], r.text)
     fake.down = False
@@ -279,26 +280,26 @@ def run(tmp):
           all(SECRET not in p for (_m, p, _h) in fake.calls))
 
     print("routes with replaced service methods")
-    real_search, real_download = server.jellyfin_playback.search_subtitles, server.jellyfin_playback.download_subtitle
+    real_search, real_download = state.jellyfin_playback.search_subtitles, state.jellyfin_playback.download_subtitle
     seen = {}
-    server.jellyfin_playback.search_subtitles = lambda item, language: seen.update(file=item["sources"][0]["file_path"], language=language) or {
+    state.jellyfin_playback.search_subtitles = lambda item, language: seen.update(file=item["sources"][0]["file_path"], language=language) or {
         "language": language, "language_name": "English", "results": []}
-    server.jellyfin_playback.download_subtitle = lambda item, sid: seen.update(sid=sid)
+    state.jellyfin_playback.download_subtitle = lambda item, sid: seen.update(sid=sid)
     r = client.get(f"/api/nl/subtitles/{item_id}")
     check("search is given the title's file and the language", seen.get("file") == FILE and seen.get("language") == "eng", seen)
     check("empty list from the service is no_results", r.json()["code"] == "no_results")
     client.post(f"/api/nl/subtitles/{item_id}", json={"subtitle_id": "xyz_1"})
     check("download is given the id as is", seen.get("sid") == "xyz_1", seen)
-    server.jellyfin_playback.search_subtitles, server.jellyfin_playback.download_subtitle = real_search, real_download
+    state.jellyfin_playback.search_subtitles, state.jellyfin_playback.download_subtitle = real_search, real_download
 
     print("a show's episode")
-    server.db.register_source_file("/media/Shows/Sigma/Season 1/Sigma S01E01.mkv", "Sigma", 2020)
-    with server.db.get_connection() as conn:
+    state.db.register_source_file("/media/Shows/Sigma/Season 1/Sigma S01E01.mkv", "Sigma", 2020)
+    with state.db.get_connection() as conn:
         rows = conn.execute("SELECT id, media_item_id FROM media_sources ORDER BY id").fetchall()
     check("registered a second file", len(rows) == 2, rows)
     show_item, show_source = rows[1][1], rows[1][0]
     fake.items.append({"Id": "jf2", "Path": "/media/Shows/Sigma/Season 1/Sigma S01E01.mkv"})
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     r = client.get(f"/api/nl/subtitles/{show_item}", params={"source": show_source})
     check("the episode's own Jellyfin id is used (it is not in the fake, so 404 from Jellyfin = plugin_missing or not found)",
           any("jf2/RemoteSearch" in p for (_m, p) in fake.subtitle_calls()), fake.subtitle_calls()[-3:])

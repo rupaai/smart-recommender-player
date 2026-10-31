@@ -118,7 +118,8 @@ def test_pure():
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids = ctx["server"], ctx["client"], ctx["ids"]
-    store = server.downloads_store
+    state = ctx["state"]
+    store = state.downloads_store
     store.clear()
     alpha, sigma, gamma = ids["Alpha"], ids["Sigma"], ids["Gamma Ray"]
     client.follow_redirects = False
@@ -128,14 +129,14 @@ def run(tmp):
     async def fake_download(magnet, download_id, movie_id, title, media_type="movie"):
         started.append((magnet, download_id, movie_id, title, media_type))
 
-    server.torrent_downloader.download = fake_download
+    state.torrent_downloader.download = fake_download
 
     print("starting a download remembers how to start it again")
     r = client.post("/api/torrent/download", json={
         "magnet_link": MAGNET, "movie_id": gamma, "movie_title": "Gamma.Ray.2018.1080p.WEB-DL.x264", "media_type": "movie"})
     check("the old endpoint still works", r.status_code == 200 and r.json()["success"], r.text)
     gamma_download_id = r.json()["download_id"]
-    mem = server.download_requests.get(gamma_download_id)
+    mem = state.download_requests.get(gamma_download_id)
     check("the clean title and link are remembered", mem and mem["magnet"] == MAGNET and "1080p" not in mem["title"], mem)
 
     print("same catalogue title, separate torrent copies")
@@ -145,15 +146,15 @@ def run(tmp):
     other_download_id = r2.json().get("download_id")
     check("same movie id gets a distinct download id", r2.status_code == 200 and other_download_id and other_download_id != gamma_download_id
           and store[gamma_download_id]["movie_id"] == store[other_download_id]["movie_id"] == gamma, (r2.text, store))
-    check("each release keeps its own retry magnet", server.download_requests.get(gamma_download_id)["magnet"] == MAGNET
-          and server.download_requests.get(other_download_id)["magnet"] == other_magnet)
+    check("each release keeps its own retry magnet", state.download_requests.get(gamma_download_id)["magnet"] == MAGNET
+          and state.download_requests.get(other_download_id)["magnet"] == other_magnet)
     cancelled = []
 
     async def fake_cancel(download_id):
         cancelled.append(download_id)
         return True
 
-    server.torrent_downloader.cancel = fake_cancel
+    state.torrent_downloader.cancel = fake_cancel
     cancel_response = client.post("/api/torrent/cancel", json={"download_id": gamma_download_id})
     check("cancelling one copy passes only its download id", cancel_response.json()["success"] and cancelled == [gamma_download_id])
     status = client.get(f"/api/torrent/status/{other_download_id}").json()
@@ -168,7 +169,7 @@ def run(tmp):
     store[sigma_key] = {"download_id": sigma_key, "movie_id": sigma, "status": "connecting", "progress": 0.0, "name": "Sigma", "media_type": "tv"}
     store[alpha_key] = {"download_id": alpha_key, "movie_id": alpha, "status": "completed", "progress": 100.0, "name": "Alpha", "media_type": "movie"}
     store[missing_key] = {"download_id": missing_key, "movie_id": 99999, "status": "error", "error": "Could not open '/srv/couchcinema/downloads/x/y'"}
-    server.download_requests.remember(gamma_key, MAGNET, "Gamma Ray", "movie", movie_id=gamma)
+    state.download_requests.remember(gamma_key, MAGNET, "Gamma Ray", "movie", movie_id=gamma)
     r = client.get("/api/nl/downloads")
     d = r.json()
     rows = {row["id"]: row for row in d["downloads"]}
@@ -185,11 +186,11 @@ def run(tmp):
           and SECRET not in body and "ab\"" not in body and "hash" not in body and "/srv" not in body)
 
     print("ready waits for the library")
-    with server.db.get_connection() as conn:
+    with state.db.get_connection() as conn:
         conn.execute("DELETE FROM media_sources WHERE media_item_id = ?", (alpha,))
     row = {x["id"]: x for x in client.get("/api/nl/downloads").json()["downloads"]}[alpha_key]
     check("completed but with no file yet is importing, not ready", row["state"] == "importing" and row["href"] is None and row["note"], row)
-    server.db.register_source_file(nl_fake.ALPHA, "Alpha", 2020, "movie")
+    state.db.register_source_file(nl_fake.ALPHA, "Alpha", 2020, "movie")
 
     print("retry")
     store[gamma_key]["status"] = "error"

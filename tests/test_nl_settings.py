@@ -212,10 +212,11 @@ def run(tmp):
 
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = PlayJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha, beta, sigma = ids["Alpha"], ids["Beta"], ids["Sigma"]
     client.follow_redirects = False
 
@@ -332,7 +333,7 @@ def run(tmp):
     check("null clears (picture size falls back to fit)", r.json()["prefs"]["skip_seconds"] is None and r.json()["prefs"]["picture_fit"] == "fit", r.text)
     client.put("/api/nl/prefs", json={"autoplay": True, "quality_kbps": None})
 
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -353,7 +354,7 @@ def run(tmp):
           and client.get("/api/nl/prefs", headers=cookie("labiba")).json()["prefs"]["quality_kbps"] == 2000)
     check("autoplay default follows the viewer", client.get(f"/api/nl/show/{ids['Alpha']}", headers=cookie("labiba")).status_code in (200, 404)
           and client.get(nxt, headers=cookie("partner")).json()["autoplay"] is False)   # Sigma has its own switch (off) from above
-    server.nl_people = np.People([])
+    state.nl_people = np.People([])
 
     print("pages")
     me = client.get("/nl/me").text

@@ -116,10 +116,11 @@ def run(tmp):
 
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = TogetherJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha, beta, sigma = ids["Alpha"], ids["Beta"], ids["Sigma"]
     client.follow_redirects = False
 
@@ -148,7 +149,7 @@ def run(tmp):
           and client.get("/api/nl/react/99999").json()["ask"] is False)
     check("the key is never in a reply", SECRET not in client.get(f"/api/nl/react/{beta}").text)
 
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -165,10 +166,10 @@ def run(tmp):
     check("... and not once both have one", client.get(f"/api/nl/react/{sigma}", headers=cookie("both")).json()["ask"] is False)
     db.rate_item(alpha, profile_id=2, user_rating=8.0, status="seen")
     check("a bare star rating (no verdict) is not a verdict, so the question is still asked", client.get(f"/api/nl/react/{alpha}", headers=cookie("partner")).json()["ask"] is True)
-    server.nl_people = np.People(np.parse_people([{"id": "solo", "name": "Solo", "jellyfin_user_id": LAB}]))
+    state.nl_people = np.People(np.parse_people([{"id": "solo", "name": "Solo", "jellyfin_user_id": LAB}]))
     check("a person with no profile is not asked and cannot answer", client.get(f"/api/nl/react/{beta}", headers=cookie("solo")).json()["ask"] is False
           and client.post(f"/api/nl/react/{beta}", json={"reaction": "liked"}, headers=cookie("solo")).status_code == 400)
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -189,11 +190,11 @@ def run(tmp):
     check("a bad value is a 400", r.status_code == 400)
     r = client.put("/api/nl/prefs", json={"audio_lang": "fra"}, headers=cookie("labiba"))
     check("saving another pref leaves it on", r.json()["prefs"]["hide_spoilers"] is True and r.json()["prefs"]["audio_lang"] == "fra")
-    nopeople = server.nl_people
-    server.nl_people = np.People([])
+    nopeople = state.nl_people
+    state.nl_people = np.People([])
     client.put("/api/nl/prefs", json={"hide_spoilers": True})
     check("it works with no people configured", client.get(f"/api/nl/show/{sigma}").json()["hide_spoilers"] is True)
-    server.nl_people = nopeople
+    state.nl_people = nopeople
 
     print("pages")
     check("the player has the question screen", 'id="nl-react"' in client.get(f"/nl/play/{alpha}", headers=cookie("labiba")).text)

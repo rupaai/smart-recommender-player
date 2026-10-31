@@ -109,6 +109,7 @@ def run(tmp):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")
     import server
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
     from services import jellyfin_playback as jp
 
@@ -141,12 +142,12 @@ def run(tmp):
 
     # ---- service with a fake Jellyfin
     fake = FakeJellyfin()
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     svc.base_url = "http://jellyfin.test:8096"
     svc.api_key = SECRET
     svc.user_id = "user1"
     svc.session = fake
-    playback = server.jellyfin_playback
+    playback = state.jellyfin_playback
     playback._ids = {}
 
     print("path lookup")
@@ -190,15 +191,15 @@ def run(tmp):
     client = TestClient(server.app)
 
     print("GET /api/nl/play/{id}")
-    server.db.register_source_file("/media/Movies/A (2020)/A.mp4", "A", 2020)
-    item_id = server.db.get_item_by_id(1)["id"]
+    state.db.register_source_file("/media/Movies/A (2020)/A.mp4", "A", 2020)
+    item_id = state.db.get_item_by_id(1)["id"]
     fake.playback = {"PlaySessionId": "ps1", "MediaSources": [{
         "Id": "ms1", "Container": "mp4", "SupportsDirectPlay": True, "RunTimeTicks": 10_000_000}]}
     r = client.get(f"/api/nl/play/{item_id}")
     check("200 with stream info", r.status_code == 200 and r.json()["kind"] == "file", r.text)
     check("no API key in the JSON", SECRET not in r.text)
     check("404 for unknown item", client.get("/api/nl/play/9999").status_code == 404)
-    server.db.register_source_file("/media/Movies/Z (2022)/Z.mp4", "Z", 2022)
+    state.db.register_source_file("/media/Movies/Z (2022)/Z.mp4", "Z", 2022)
     r = client.get("/api/nl/play/2")
     check("404 when Jellyfin does not know the file", r.status_code == 404, r.text)
     fake.down = True

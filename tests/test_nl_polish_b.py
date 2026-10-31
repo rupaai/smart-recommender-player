@@ -272,14 +272,15 @@ def test_migration(tmp):
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     client.follow_redirects = False
     from services import nl_people as np
 
-    nobody = server.nl_people
+    nobody = state.nl_people
     fake = PolishJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
 
     # More movies on the shelf, with TMDB ids and genres.
     extra = {"Delta": (80, "Comedy", 7.8, 104), "Epsilon": (150, "Drama, Thriller", 7.2, 105), "Zeta": (118, "Sci-Fi, Drama", 7.9, 103), "Arrival": (116, "Sci-Fi, Drama", 7.9, 106)}
@@ -301,7 +302,7 @@ def run(tmp):
     ids.update(ids2)
     alpha, beta, sigma, delta, epsilon, zeta, arrival, gamma = (ids[t] for t in ("Alpha", "Beta", "Sigma", "Delta", "Epsilon", "Zeta", "Arrival", "Gamma Ray"))
 
-    # TMDB stand-in behind the real wiring: server._nl_tmdb -> server._tmdb_get(api_key, path, params).
+    # TMDB stand-in behind the real wiring: state._nl_tmdb -> state._tmdb_get(api_key, path, params).
     tmdb_calls = []
     tmdb_data = {
         "/movie/101/videos": {"results": [
@@ -316,9 +317,9 @@ def run(tmp):
         tmdb_calls.append((key, path))
         return tmdb_data.get(path)
 
-    server._tmdb_get = fake_tmdb
-    server.api_key = TMDB_KEY
-    server.nl_extras._vibe = lambda: FakeVibe(ready=False)
+    state._tmdb_get = fake_tmdb
+    state.api_key = TMDB_KEY
+    state.nl_extras._vibe = lambda: FakeVibe(ready=False)
 
     def get(path, who=None):
         return client.get(path, headers=cookie(who) if who else None)
@@ -390,18 +391,18 @@ def run(tmp):
                 {"id": delta, "title": "Delta", "genres": "Comedy", "rating": 7.8, "recommendation_score": 8.0},
             ]}
 
-    real_rec = server.recommender_service.recommend
-    server.recommender_service.recommend = Rec().recommend
+    real_rec = state.recommender_service.recommend
+    state.recommender_service.recommend = Rec().recommend
     p = get("/api/nl/picks").json()
     check("before hiding, Beta is a pick", beta in [i["id"] for i in p["items"]], [i["id"] for i in p["items"]])
     client.put(f"/api/nl/hidden/{beta}", json={"hidden": True})
     p = get("/api/nl/picks").json()
     check("after hiding, it is not", beta not in [i["id"] for i in p["items"]] and delta in [i["id"] for i in p["items"]], [i["id"] for i in p["items"]])
     client.put(f"/api/nl/hidden/{beta}", json={"hidden": False})
-    server.recommender_service.recommend = real_rec
+    state.recommender_service.recommend = real_rec
 
     print("two people: hiding and watched state are per person; Both has its own")
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -425,7 +426,7 @@ def run(tmp):
     un = lambda who: [c["title"] for c in get("/api/nl/library?type=movie&unwatched=1", who).json()["items"]]  # noqa: E731
     check("Unwatched only: Labiba has seen Beta, Sam has not, Both of us: nobody may have seen it", "Beta" not in un("labiba") and "Beta" in un("partner") and "Beta" not in un("both"))
     check("Unwatched shows: Sam saw Sigma", get("/api/nl/library?type=tv&unwatched=1", "partner").json()["items"] == [] and len(get("/api/nl/library?type=tv&unwatched=1", "labiba").json()["items"]) == 1)
-    server.nl_people = nobody
+    state.nl_people = nobody
 
     print("title extras: cast & crew, trailer, tech details")
     tmdb_calls.clear()
@@ -442,29 +443,29 @@ def run(tmp):
     get(f"/api/nl/title/{alpha}/extras")
     check("TMDB answers are cached (one call for two page views)", len(tmdb_calls) == 1, tmdb_calls)
 
-    server.nl_extras._cache.clear()
+    state.nl_extras._cache.clear()
     tmdb_data.pop("/movie/101/videos")
     x = get(f"/api/nl/title/{alpha}/extras").json()
     check("TMDB has no video: Jellyfin's RemoteTrailers", x["trailer"]["key"] == "jfTrailer01", x["trailer"])
-    server.nl_extras._cache.clear()
-    server.api_key = ""
+    state.nl_extras._cache.clear()
+    state.api_key = ""
     tmdb_calls.clear()
     x = get(f"/api/nl/title/{alpha}/extras").json()
     check("no TMDB key: TMDB is not called and the page still answers", tmdb_calls == [] and x["trailer"]["key"] == "jfTrailer01" and x["cast"])
-    server.api_key = TMDB_KEY
+    state.api_key = TMDB_KEY
     fake.details["jfA"] = {**DETAILS_ALPHA, "RemoteTrailers": []}
-    server.nl_extras._cache.clear()
+    state.nl_extras._cache.clear()
     x = get(f"/api/nl/title/{alpha}/extras").json()
     check("no trailer anywhere: null", x["trailer"] is None and x["cast"])
     fake.down = True
-    server.nl_extras._cache.clear()
+    state.nl_extras._cache.clear()
     r = get(f"/api/nl/title/{alpha}/extras")
     x = r.json()
     check("Jellyfin down: 200, no cast, tech from our own database (type and size only)", r.status_code == 200 and x["cast"] == [] and x["crew"] == [] and x["jellyfin"] is False
           and x["tech"] == [{"label": "Container", "value": "MP4"}], x)
     fake.down = False
     fake.details["jfA"] = dict(DETAILS_ALPHA)
-    server.nl_extras._cache.clear()
+    state.nl_extras._cache.clear()
     tmdb_data["/movie/101/videos"] = {"results": []}
     fake.details["jfA"] = {**DETAILS_ALPHA, "RemoteTrailers": [{"Url": "javascript:alert(1)"}]}
     x = get(f"/api/nl/title/{alpha}/extras").json()
@@ -476,39 +477,39 @@ def run(tmp):
           and get(f"/api/nl/title/{gamma}/extras").status_code == 404)
 
     print("more like this")
-    server.nl_extras._cache.clear()
+    state.nl_extras._cache.clear()
     tmdb_data["/movie/101/videos"] = {"results": []}
-    server.nl_extras._vibe = lambda: FakeVibe(ready=False)
+    state.nl_extras._vibe = lambda: FakeVibe(ready=False)
     m = get(f"/api/nl/title/{alpha}/more").json()
     got = [c["title"] for c in m["items"]]
     check("TMDB similar then recommendations, then shared genres; never itself, never a title we don't have", got == ["Zeta", "Delta", "Beta", "Epsilon"], got)
     check("engines say what was used", m["engines"] == ["tmdb", "genres"], m["engines"])
     check("cards carry a truthful reason and the usual fields",
           m["items"][0]["reason"].startswith("Similar on TMDB") and m["items"][3]["reason"] == "Same genres: Drama, Thriller" and m["items"][0]["href"] == f"/nl/title/{zeta}")
-    server.nl_extras._vibe = lambda: FakeVibe(sims={arrival: 0.91, epsilon: 0.8})
+    state.nl_extras._vibe = lambda: FakeVibe(sims={arrival: 0.91, epsilon: 0.8})
     m = get(f"/api/nl/title/{alpha}/more").json()
     by = {c["title"]: c for c in m["items"]}
     check("with the recommender's vibe index, close titles join in", "Arrival" in by and by["Arrival"]["reason"].startswith("Close in feel") and m["engines"] == ["tmdb", "recommender", "genres"], (list(by), m["engines"]))
-    server.nl_extras._vibe = lambda: FakeVibe(fail=True)
+    state.nl_extras._vibe = lambda: FakeVibe(fail=True)
     m = get(f"/api/nl/title/{alpha}/more").json()
     check("a failing vibe index only removes its part", [c["title"] for c in m["items"]] == ["Zeta", "Delta", "Beta", "Epsilon"] and "recommender" not in m["engines"])
-    server.nl_extras._vibe = None
-    server.nl_extras._cache.clear()
+    state.nl_extras._vibe = None
+    state.nl_extras._cache.clear()
     tmdb_data_backup = dict(tmdb_data)
     tmdb_data.clear()
     m = get(f"/api/nl/title/{alpha}/more").json()
     check("TMDB empty: genres alone", [c["title"] for c in m["items"]] == ["Epsilon"] and m["engines"] == ["genres"], m)
-    server.nl_extras._cache.clear()
-    server.api_key = ""
+    state.nl_extras._cache.clear()
+    state.api_key = ""
     m = get(f"/api/nl/title/{alpha}/more").json()
     check("no TMDB key either: same, without a call", [c["title"] for c in m["items"]] == ["Epsilon"])
     r = get(f"/api/nl/title/{sigma}/more")
     check("a show with nothing to go on: 200 with an empty row", r.status_code == 200 and r.json()["items"] == [] and r.json()["engines"] == [], r.text)
     r = get(f"/api/nl/title/{beta}/more")
     check("a title that only shares a genre gets just that", r.status_code == 200 and [c["title"] for c in r.json()["items"]] == ["Delta"], r.text)
-    server.nl_extras._tmdb_raw = lambda path, params=None: (_ for _ in ()).throw(RuntimeError("tmdb exploded"))
-    server.nl_extras._cache.clear()
-    server.api_key = TMDB_KEY
+    state.nl_extras._tmdb_raw = lambda path, params=None: (_ for _ in ()).throw(RuntimeError("tmdb exploded"))
+    state.nl_extras._cache.clear()
+    state.api_key = TMDB_KEY
     m = get(f"/api/nl/title/{alpha}/more")
     check("a TMDB reader that raises does not break the route", m.status_code == 200, m.text)
     tmdb_data.update(tmdb_data_backup)

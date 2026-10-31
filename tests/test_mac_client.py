@@ -31,7 +31,7 @@ def check(label, condition, detail=""):
 
 
 with tempfile.TemporaryDirectory() as tmp:
-    db_file = os.path.join(tmp, "server.db")
+    db_file = os.path.join(tmp, "state.db")
     models = os.path.join(tmp, "models")
     cfg_file = os.path.join(tmp, "config.yaml")
     with open(cfg_file, "w", encoding="utf-8") as f:
@@ -50,13 +50,14 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ.update({"CONFIG_PATH": cfg_file, "DATABASE_PATH": db_file, "MODELS_DIR": os.path.join(models, "current"),
                        "ADMIN_TOKEN": "tok", "CC_ENV_FILE": env_file})
     import server
+    from web import state  # noqa: E402
     import uvicorn
     from ops.mac import cc
     from services import model_bundle
 
-    server.generative_retriever.reload = lambda: True
-    server.vibe_index.reload = lambda: True
-    server.vibe_index.is_ready = lambda: True
+    state.generative_retriever.reload = lambda: True
+    state.vibe_index.reload = lambda: True
+    state.vibe_index.is_ready = lambda: True
     model_bundle.smoke_test = lambda folder, db: None
 
     conn = sqlite3.connect(db_file)

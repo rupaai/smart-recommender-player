@@ -17,9 +17,10 @@ def main():
     try:
         ctx = nl_fake.boot(tmp)
         server = ctx["server"]
+        state = ctx["state"]
         client = ctx["client"]
         db = ctx["db"]
-        server.downloads_store.clear()
+        state.downloads_store.clear()
 
         movie_id = db.get_or_create_media_item("Canonical Feature", 2024, "movie")
         show_id = db.get_or_create_media_item("Canonical Series", 2022, "tv")
@@ -28,7 +29,7 @@ def main():
         async def fake_download(magnet, download_id, item_id, title, media_type="movie"):
             started.append((item_id, title, media_type))
 
-        server.torrent_downloader.download = fake_download
+        state.torrent_downloader.download = fake_download
 
         for item_id, release_name, declared_type, expected_title, expected_type in (
             (movie_id, "Wrong.Feature.1.2024.1080p.WEB-DL", "tv", "Canonical Feature", "movie"),
@@ -42,8 +43,8 @@ def main():
             })
             body = response.json()
             download_id = body.get("download_id")
-            remembered = server.download_requests.get(download_id)
-            status = server.downloads_store.get(download_id)
+            remembered = state.download_requests.get(download_id)
+            status = state.downloads_store.get(download_id)
             assert response.status_code == 200 and body.get("success"), response.text
             assert body.get("clean_title") == expected_title, body
             assert remembered and remembered["title"] == expected_title, remembered
@@ -64,7 +65,7 @@ def main():
         assert unlinked["clean_title"] == "Sample Film 2", unlinked
         assert unlinked_item and unlinked_item["title"] == "Sample Film 2", unlinked_item
 
-        downloader = server.torrent_downloader
+        downloader = state.torrent_downloader
         verified = []
         downloader.jellyfin.refresh_and_verify = lambda title, media_type: (
             verified.append((title, media_type)) or {"visible": True}

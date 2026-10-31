@@ -281,16 +281,17 @@ def cookie(value):
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = PeopleJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha = ids["Alpha"]
     client.follow_redirects = False
 
     from services import nl_people as np
 
-    no_people = server.nl_people
+    no_people = state.nl_people
 
     # ------------------------------------------------------------------ no people configured
     print("no people configured: the app works exactly as before")
@@ -347,7 +348,7 @@ def run(tmp):
     db.set_person_prefs("default", {"search_lang": None})
 
     # ------------------------------------------------------------------ people configured
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -591,14 +592,14 @@ def run(tmp):
     r = client.post("/api/watch/start", json={"media_item_id": alpha})
     r = client.post("/api/watch/finish", json={"session_id": r.json()["session_id"], "user_rating": 5, "profile_ids": [999]})
     check("an unknown profile id is a 400", r.status_code == 400, r.text)
-    server.nl_people = np.People(np.parse_people([{"id": "solo", "name": "Solo", "jellyfin_user_id": LAB}]))
+    state.nl_people = np.People(np.parse_people([{"id": "solo", "name": "Solo", "jellyfin_user_id": LAB}]))
     sid = client.post("/api/watch/start", json={"media_item_id": alpha}).json()["session_id"]
     r = client.post("/api/watch/finish", json={"session_id": sid, "verdict": "loved"}, headers=cookie("solo"))
     with db.get_connection() as conn:
         status = conn.execute("SELECT status FROM active_watch_sessions WHERE id = ?", (sid,)).fetchone()["status"]
     check("a configured viewer without a profile is not rated under someone else's profile", r.status_code == 400 and status == "watching", (r.status_code, status))
     client.post("/api/watch/cancel", json={"session_id": sid})
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -611,7 +612,7 @@ def run(tmp):
     check("schema version is 16", db.get_schema_version() >= 16, db.get_schema_version())
     check("running the migration again changes nothing", (db.init_db() or True) and db.get_schema_version() >= 16 and db.get_person_prefs("labiba") is not None)
 
-    server.nl_people = no_people
+    state.nl_people = no_people
 
 
 # ------------------------------------------------------------------- static

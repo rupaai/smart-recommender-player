@@ -61,7 +61,7 @@ def run(tmp):
     check("an unknown source has no next", client.get(f"/api/nl/next/{show}", params={"source": 99999}).json()["has_next"] is False)
     check("source is required", client.get(f"/api/nl/next/{show}").status_code == 422)
     fake.down = True
-    ctx["server"].nl_browse._series.clear()
+    ctx["state"].nl_browse._series.clear()
     n = client.get(f"/api/nl/next/{show}", params={"source": src[EPS[(1, 1)]]}).json()
     check("Jellyfin down: the card still works, just without the name", n["has_next"] and n["name"] == "" and n["code"] == "S1 · E2", n)
     fake.down = False

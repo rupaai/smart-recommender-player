@@ -175,13 +175,14 @@ def run(tmp):
 
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = TogetherJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha, beta, sigma = ids["Alpha"], ids["Beta"], ids["Sigma"]
     s11, s12, s13 = (ids["sources"][EPS[k]] for k in ((1, 1), (1, 2), (1, 3)))
-    no_people = server.nl_people
+    no_people = state.nl_people
     client.follow_redirects = False
 
     def stop(who, item, secs, dur=6000, ended=False, source=None, jf="jfA", event="stop"):
@@ -203,7 +204,7 @@ def run(tmp):
     check("no together_prompt in play info", client.get(f"/api/nl/play/{sigma}?source={s13}").json()["together_prompt"] is None)
     check("every library card says together false", all(c["together"] is False for c in client.get("/api/nl/library?type=movie").json()["items"]))
 
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -304,11 +305,11 @@ def run(tmp):
     fake.down = False
     check("Jellyfin away: 503, nothing cleared", r.status_code in (404, 503), r.status_code)
     check("the key stays out of every reply", SECRET not in r.text)
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
 
     print("no people again: the single implicit viewer can still reset an episode")
-    server.nl_people = no_people
+    state.nl_people = no_people
     fake.reports.clear()
     fake.calls.clear()
     r = client.post(f"/api/nl/unwatch/{sigma}", json={"source_id": s12})
