@@ -191,13 +191,14 @@ def test_api(tmp):
     try:
         from fastapi.testclient import TestClient
         import server
+        from web import state  # noqa: E402
     except Exception as e:  # pragma: no cover - deps missing
         print(f"  (skipped: {e})")
         return
-    server.db = DatabaseManager(path)
-    server.catalogue_search.db = server.db
+    state.db = DatabaseManager(path)
+    state.catalogue_search.db = state.db
     try:
-        server.catalogue_search.invalidate()
+        state.catalogue_search.invalidate()
     except Exception:
         pass
     client = TestClient(server.app)
@@ -248,7 +249,7 @@ def test_api(tmp):
 
     # finishing a watch session marks 'watched'
     client.post("/api/watch-later", json={"media_item_id": FILM2, "profile_id": LAB})
-    with server.db.get_connection() as conn:
+    with state.db.get_connection() as conn:
         conn.execute("INSERT INTO active_watch_sessions (media_item_id) VALUES (?)", (FILM2,))
         sid = conn.execute("SELECT MAX(id) FROM active_watch_sessions").fetchone()[0]
     r = client.post("/api/watch/finish", json={"session_id": sid})
@@ -257,7 +258,7 @@ def test_api(tmp):
     check("watch finish marks watched", r.status_code == 200 and done and done[0]["done_reason"] == "watched", r.text)
 
     def session_status(session_id):
-        with server.db.get_connection() as conn:
+        with state.db.get_connection() as conn:
             row = conn.execute("SELECT status FROM active_watch_sessions WHERE id = ?", (session_id,)).fetchone()
         return row["status"] if row else None
 
@@ -271,7 +272,7 @@ def test_api(tmp):
     sid = client.post("/api/watch/start", json={"media_item_id": SHOW}).json()["session_id"]
     client.post("/api/watch/cancel", json={"session_id": sid})
     r = client.post("/api/watch/finish", json={"session_id": sid})
-    with server.db.get_connection() as conn:
+    with state.db.get_connection() as conn:
         history_count = conn.execute("SELECT COUNT(*) FROM watch_history WHERE media_item_id = ?", (SHOW,)).fetchone()[0]
     check("cancelled session cannot be finished", r.status_code == 404 and session_status(sid) == "cancelled" and history_count == 0,
           (r.status_code, session_status(sid), history_count))
@@ -282,7 +283,7 @@ def test_api(tmp):
     first = client.post("/api/watch/finish", json={"session_id": sid})
     second = client.post("/api/watch/finish", json={"session_id": sid})
     client.post("/api/watch/cancel", json={"session_id": sid})
-    with server.db.get_connection() as conn:
+    with state.db.get_connection() as conn:
         history_count = conn.execute(
             "SELECT COUNT(*) FROM watch_history WHERE media_item_id = ? AND profile_id = 1", (FILM,)
         ).fetchone()[0]

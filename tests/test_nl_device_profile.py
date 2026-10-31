@@ -123,17 +123,18 @@ def run_api(tmp):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")
     import server
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
 
     fake = FakeJellyfin()
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     svc.base_url = "http://jellyfin.test:8096"
     svc.api_key = SECRET
     svc.user_id = "user1"
     svc.session = fake
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     client = TestClient(server.app)
-    server.db.register_source_file(FILE, "A", 2020)
+    state.db.register_source_file(FILE, "A", 2020)
 
     print("GET /api/nl/play with caps")
     r = client.get("/api/nl/play/1", params={"caps": "v=h264.hevc;a=aac;h=h264.hevc.aac"})

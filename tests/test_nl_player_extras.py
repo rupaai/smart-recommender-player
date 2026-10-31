@@ -220,10 +220,11 @@ def test_migration(tmp):
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = ExtrasJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha, show = ids["Alpha"], ids["Sigma"]
     src = ids["sources"]
     ep1 = src[EPS[(1, 1)]]
@@ -263,30 +264,30 @@ def run(tmp):
 
     print("Jellyfin down / unknown file / unknown title")
     fake.down = True
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     r = client.get(f"/api/nl/player-extras/{alpha}")
     check("Jellyfin down: everything empty, 200, no error text",
           r.status_code == 200 and r.json()["trickplay"] is None and r.json()["chapters"] == [] and r.json()["segments"] == [], r.text)
     fake.down = False
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     check("an unknown title is a 404", client.get("/api/nl/player-extras/99999").status_code == 404)
     check("an unknown episode is a 404", client.get(f"/api/nl/player-extras/{show}", params={"source": 99999}).status_code == 404)
     check("source must be a positive number", client.get(f"/api/nl/player-extras/{show}", params={"source": 0}).status_code == 422)
     saved = dict(fake.items)
     fake.items = {}
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     check("a file Jellyfin doesn't know yet: empty, 200", client.get(f"/api/nl/player-extras/{alpha}").json()["segments"] == [])
     fake.items = saved
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
 
     print("an episode: segments, the show switch is per viewer")
     from services import nl_people as np
 
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": "User1", "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": "User1", "profile_id": 2},
     ]))
@@ -320,7 +321,7 @@ def run(tmp):
           client.put("/api/nl/show/9999/skip-intro", json={"skip_intro": True}, headers=lab).status_code == 404
           and client.put(f"/api/nl/show/{show}/skip-intro", json={"skip_intro": "maybe"}, headers=lab).status_code == 422
           and client.put(f"/api/nl/show/{show}/skip-intro", json={}, headers=lab).status_code == 422)
-    server.nl_people = np.People([])
+    state.nl_people = np.People([])
     client.put(f"/api/nl/show/{show}/skip-intro", json={"skip_intro": True})
     with db.get_connection() as conn:
         keys = sorted(r["viewer_key"] for r in conn.execute("SELECT viewer_key FROM nl_show_viewer_prefs WHERE media_item_id = ?", (show,)))

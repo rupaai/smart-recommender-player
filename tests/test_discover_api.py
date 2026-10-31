@@ -62,6 +62,7 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "c.db")
     os.environ["MODELS_DIR"] = os.path.join(tmp, "models")
     import server  # noqa: E402 - needs the env set first
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
 
     seed(os.environ["DATABASE_PATH"])
@@ -102,7 +103,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("session ends within 6 answers", d.get("question") is None and 2 <= steps <= 6, (steps, seen))
     check("no question repeated", len(seen) == len(set(seen)), seen)
     check("results still present when done", len(d.get("items") or []) > 0)
-    with server.db.get_connection() as conn:
+    with state.db.get_connection() as conn:
         row = conn.execute("SELECT belief_json, asked_order FROM discover_sessions WHERE id = ?", (sid,)).fetchone()
         imps = conn.execute("SELECT COUNT(*) FROM discover_impressions WHERE session_id = ?", (sid,)).fetchone()[0]
     check("belief logged over the moods", row and len(json.loads(row[0])) == 30, row)

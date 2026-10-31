@@ -222,6 +222,7 @@ def run(tmp):
 
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     client.follow_redirects = False
     extra = {"Delta": (80, "Comedy", 7.8), "Epsilon": (150, "Drama", 7.2), "Zeta": (118, "Sci-Fi, Drama", 7.9), "Arrival": (116, "Sci-Fi, Drama", 7.9)}
     for title in extra:
@@ -237,20 +238,20 @@ def run(tmp):
     db.rate_item(arrival, profile_id=2, user_rating=8.0, status="seen")
 
     rec = FakeRecommender()
-    real_rec = server.recommender_service.recommend
-    server.recommender_service.recommend = rec.recommend
+    real_rec = state.recommender_service.recommend
+    state.recommender_service.recommend = rec.recommend
     rec.pool = [
         {"id": delta, "title": "Delta", "genres": "Comedy", "rating": 7.8, "recommendation_score": 8.0},
         {"id": zeta, "title": "Zeta", "genres": "Sci-Fi, Drama", "rating": 7.9, "recommendation_score": 7.5},
         {"id": alpha, "title": "Alpha", "genres": "Drama, Thriller", "rating": 8.0, "recommendation_score": 7.0},
         {"id": beta, "title": "Beta", "genres": "Comedy", "rating": 6.9, "recommendation_score": 6.0},
     ]
-    chooser = server.nl_choose
+    chooser = state.nl_choose
     chooser.rng = FixedRng()
     FRI_EVENING = utc(2026, 10, 16, 19, 0)
     chooser.clock = lambda: FRI_EVENING
-    server.nl_picks.clock = lambda: chooser.clock()
-    nobody = server.nl_people
+    state.nl_picks.clock = lambda: chooser.clock()
+    nobody = state.nl_people
 
     def pick(body=None, who=None):
         r = client.post("/api/nl/choose", json={"tz": 0, **(body or {})}, headers=cookie(who) if who else None)
@@ -337,7 +338,7 @@ def run(tmp):
     ]
 
     # ----------------------------------------------------------------- two people
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -443,7 +444,7 @@ def run(tmp):
     check("everything is back", client.get("/api/nl/vetoes", headers=cookie("both")).json()["items"] == [])
 
     print("pages")
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": LAB, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": PAR, "profile_id": 2},
     ]))
@@ -457,8 +458,8 @@ def run(tmp):
     check("the TV page redirects to the TV who screen", client.get("/nl/tv/choose").headers["location"].startswith("/nl/tv/who?next="))
     check("the home page has a Choose for us button", "/nl/choose" in client.get("/nl/", headers=cookie("labiba")).text)
     check("the me pages carry the 'bring back' list", "nl-vetoes" in client.get("/nl/me", headers=cookie("labiba")).text and "tv-vetoes" in client.get("/nl/tv/me", headers=cookie("labiba")).text)
-    server.nl_people = nobody
-    server.recommender_service.recommend = real_rec
+    state.nl_people = nobody
+    state.recommender_service.recommend = real_rec
     r = client.post("/api/nl/choose", json={"tz": 0})
     check("the real recommender in this image answers 200 (a pick or the fallback)", r.status_code == 200 and r.json()["engine"] in ("recommender", "fallback", "none"), (r.status_code, r.text[:200]))
 

@@ -237,10 +237,11 @@ def test_api(tmp):
     try:
         from fastapi.testclient import TestClient
         import server
+        from web import state  # noqa: E402
     except Exception as e:  # pragma: no cover - deps missing
         print(f"  (skipped: {e})")
         return
-    server.db = DatabaseManager(path)
+    state.db = DatabaseManager(path)
     client = TestClient(server.app)
     r = client.post("/api/ratings/season", json={"media_item_id": SHOW, "profile_id": 1, "season_number": 2, "verdict": "loved"})
     check("POST /api/ratings/season", r.status_code == 200 and r.json()["seasons"]["ratings"][0]["season_number"] == 2, r.text)

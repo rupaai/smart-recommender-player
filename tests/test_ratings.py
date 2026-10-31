@@ -605,7 +605,9 @@ def test_pagination_shape(build):
 def test_rating_genre_endpoint(build):
     print("\n[15] Rating-queue genre chips reflect the catalogue")
     import asyncio
-    import server as server_mod
+    import server  # noqa: F401  (builds the app)
+    from web import state
+    from web.routes import ratings
 
     db = build()
     with db.get_connection() as conn:
@@ -621,12 +623,12 @@ def test_rating_genre_endpoint(build):
             "vote_count, genres) VALUES ('Rare', 2020, 'movie', 7.5, 9000, 'Curtain');"
         )
 
-    original = server_mod.db
-    server_mod.db = db
+    original = state.db
+    state.db = db
     try:
-        payload = asyncio.run(server_mod.list_rating_genres())
+        payload = asyncio.run(ratings.list_rating_genres())
     finally:
-        server_mod.db = original
+        state.db = original
 
     names = {g["name"] for g in payload["genres"]}
     check("a genre with enough films is offered", "Comedy" in names, sorted(names))
@@ -648,9 +650,11 @@ def test_download_survives_refresh(build):
     print("\n[16] Downloads are server-owned, so a browser refresh can't stop them")
     import inspect
     from services.torrent_service import downloads_store
-    import server as server_mod
+    import server  # noqa: F401  (builds the app)
+    from web import state
+    from web.routes import torrents
 
-    src = inspect.getsource(server_mod.download_torrent)
+    src = inspect.getsource(torrents.download_torrent)
     check("download is dispatched with asyncio.create_task",
           "asyncio.create_task" in src)
     check("no binding to an HTTP client session/websocket",
@@ -658,7 +662,7 @@ def test_download_survives_refresh(build):
     check("progress state lives in a module-level dict",
           isinstance(downloads_store, dict))
     check("the store is importable from outside the request handler",
-          downloads_store is server_mod.downloads_store)
+          downloads_store is state.downloads_store)
 
 
 
@@ -669,6 +673,7 @@ def test_resume_and_eta(build):
     import libtorrent as lt
     from services.torrent_service import TorrentDownloader, downloads_store
     import server as server_mod
+    from web.routes import torrents
 
     MAGNET = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=TestFilm"
     HASH = "0123456789abcdef0123456789abcdef01234567"
@@ -733,7 +738,7 @@ def test_resume_and_eta(build):
         "eta_seconds": 440, "resumed": True, "peers": 3, "seeds": 9, "error": None,
     }
     import asyncio
-    payload = asyncio.run(server_mod.get_torrent_status(2))
+    payload = asyncio.run(torrents.get_torrent_status(2))
     for field in ("eta_seconds", "resumed", "peers", "seeds"):
         check(f"status endpoint exposes {field}", field in payload, sorted(payload))
     downloads_store.pop(2, None)

@@ -43,6 +43,7 @@ only-include = [
     "scanner.py",
     "enricher.py",
     "services",
+    "web",
     "templates",
     "static",
 ]

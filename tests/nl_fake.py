@@ -143,9 +143,10 @@ def boot(tmp, extra_config=None):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")
     import server
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
 
-    db = server.db
+    db = state.db
     db.register_source_file(ALPHA, "Alpha", 2020, "movie")
     db.register_source_file(BETA, "Beta", 2021, "movie")
     for (s, e), path in EPS.items():
@@ -162,17 +163,17 @@ def boot(tmp, extra_config=None):
         conn.execute("UPDATE media_sources SET created_at = '2020-01-01 10:00:00' WHERE file_path = ?", (ALPHA,))
 
     fake = FakeJellyfin()
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     svc.base_url = "http://jellyfin.test:8096"
     svc.api_key = SECRET
     svc.user_id = "user1"
     svc.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._resolved_user = None
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._resolved_user = None
+    state.jellyfin_playback._last_refresh = None
     ids = {}
     with db.get_connection() as conn:
         for r in conn.execute("SELECT id, title FROM media_items"):
             ids[r["title"]] = r["id"]
         ids["sources"] = {r["file_path"]: r["id"] for r in conn.execute("SELECT id, file_path FROM media_sources")}
-    return {"server": server, "client": TestClient(server.app), "fake": fake, "ids": ids, "db": db}
+    return {"server": server, "state": state, "client": TestClient(server.app), "fake": fake, "ids": ids, "db": db}

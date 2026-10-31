@@ -139,10 +139,11 @@ class TracksJellyfin(nl_fake.FakeJellyfin):
 def run(tmp):
     ctx = nl_fake.boot(tmp)
     server, client, ids, db = ctx["server"], ctx["client"], ctx["ids"], ctx["db"]
+    state = ctx["state"]
     fake = TracksJellyfin()
-    server.jellyfin_service.session = fake
-    server.jellyfin_playback._ids = {}
-    server.jellyfin_playback._last_refresh = None
+    state.jellyfin_service.session = fake
+    state.jellyfin_playback._ids = {}
+    state.jellyfin_playback._last_refresh = None
     alpha, sigma = ids["Alpha"], ids["Sigma"]
     ep = {k: ids["sources"][p] for k, p in EPS.items()}
 
@@ -199,7 +200,7 @@ def run(tmp):
 
     print("people: own choice first, else anyone's")
     from services import nl_people as np
-    server.nl_people = np.People(np.parse_people([
+    state.nl_people = np.People(np.parse_people([
         {"id": "labiba", "name": "Labiba", "jellyfin_user_id": "a" * 32, "profile_id": 1},
         {"id": "partner", "name": "Sam", "jellyfin_user_id": "b" * 32, "profile_id": 2},
     ]))

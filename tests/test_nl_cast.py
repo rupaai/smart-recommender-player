@@ -242,6 +242,7 @@ def run(tmp):
     people = [{"id": "a", "name": "A", "jellyfin_user_id": "user1"}, {"id": "b", "name": "B", "jellyfin_user_id": "user1"}]
     ctx = nl_fake.boot(tmp, {"northern_lights": {"cast_base_url": BASE + "/", "cast_receiver_app_id": "ABCD1234", "people": people}})
     client, fake, ids, server = ctx["client"], ctx["fake"], ctx["ids"], ctx["server"]
+    state = ctx["state"]
     hls = Hls(fake)
     alpha, beta = ids["Alpha"], ids["Beta"]
     cookie = {"cookie": "nl_viewer=a"}
@@ -259,8 +260,8 @@ def run(tmp):
     check("an absolute LAN URL with a token", body["url"].startswith(BASE + "/nl/jf/Videos/jfA/stream?") and "&t=v1." in body["url"], body["url"])
     check("kind file, content type video/mp4", body["kind"] == "file" and body["cast"]["content_type"] == "video/mp4", body["cast"])
     token = body["url"].split("&t=")[1]
-    check("the token is for this item only", server.nl_cast_tokens.check(token, "GET", "Videos/jfA/stream")[0]
-          and not server.nl_cast_tokens.check(token, "GET", "Videos/jfB/stream")[0])
+    check("the token is for this item only", state.nl_cast_tokens.check(token, "GET", "Videos/jfA/stream")[0]
+          and not state.nl_cast_tokens.check(token, "GET", "Videos/jfB/stream")[0])
     check("backdrop and poster are tokenised LAN URLs", body["cast"]["backdrop"] == f"{BASE}/nl/jf/Items/jfA/Images/Backdrop?t={token}"
           and body["cast"]["poster"].startswith(BASE + "/nl/jf/Items/jfA/Images/Primary?t="), body["cast"])
     sub = [t for t in body["subtitle_tracks"] if t["kind"] == "text"][0]
@@ -350,10 +351,10 @@ def run(tmp):
     refused("two tokens -> 403", f"/nl/jf/Videos/jfA/stream?t={token}&t={token}")
     refused("POST with a valid token -> refused", f"/nl/jf/Videos/jfA/stream?t={token}", method="POST", expect=(403, 405))
     refused("DELETE with a valid token -> refused", f"/nl/jf/Videos/jfA/stream?t={token}", method="DELETE", expect=(403, 405))
-    saved = server.nl_cast_tokens.clock
-    server.nl_cast_tokens.clock = lambda: saved() + 6 * 3600 + 1
+    saved = state.nl_cast_tokens.clock
+    state.nl_cast_tokens.clock = lambda: saved() + 6 * 3600 + 1
     refused("expired token -> 403", f"/nl/jf/Videos/jfA/stream?t={token}")
-    server.nl_cast_tokens.clock = saved
+    state.nl_cast_tokens.clock = saved
     check("a request from the same token works again once the clock is right", client.get(f"/nl/jf/Videos/jfA/stream?t={token}").status_code == 200)
     # a token made by a server with another secret
     from services.nl_cast import CastTokens
@@ -387,13 +388,13 @@ def run(tmp):
     check("the normal pages still ask who is watching", client.get("/nl/", follow_redirects=False).status_code == 302)
 
     print("casting is off without cast_base_url")
-    saved_cfg = server.nl_cast
+    saved_cfg = state.nl_cast
     from services.nl_cast import CastConfig
-    server.nl_cast = CastConfig()
+    state.nl_cast = CastConfig()
     r = client.get(f"/api/nl/cast/play/{alpha}", headers=cookie)
     check("503 with a pointer to the setting", r.status_code == 503 and "cast_base_url" in r.json()["detail"], r.text)
     check("config says disabled", client.get("/api/nl/cast/config").json()["enabled"] is False)
-    server.nl_cast = saved_cfg
+    state.nl_cast = saved_cfg
 
     print("the allowlist did not widen")
     from services.jellyfin_playback import safe_proxy_path

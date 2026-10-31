@@ -223,8 +223,9 @@ def run(tmp):
     people = [{"id": "a", "name": "A", "jellyfin_user_id": "user1"}, {"id": "b", "name": "B", "jellyfin_user_id": "user1"}]
     ctx = nl_fake.boot(tmp, {"northern_lights": {"people": people}})
     client, server = ctx["client"], ctx["server"]
+    state = ctx["state"]
     from services.nl_type import TypeChannels
-    server.nl_type = TypeChannels()   # a clean slate: the earlier tests of this process leave nothing, but be explicit
+    state.nl_type = TypeChannels()   # a clean slate: the earlier tests of this process leave nothing, but be explicit
 
     def hdr(key):
         return {"X-NL-Type-Key": key}
@@ -291,17 +292,17 @@ def run(tmp):
           and client.post(f"/api/nl/type/{code}", json={"text": "x"}).status_code == 404)
 
     print("rate limiting over HTTP")
-    server.nl_type = TypeChannels()
+    state.nl_type = TypeChannels()
     live = client.post("/api/nl/type/session").json()
     got = [client.post(f"/api/nl/type/{live['code']}", json={"text": f"t{i}"}).status_code for i in range(45)]
     check("a flood gets 429 with Retry-After", got[:40] == [200] * 40 and 429 in got[40:], got)
     r = client.post(f"/api/nl/type/{live['code']}", json={"text": "more"})
     check("the 429 says how long to wait", r.status_code == 429 and int(r.headers["retry-after"]) >= 1 and r.json()["retry_after"] >= 1, (r.status_code, dict(r.headers)))
-    server.nl_type = TypeChannels()
+    state.nl_type = TypeChannels()
     codes = [client.get(f"/nl/type/{c}").status_code for c in ("AAAAAA", "BBBBBB", "CCCCCC", "DDDDDD", "EEEEEE", "FFFFFF", "GGGGGG", "HHHHHH",
                                                                 "JJJJJJ", "KKKKKK", "LLLLLL", "MMMMMM", "NNNNNN", "PPPPPP", "QQQQQQ", "RRRRRR")]
     check("guessing codes: 15 wrong, then 429", codes[:15] == [404] * 15 and codes[15] == 429, codes)
-    server.nl_type = TypeChannels()
+    state.nl_type = TypeChannels()
 
     print("the TV search page")
     cookie = {"cookie": "nl_viewer=a"}

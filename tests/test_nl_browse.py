@@ -270,7 +270,8 @@ def run(tmp):
     print("Jellyfin down: pages still build from our database")
     fake.down = True
     server = ctx["server"]
-    server.nl_browse._series.clear()
+    state = ctx["state"]
+    state.nl_browse._series.clear()
     r = client.get("/api/nl/home")
     d = r.json()
     check("home renders without Continue Watching", r.status_code == 200 and d["continue_watching"] == []
@@ -361,7 +362,7 @@ def run(tmp):
         check(f"static/nl/{f} served", client.get(f"/static/nl/{f}").status_code == 200)
 
     print("known_ids: no scan storm")
-    pb = ctx["server"].jellyfin_playback
+    pb = ctx["state"].jellyfin_playback
     pb._ids = {}
     pb._last_refresh = None
     fake.scans = 0

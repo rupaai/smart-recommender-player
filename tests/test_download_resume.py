@@ -35,17 +35,18 @@ def run(tmp):
     os.environ.pop("HOMELAB_ENV", None)
     ctx = nl_fake.boot(tmp)
     server = ctx["server"]
+    state = ctx["state"]
     from database import DatabaseManager
     from services.nl_downloads import DownloadRequests
-    dl = server.torrent_downloader
+    dl = state.torrent_downloader
     downloads = dl.download_dir
 
     print("requests are stored in the database")
-    reqs = server.download_requests
+    reqs = state.download_requests
     reqs.remember("aaa1", MAGNET, "Seven", "movie", movie_id=7)
     reqs.remember("bbb2", MAGNET, "Eight", "tv", movie_id=8)
     reqs.finished("bbb2")
-    again = DownloadRequests(DatabaseManager(server.db.db_path))      # a new process reads the same file
+    again = DownloadRequests(DatabaseManager(state.db.db_path))      # a new process reads the same file
     check("a new instance still has the link", again.get("aaa1") == {"magnet": MAGNET, "title": "Seven", "media_type": "movie", "movie_id": 7})
     check("only unfinished downloads are listed for resume", [r["download_id"] for r in again.unfinished()] == ["aaa1"], again.unfinished())
     check("a finished one is still known (Retry)", again.get("bbb2") is not None and "bbb2" in again.download_ids())
@@ -57,7 +58,7 @@ def run(tmp):
         started.append((magnet, download_id, movie_id, title, media_type))
 
     dl.download = fake_download
-    server.downloads_store.clear()
+    state.downloads_store.clear()
     for name in ("download_aaa1", "download_bbb2", "download_zzz9", "id_99", "prod-download_ccc3", "other"):
         os.makedirs(os.path.join(downloads, name), exist_ok=True)
     open(os.path.join(downloads, "abc.ltresume"), "wb").close()
@@ -67,8 +68,8 @@ def run(tmp):
         await asyncio.sleep(0.05)
     asyncio.run(start())
     check("the unfinished download was started again", started == [(MAGNET, "aaa1", 7, "Seven", "movie")], started)
-    check("it shows in the list as connecting", server.downloads_store.get("aaa1", {}).get("status") == "connecting")
-    check("it is marked finished once it returns", DownloadRequests(server.db).unfinished() == [])
+    check("it shows in the list as connecting", state.downloads_store.get("aaa1", {}).get("status") == "connecting")
+    check("it is marked finished once it returns", DownloadRequests(state.db).unfinished() == [])
     left = sorted(os.listdir(downloads))
     check("the orphan folders are gone", "download_zzz9" not in left and "id_99" not in left, left)
     check("folders of stored downloads, other environments, other names and .ltresume files stay",
@@ -77,14 +78,14 @@ def run(tmp):
     print("staging folders carry the environment name")
     os.environ["HOMELAB_ENV"] = "dev"
     from services.torrent_service import TorrentDownloader
-    dev = TorrentDownloader(server.config, db_manager=server.db)
+    dev = TorrentDownloader(state.config, db_manager=state.db)
     check("dev folder name", os.path.basename(dev._staging_path("x1")) == "dev-download_x1", dev._staging_path("x1"))
     os.makedirs(os.path.join(downloads, "dev-download_orph"))
     removed = dev.remove_orphan_staging(set())
     check("dev removes only its own orphans", removed == ["dev-download_orph"] and os.path.isdir(os.path.join(downloads, "download_aaa1"))
           and os.path.isdir(os.path.join(downloads, "prod-download_ccc3")), (removed, sorted(os.listdir(downloads))))
     os.environ["HOMELAB_ENV"] = "prod"
-    prod = TorrentDownloader(server.config, db_manager=server.db)
+    prod = TorrentDownloader(state.config, db_manager=state.db)
     os.makedirs(os.path.join(downloads, "id_55"))
     removed = sorted(prod.remove_orphan_staging({"aaa1", "bbb2"}))
     check("prod also removes its old unprefixed orphans (id_<n> and download_<id>)",
@@ -111,13 +112,14 @@ os.environ["CONFIG_PATH"] = {os.path.join(tmp, "nm.yaml")!r}
 os.environ.pop("LOCAL_CONFIG_PATH", None)   # only this file's folders
 os.environ["DATABASE_PATH"] = {os.path.join(tmp, "nm.db")!r}
 import server
+from web import state  # noqa: E402
 from fastapi.testclient import TestClient
 c = TestClient(server.app)
 print("HEALTH", c.get("/healthz").status_code)
 print("HOME", c.get("/").status_code)
 asyncio.run(server.resume_downloads())
-asyncio.run(server.torrent_downloader.download("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", "d5", 5, "T"))
-print("DL", server.downloads_store["d5"]["status"])
+asyncio.run(state.torrent_downloader.download("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567", "d5", 5, "T"))
+print("DL", state.downloads_store["d5"]["status"])
 '''
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=tmp)
     check("healthz is 200", "HEALTH 200" in out.stdout, out.stdout + out.stderr[-800:])

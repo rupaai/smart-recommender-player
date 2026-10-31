@@ -133,19 +133,20 @@ def run(tmp):
     os.environ["CONFIG_PATH"] = cfg_file
     os.environ["DATABASE_PATH"] = os.path.join(tmp, "nl.db")
     import server
+    from web import state  # noqa: E402
     from fastapi.testclient import TestClient
     from services import jellyfin_playback as jp
 
     fake = FakeJellyfin()
-    svc = server.jellyfin_service
+    svc = state.jellyfin_service
     svc.base_url = "http://jellyfin.test:8096"
     svc.api_key = SECRET
     svc.user_id = "user1"
     svc.session = fake
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     client = TestClient(server.app)
 
-    server.db.register_source_file(FILE, "A", 2020)
+    state.db.register_source_file(FILE, "A", 2020)
     item_id = 1
 
     # ---- labels and track extraction (pure)
@@ -293,8 +294,8 @@ def run(tmp):
 
     # ---- library
     print("GET /api/nl/library")
-    server.db.register_source_file("/media/Movies/B (2021)/B.mp4", "B", 2021)
-    with server.db.get_connection() as conn:
+    state.db.register_source_file("/media/Movies/B (2021)/B.mp4", "B", 2021)
+    with state.db.get_connection() as conn:
         conn.execute("UPDATE media_items SET title='Beta', release_year=2021, runtime=95, poster_url='https://img.test/b.jpg' WHERE id=2;")
         conn.execute("UPDATE media_items SET title='alpha', release_year=2020, runtime=120 WHERE id=1;")
         conn.execute("INSERT INTO media_items (media_type, tmdb_id, title) VALUES ('movie', 99, 'No file');")
@@ -322,7 +323,7 @@ def run(tmp):
     # ---- S4: Jellyfin down -> 503 with a plain message (the page shows "Is the server on?")
     print("server unreachable")
     fake.down = True
-    server.jellyfin_playback._ids = {}
+    state.jellyfin_playback._ids = {}
     r = client.get(f"/api/nl/play/{item_id}")
     check("play is 503 with a short message, no key", r.status_code == 503 and "Jellyfin" in r.json()["detail"] and SECRET not in r.text, r.text)
     fake.down = False
