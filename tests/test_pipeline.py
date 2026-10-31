@@ -29,16 +29,17 @@ def check(label, condition, detail=""):
 
 
 print("gate")
-cur = {"tiger_hit_rate": 0.50, "taste_auc": 0.70}
-check("same numbers pass", pipeline.gate({"tiger_hit_rate": 0.50, "taste_auc": 0.70}, cur, 1.0) == [])
-check("better numbers pass", pipeline.gate({"tiger_hit_rate": 0.6, "taste_auc": 0.8}, cur, 1.0) == [])
-check("a 0.8% drop is allowed", pipeline.gate({"tiger_hit_rate": 0.496}, cur, 1.0) == [])
-r = pipeline.gate({"tiger_hit_rate": 0.40, "taste_auc": 0.70}, cur, 1.0)
-check("a 20% drop is held back, and says which metric", len(r) == 1 and "tiger_hit_rate" in r[0], r)
-check("first model (nothing on the server to compare) passes", pipeline.gate({"tiger_hit_rate": 0.1}, {}, 1.0) == [])
-check("a metric the server never had is ignored", pipeline.gate({"tiger_hit_rate": 0.5, "taste_auc": 0.1}, {"tiger_hit_rate": 0.5}, 1.0) == [])
-check("no numbers at all is held back", len(pipeline.gate({"info": {}}, cur, 1.0)) == 1)
-check("a bigger allowed drop lets it through", pipeline.gate({"tiger_hit_rate": 0.40}, cur, 25.0) == [])
+cur = {"taste_spearman": 0.50, "taste_auc": 0.70}
+check("same numbers pass", pipeline.gate({"taste_spearman": 0.50, "taste_auc": 0.70}, cur, 1.0) == [])
+check("better numbers pass", pipeline.gate({"taste_spearman": 0.6, "taste_auc": 0.8}, cur, 1.0) == [])
+check("a 0.8% drop is allowed", pipeline.gate({"taste_spearman": 0.496}, cur, 1.0) == [])
+r = pipeline.gate({"taste_spearman": 0.40, "taste_auc": 0.70}, cur, 1.0)
+check("a 20% drop is held back, and says which metric", len(r) == 1 and "taste_spearman" in r[0], r)
+check("first model (nothing on the server to compare) passes", pipeline.gate({"taste_spearman": 0.1}, {}, 1.0) == [])
+check("a metric the server never had is ignored", pipeline.gate({"taste_spearman": 0.5, "taste_auc": 0.1}, {"taste_spearman": 0.5}, 1.0) == [])
+check("an old server number (TIGER) is ignored", pipeline.gate({"taste_auc": 0.7}, {"tiger_hit_rate": 0.5, "taste_auc": 0.7}, 1.0) == [])
+check("no numbers to compare (too few ratings) is let through", pipeline.gate({"info": {}}, cur, 1.0) == [])
+check("a bigger allowed drop lets it through", pipeline.gate({"taste_spearman": 0.40}, cur, 25.0) == [])
 
 print("settings")
 check("reads config.yaml", pipeline.setting("nightly.min_vote_count", None) == "200")

@@ -171,9 +171,6 @@ def test_consumers(tmp):
     db.rate_item(3, 1, verdict="loved")       # Drama, Comedy
     db.rate_item(4, 1, verdict="not_for_me")  # Thriller
     db.rate_item(6, 1, user_rating=8)         # old-style rating, no verdict
-    liked = db.get_recent_liked_history([1])
-    check("TIGER history: liked and rewatch in, meh / not for me out, old 8 in",
-          set(liked) == {1, 3, 6}, liked)
     taste = db.get_profile_taste_profile(1)
     check("taste profile counts only liked films", taste["rating_count"] == 3, taste["rating_count"])
     check("thriller counts only through the old-style 8 (0.8), not meh / not for me",

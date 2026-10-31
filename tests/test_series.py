@@ -1,5 +1,5 @@
 """
-Offline tests for series order + generative history (tests/test_series.py)
+Offline tests for series order + watched candidates (tests/test_series.py)
 
 Throwaway SQLite DB in a tempdir — no network, real catalogues untouched.
 
@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager  # noqa: E402
 from services.recommender_service import apply_series_order  # noqa: E402
-from services.generative_retriever import GenerativeRetriever  # noqa: E402
 
 failures = []
 
@@ -128,7 +127,7 @@ def test_series(tmp):
 
 
 def test_history(tmp):
-    print("\nGenerative history")
+    print("\nWatched films and candidates")
     db = build(os.path.join(tmp, "h.db"))
     t = ids_by_title(db)
     see(db, t["Toy Story"], 9, profile=1, when="2026-09-01 10:00:00")
@@ -136,17 +135,6 @@ def test_history(tmp):
     see(db, t["Shrek"], None, profile=1, status="not_seen", when="2026-09-03 10:00:00")
     see(db, t["Super"], 8, profile=2, when="2026-09-04 10:00:00")
     see(db, t["Toy Story 2"], 7, profile=1, when="2026-09-05 10:00:00")
-
-    gr = GenerativeRetriever(db, {"recommender": {"generative": {"history_min_rating": 6}}})
-    me = gr.get_history_item_ids(profile="me")
-    check("only liked, seen films; oldest-first", me == [t["Toy Story"], t["Toy Story 2"]], me)
-    partner = gr.get_history_item_ids(profile="partner")
-    check("partner history is partner's own", partner == [t["Super"]], partner)
-    both = gr.get_history_item_ids(profile="together")
-    check("together merges both by time",
-          both == [t["Toy Story"], t["Super"], t["Toy Story 2"]], both)
-    recent = gr.get_history_item_ids(profile="together", limit=2)
-    check("limit keeps the NEWEST entries", recent == [t["Super"], t["Toy Story 2"]], recent)
 
     rows = db.get_candidates(media_type="movie", exclude_watched=True)
     cand_ids = {r["id"] for r in rows}

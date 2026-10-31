@@ -21,7 +21,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager  # noqa: E402
 from services import vibe_vocab  # noqa: E402
-from services.generative_retriever import route_recommend  # noqa: E402
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService  # noqa: E402
 from services.wishmatch_movies import EngineSwitch, WishmatchMovies  # noqa: E402
 from services.wishmatch_movies.adapter import MovieAdapter, load_wishmatch_rules  # noqa: E402
@@ -192,14 +191,8 @@ def main():
     print("\n[7] The engine switch")
     legacy = RecommenderService(db, shortlist_size=50, final_pool=60)
 
-    class FakeTiger:
-        engine_mode = "fallback"
-
-        def is_ready(self):
-            return False
-
     def switch(name, wish=wm):
-        return EngineSwitch(name, legacy, FakeTiger(), wish, route_recommend, "fallback")
+        return EngineSwitch(name, legacy, wish)
 
     out = switch("legacy").route(query="comedy", media_type="movie", page_size=5)
     check("legacy answers when the switch says legacy", out.get("engine") == "legacy", out.get("engine"))
@@ -217,6 +210,7 @@ def main():
     check("other attributes pass through to legacy", switch("wishmatch").final_pool == 60)
     check("engine_name reads config and refuses unknown names",
           engine_name({"engine": "WishMatch"}) == "wishmatch" and engine_name({"engine": "x"}) == "legacy"
+          and engine_name({"engine": "tiger"}) == "legacy"
           and engine_name({}) == "legacy")
 
     print("\n[9] The MovieLens crowd")

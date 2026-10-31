@@ -4,7 +4,7 @@ Recommender rules tests (tests/test_recommender_rules.py)
 The word lists and weights come from recommender_rules.yaml; these check what
 they do end to end on a small catalogue: typed genres filter, described genres
 pull, mood cards give way to what was typed, foreign-language titles need to be
-top tier unless asked for, and typed requests never reach the generative engine.
+top tier unless asked for.
 
     uv run python tests/test_recommender_rules.py
 """
@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager  # noqa: E402
 from services import recommender_rules  # noqa: E402
-from services.generative_retriever import route_recommend  # noqa: E402
 from services.nl_choose import context_for  # noqa: E402
 from services.recommender_service import (  # noqa: E402
     MOOD_MAPPINGS, RecommenderService, parse_query_intent, resolve_effective_genres,
@@ -132,22 +131,6 @@ def main():
           and "Horror" not in spec["exclude_genres"], spec)
     out = r.recommend(media_type="tv", query="something scary", page_size=10)
     check("TV with a hint TMDB's TV genres lack still returns shows", out["items"], out)
-
-    print("\n[6] Typed requests go to the engine that reads them")
-
-    class Gen:
-        engine_mode = "generative_only"
-
-        def is_ready(self):
-            return True
-
-        def recommend(self, **kw):
-            return {"items": [], "engine": "generative"}
-
-    served = route_recommend(r, Gen(), "generative_only", query="laugh and comedy", page_size=5)
-    check("a typed request is answered by the legacy engine", served.get("engine") == "legacy", served.get("engine"))
-    served = route_recommend(r, Gen(), "generative_only", query=None, page_size=5)
-    check("no words: the generative engine may answer", served.get("engine") == "generative", served.get("engine"))
 
     print("\n[7] The rules file")
     check("rules load from recommender_rules.yaml", recommender_rules.RULES["genre_names"].get("Comedy"))

@@ -1,5 +1,7 @@
 """
-Block 2: Metadata Enricher (enricher.py)
+Metadata enricher (utils/enricher.py): fills in TMDB details for scanned files.
+
+    uv run python utils/enricher.py [--config config.yaml]
 Fetches canonical metadata from TMDB for unenriched media items and updates the database.
 """
 
@@ -14,7 +16,9 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import yaml
-from database import DatabaseManager
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import DatabaseManager  # noqa: E402
 from dotenv import load_dotenv
 
 

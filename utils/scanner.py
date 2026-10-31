@@ -1,5 +1,7 @@
 """
-Block 1: Media Scanner (scanner.py)
+Media scanner (utils/scanner.py): registers video files already on disk.
+
+    uv run python utils/scanner.py [--config config.yaml]
 Walks media directories, parses titles/years/episodes from filenames,
 and registers files into the catalogue database.
 """
@@ -15,7 +17,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
-from database import DatabaseManager
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from database import DatabaseManager  # noqa: E402
 
 
 class BaseScanner(ABC):
@@ -236,7 +240,7 @@ def main() -> None:
 
     if args.create_dummy_library:
         create_dummy_library(args.create_dummy_library)
-        print("[Dummy Creator] Done! You can now run scanner.py to catalogue these files.")
+        print("[Dummy Creator] Done! You can now run utils/scanner.py to catalogue these files.")
         return
 
     config = load_config(args.config)

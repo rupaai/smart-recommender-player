@@ -1,18 +1,18 @@
 """
 The engine switch: `recommender.engine` in config.yaml picks who answers.
 
-  legacy     today's behaviour, unchanged (the rules engine, with TIGER per engine_mode)
-  tiger      TIGER first (engine_mode generative_only), legacy when it can't answer
+  legacy     the rules engine (services/recommender_service.py), unchanged
   wishmatch  Wishmatch; any failure falls back to legacy and the log says so
 
-The legacy and TIGER engines are only ever called as they are.
+The legacy engine is only ever called as it is. (The old TIGER engine was removed on
+2026-10-31; `engine: tiger` now means legacy.)
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-ENGINES = ("legacy", "tiger", "wishmatch")
+ENGINES = ("legacy", "wishmatch")
 
 
 def engine_name(cfg: Optional[Dict[str, Any]]) -> str:
@@ -27,14 +27,10 @@ class EngineSwitch:
     """Stands in for the legacy RecommenderService on every screen: `recommend()` has its
     arguments, and anything else is passed through to it."""
 
-    def __init__(self, engine: str, legacy: Any, generative: Any, wishmatch: Any, route_fn: Any,
-                 engine_mode: Optional[str] = None):
+    def __init__(self, engine: str, legacy: Any, wishmatch: Any):
         self.engine = engine
         self.legacy = legacy
-        self.generative = generative
         self.wishmatch = wishmatch
-        self.route_fn = route_fn            # generative_retriever.route_recommend
-        self.engine_mode = engine_mode
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.legacy, name)
@@ -51,13 +47,13 @@ class EngineSwitch:
     def route(self, explicit_genres: Optional[List[str]] = None, **kwargs: Any) -> Dict[str, Any]:
         """Discover's /api/recommend. explicit_genres: the genre chips the person picked (the
         legacy kwargs also carry the mood card's genres, which Wishmatch reads as words instead)."""
-        def legacy_route(mode: Optional[str] = None) -> Dict[str, Any]:
-            return self.route_fn(self.legacy, self.generative, mode or self.engine_mode, **kwargs)
+        def legacy_route() -> Dict[str, Any]:
+            result = self.legacy.recommend(**kwargs)
+            result["engine"] = "legacy"
+            return result
 
         if self.engine == "wishmatch":
             return self._wishmatch_or(legacy_route, **{**kwargs, "genres_override": explicit_genres})
-        if self.engine == "tiger":
-            return legacy_route("generative_only")
         return legacy_route()
 
     def recommend(self, **kwargs: Any) -> Dict[str, Any]:
