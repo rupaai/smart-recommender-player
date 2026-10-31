@@ -108,6 +108,7 @@ cfg = {{"media_folders": ["/proc/nomedia/Movies"], "jellyfin_library": {{"movie_
         "torrent": {{"download_dir": "/proc/nomedia/downloads"}}}}
 json.dump(cfg, open({os.path.join(tmp, "nm.yaml")!r}, "w"))
 os.environ["CONFIG_PATH"] = {os.path.join(tmp, "nm.yaml")!r}
+os.environ.pop("LOCAL_CONFIG_PATH", None)   # only this file's folders
 os.environ["DATABASE_PATH"] = {os.path.join(tmp, "nm.db")!r}
 import server
 from fastapi.testclient import TestClient

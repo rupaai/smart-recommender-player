@@ -47,11 +47,9 @@ TOP_MOODS_PER_ITEM = 3
 def load_mood_weight(path: Optional[str] = None) -> float:
     """`recommender.mood_weight` from the config file (CONFIG_PATH or config.yaml), 3.0 when the
     file, the key or a sane number is missing."""
-    path = path or os.getenv("CONFIG_PATH", "config.yaml")
     try:
-        import yaml
-        with open(path, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        from services.app_config import load_config
+        cfg = load_config(path)
         w = float((cfg.get("recommender") or {}).get("mood_weight", DEFAULT_MOOD_WEIGHT))
         return w if math.isfinite(w) and w >= 0 else DEFAULT_MOOD_WEIGHT
     except Exception:

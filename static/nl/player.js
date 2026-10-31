@@ -10,7 +10,7 @@
   var LONG_PRESS_MS = 500;
   var SKIP_GROUP_MS = 350;      // skip presses closer together than this make one seek
   var SPINNER_AFTER_MS = 700;   // the buffering spinner waits this long before it shows
-  var UNREACHABLE = "Can’t reach the movie server. Is mars on?";
+  var UNREACHABLE = "Can’t reach the movie server. Is the server on?";
   var CONVERT_FAILED = "The server couldn’t convert this video.";
   var CONVERT_DETAIL = "Jellyfin failed to transcode it. Check Jellyfin’s FFmpeg log.";
   var UNPLAYABLE = "This video’s format can’t play in this browser.";
@@ -1379,7 +1379,7 @@
   function showError(message, detail, canConvert) {
     stopReporting(false);
     $("nl-convert").hidden = !(canConvert && (isNative || isLaptop));
-    // The server's reason goes on a second line, so a setup problem isn't mistaken for "mars is off".
+    // The server's reason goes on a second line, so a setup problem isn't mistaken for "the server is off".
     $("nl-error-text").textContent = detail ? message + "\n" + detail : message;
     $("nl-error").hidden = false;
     root.classList.add("controls-visible");
@@ -1405,7 +1405,7 @@
     if (S.errors <= 2) {
       reloadStream({});
     } else if (isNative && e && e.message) {
-      // The TV player's own reason (a Media3 error code): mars answered, so "is mars on?" would send the viewer the wrong way.
+      // The TV player's own reason (a Media3 error code): the server answered, so "is the server on?" would send the viewer the wrong way.
       showError("The TV player stopped.", e.message);
     } else {
       showError(e && e.format ? unplayableText() : UNREACHABLE);

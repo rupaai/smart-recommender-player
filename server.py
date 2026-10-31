@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import quote, urlsplit
 
 # Secrets from Homelab (/run/secrets) go into the environment before anything reads it.
-from services import homelab_secrets, vibe_vocab
+from services import app_config, homelab_secrets, vibe_vocab
 from services.app_version import app_version, homelab_version
 
 homelab_secrets.load()
@@ -111,11 +111,9 @@ load_dotenv()
 api_key = os.getenv("TMDB_API_KEY", "").strip()
 
 # Configuration
-CONFIG_PATH = os.getenv("CONFIG_PATH", "config.yaml")
-config: Dict[str, Any] = {}
-if os.path.exists(CONFIG_PATH):
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f) or {}
+# Settings: config.yaml (or CONFIG_PATH) with your config.local.yaml laid on top.
+CONFIG_PATH = app_config.config_path()
+config: Dict[str, Any] = app_config.load_config(CONFIG_PATH)
 
 db_path = os.getenv("DATABASE_PATH") or config.get("database_path", "catalogue.db")
 # Folders the server layout expects (no-ops when they exist; the media folders are
@@ -191,6 +189,8 @@ try:
     nl_people = People.from_config(config, os.getenv("NL_PEOPLE"))
 except PeopleConfigError as _e:
     raise SystemExit(f"[Northern Lights] bad people configuration: {_e}")
+# The rating profiles take the configured people's names (only while they still have a default name).
+db.sync_profile_names({p.profile_id: p.name for p in nl_people.people if p.profile_id is not None})
 if nl_people.configured and not jellyfin_service.user_id:
     jellyfin_service.user_id = nl_people.people[0].jellyfin_user_id  # library scans need some user
 

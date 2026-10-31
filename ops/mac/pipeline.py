@@ -27,12 +27,10 @@ GATED = ("tiger_hit_rate", "taste_spearman", "taste_auc")
 
 
 def setting(key: str, default: Optional[str]) -> str:
-    import yaml
+    from services.app_config import load_config
+    from services.app_config import setting as lookup
 
-    with open(os.path.join(ROOT, "config.yaml"), "r", encoding="utf-8") as f:
-        node: Any = yaml.safe_load(f) or {}
-    for part in key.split("."):
-        node = node.get(part) if isinstance(node, dict) else None
+    node: Any = lookup(load_config(os.path.join(ROOT, "config.yaml")), key)
     if node is None:
         if default is None:
             raise SystemExit(f"config.yaml has no setting {key}")

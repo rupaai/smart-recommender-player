@@ -1,0 +1,25 @@
+# Your own settings. Copy this file to config.local.yaml (git ignores that name) and
+# change the values. Anything here is laid over config.yaml; leave out what you don't
+# need to change. The server (Homelab) uses homelab/config.yaml instead.
+
+# Where your films and shows live. Absolute paths are best.
+media_folders:
+  - /home/you/Media/Movies
+  - /home/you/Media/Shows
+jellyfin_library:
+  movie_dir: /home/you/Media/Movies
+  tv_dir: /home/you/Media/Shows
+
+torrent:
+  download_dir: /home/you/Media/downloads
+
+# Who watches. Each person needs:
+#   id                short lowercase name used in links and cookies
+#   name              what the app shows
+#   jellyfin_user_id  their Jellyfin user (the user name or its 32-character id)
+#   profile_id        their ratings profile: 1 for the first person, 2 for the second
+# Leave this out for a single viewer.
+northern_lights:
+  people:
+    - {id: alex, name: Alex, jellyfin_user_id: alex, profile_id: 1}
+    - {id: sam,  name: Sam,  jellyfin_user_id: sam,  profile_id: 2}

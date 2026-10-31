@@ -1,14 +1,19 @@
-# Smart Movie Streamer & Recommender Configuration
+# Northern Lights settings: shared defaults that suit anyone.
+#
+# Your own setup (people, media folders, server address) goes in config.local.yaml next
+# to this file. Git ignores it. Copy config.local.example.yaml to start. Anything you
+# write there is laid over this file (services/app_config.py explains how).
+# The server (Homelab) uses homelab/config.yaml instead of this file.
 
 # Folders to scan for media files (can be multiple paths)
 media_folders:                      # scanner scans both roots
-  - /Users/labibarupty/Media/Movies
-  - /Users/labibarupty/Media/Shows
+  - media/Movies
+  - media/Shows
 
 # Jellyfin dedicated library configuration
 jellyfin_library:
-  movie_dir: /Users/labibarupty/Media/Movies
-  tv_dir: /Users/labibarupty/Media/Shows
+  movie_dir: media/Movies
+  tv_dir: media/Shows
   movies_library_name: Movies
   tv_library_name: TV Shows
   realtime_monitor: true
@@ -102,14 +107,10 @@ torrent_ranking:
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
 
-# Northern Lights "Who's watching" (M4). Leave it commented and the app has one viewer
-# (JELLYFIN_USER_ID) and no who's-watching screen. To switch it on, create a second Jellyfin user,
-# fill in both ids (a 32-hex user id or the Jellyfin user name) and the labels, uncomment, restart.
-# profile_id links to the Rate tab's profiles (1 = Labiba, 2 = the partner).
-northern_lights:
- people:
-   - {id: labibakanij,  name: Labiba,          jellyfin_user_id: rupaai, profile_id: 1}
-   - {id: gabstevens, name: Gabriele,    jellyfin_user_id: gabstevens, profile_id: 2}
+# Northern Lights "Who's watching" (M4). With no people the app has one viewer
+# (JELLYFIN_USER_ID) and no who's-watching screen. Add your people in config.local.yaml
+# (see config.local.example.yaml): each needs a Jellyfin user and a ratings profile.
+northern_lights: {}
 
 # libtorrent configuration
 torrent:
@@ -118,7 +119,7 @@ torrent:
   max_port: 6891
   
   # Where to save downloaded files
-  download_dir: "/Users/labibarupty/codes/smart_movie_streamer/downloads"
+  download_dir: downloads
   
   # Disk guard (services/disk_guard.py): refuse a download that would push the media
   # folders + downloads over max_media_gb (0 = no cap) or leave less than min_free_gb free.

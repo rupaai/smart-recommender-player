@@ -69,6 +69,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 
 ## 5. Running and testing
 - Run: `uv run python server.py` (or `uv run uvicorn server:app --host 0.0.0.0 --port 8000`), at `http://localhost:8000`. Northern Lights is under `/nl/` and `/nl/tv/`. Try changes on a COPY of the catalogue (`DATABASE_PATH=/tmp/copy.db`).
+- Settings: `config.yaml` holds shared defaults with no personal values; each person's own setup (people, media folders, server address) goes in git-ignored `config.local.yaml` (example: `config.local.example.yaml`), laid over it by `services/app_config.py` (`LOCAL_CONFIG_PATH` overrides). Every script reads settings through `load_config()`. The server uses `homelab/config.yaml` (its people and paths are the `mars` deployment's). Rating profiles start as "Person 1" / "Person 2" and take the configured people's names at start-up.
 - `.env`: `TMDB_API_KEY`, `JELLYFIN_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_USER_ID`, optional Prowlarr, `ADMIN_TOKEN`, optional `NL_CAST_SECRET` (else the app keeps one in `nl_cast_secret` next to the database). `CONFIG_PATH` and `MODELS_DIR` env pick the config and models.
 - **`make check`** before every PR: ruff, shellcheck, every `tests/test_*.py` run as its own script (with a temp config), and the Mac shell tests. CI runs the same.
 - Optional extras: `uv run --extra llm …` for `utils/mood_tag.py`.

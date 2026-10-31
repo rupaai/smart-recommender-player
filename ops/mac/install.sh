@@ -48,7 +48,8 @@ if [ -f "$ENV_FILE" ] && [ -n "$(get ADMIN_TOKEN)" ]; then
   say "Keeping your existing settings in $ENV_FILE"
 else
   server="${CC_SERVER:-}"; token="${ADMIN_TOKEN:-}"; topic="${NTFY_TOPIC:-}"
-  if [ -z "$server" ]; then read -r -p "Server address [http://192.168.1.183:8000]: " server; server="${server:-http://192.168.1.183:8000}"; fi
+  if [ -z "$server" ]; then read -r -p "Server address (e.g. http://192.168.1.20:8000): " server; fi
+  [ -n "$server" ] || die "the server address is needed"
   if [ -z "$token" ]; then read -r -s -p "Admin token (Homelab companion: Apps -> Northern Lights -> Secrets -> prod -> ADMIN_TOKEN -> Copy): " token; echo; fi
   if [ -z "$topic" ]; then read -r -p "ntfy topic (printed at the end of the server setup): " topic; fi
   [ -n "$token" ] || die "the admin token is needed"

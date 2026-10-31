@@ -81,7 +81,12 @@ def test_names(tmp):
     print("Profile names")
     fresh = make_db(tmp, "fresh.db")
     names = {p["id"]: p["name"] for p in fresh.get_profiles()}
-    check("fresh DB seeds Labiba / Gabriele", names.get(1) == "Labiba" and names.get(2) == "Gabriele", names)
+    check("fresh DB seeds two neutral names", names.get(1) == "Person 1" and names.get(2) == "Person 2", names)
+
+    check("configured people name the default profiles",
+          fresh.sync_profile_names({1: "Labiba", 2: "Gabriele"}) == [1, 2]
+          and {p["id"]: p["name"] for p in fresh.get_profiles()} == {1: "Labiba", 2: "Gabriele"})
+    check("a second start-up changes nothing", fresh.sync_profile_names({1: "Labiba", 2: "Gabriele"}) == [])
 
     def old_db(name, n1, n2):
         path = os.path.join(tmp, name)
@@ -94,22 +99,18 @@ def test_names(tmp):
         c.close()
         return path
 
-    path = old_db("old.db", "Me", "Partner")
-    names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("Me / Partner renamed", names == {1: "Labiba", 2: "Gabriele"}, names)
-    # Renamed once: a later custom rename back to 'Me' is not undone on restart.
-    db = DatabaseManager(path)
-    db.update_profile_name(1, "Me")
-    names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("rename happens only once", names[1] == "Me", names)
+    db = DatabaseManager(old_db("old.db", "Me", "Partner"))
+    check("old Me / Partner kept by the migration", {p["id"]: p["name"] for p in db.get_profiles()} == {1: "Me", 2: "Partner"})
+    db.sync_profile_names({1: "Sam", 2: "Alex"})
+    check("old default names take the configured names", {p["id"]: p["name"] for p in db.get_profiles()} == {1: "Sam", 2: "Alex"})
 
-    path = old_db("custom.db", "Sam", "Alex")
-    names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("custom names left alone", names == {1: "Sam", 2: "Alex"}, names)
+    db = DatabaseManager(old_db("custom.db", "Kit", "Jo"))
+    db.sync_profile_names({1: "Sam", 2: "Alex"})
+    check("names someone chose are left alone", {p["id"]: p["name"] for p in db.get_profiles()} == {1: "Kit", 2: "Jo"})
 
-    path = old_db("clash.db", "Me", "Labiba")
-    names = {p["id"]: p["name"] for p in DatabaseManager(path).get_profiles()}
-    check("skipped when target name already exists", names[1] == "Me" and names[2] == "Labiba", names)
+    db = DatabaseManager(old_db("clash.db", "Me", "Sam"))
+    db.sync_profile_names({1: "Sam"})
+    check("skipped when the name is already taken", {p["id"]: p["name"] for p in db.get_profiles()}[1] == "Me")
 
 
 def test_list(tmp):
@@ -123,7 +124,7 @@ def test_list(tmp):
     check("adding twice is a no-op", len(db.get_watch_later()) == 1 and len(db.get_watch_later()[0]["added_by"]) == 1)
     e = db.add_to_watch_later(FILM, GAB)
     check("both people -> one entry, both=True", len(db.get_watch_later()) == 1 and e["both"] is True
-          and {a["name"] for a in e["added_by"]} == {"Labiba", "Gabriele"}, e)
+          and {a["name"] for a in e["added_by"]} == {"Person 1", "Person 2"}, e)
     check("remove one person only", db.remove_from_watch_later(FILM, LAB) is True
           and [a["profile_id"] for a in db.get_watch_later()[0]["added_by"]] == [GAB])
     check("remove missing row is False", db.remove_from_watch_later(FILM, LAB) is False)
