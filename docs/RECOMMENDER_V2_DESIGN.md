@@ -1,5 +1,7 @@
 # Recommender v2 — "Tell me the vibe, I'll ask what I need"
 
+> **2026-10-31:** the TIGER ("generative") engine described here was removed; the app now uses Wishmatch with this legacy engine as its fallback. Read [docs/guides/wishmatch.md](guides/wishmatch.md) for how recommendations work today. The legacy parts below still apply.
+
 Design for four requests, 2026-10-08:
 
 1. Search for any film or show and rate it.

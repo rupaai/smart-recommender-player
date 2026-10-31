@@ -6,6 +6,7 @@ People: see [CONTRIBUTING.md](CONTRIBUTING.md).
 ## Start here
 
 Read [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) first. It is the knowledge base for the project.
+To find where a feature lives, use [docs/KNOWLEDGE_MAP.md](docs/KNOWLEDGE_MAP.md) instead of searching the whole repo.
 Its section 6 ("Rules and conventions") also applies to you. Follow it. If this file and that section ever differ, ask Labiba.
 Also read the waiting notes in `handover/notes/`.
 
@@ -31,6 +32,8 @@ Try changes on a copy of the catalogue: `DATABASE_PATH=/tmp/copy.db`.
 - Fix causes, not symptoms. Add a test for every fix and every new behavior.
 - Run `make check` before you say the work is done.
 - Keep the docs current. Do not edit the feature blocks in PROJECT_HANDOVER.md. Add a note in `handover/notes/<feature>/` (see handover/README.md), and mark it `ready` when the feature is done. A bot folds it into PROJECT_HANDOVER.md. Keep each note's line short.
+- Keep the knowledge map current. Every PR that adds, moves, renames or removes a feature, file, setting or test updates [docs/KNOWLEDGE_MAP.md](docs/KNOWLEDGE_MAP.md) in the same PR. If it changes how something works, also update its guide in [docs/guides/](docs/guides/). Labiba uses these to find and change things without an AI helper. `tests/test_knowledge_map.py` fails when the map names a file that no longer exists.
+- Personal setup (names, people, folders, server addresses) goes in settings files, never in code: `config.local.yaml` locally, `homelab/config.yaml` for mars.
 - Write plain, short text for users.
 
 ## Git rules

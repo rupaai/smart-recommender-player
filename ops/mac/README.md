@@ -7,7 +7,7 @@ Nothing runs on a schedule. When you want fresh picks, open **Train CouchCinema*
 | 1 Backup | Downloads a copy of the server's database (your ratings and watch history) to `~/CouchCinemaBackups/<date>.db`. Keeps 30 days. | Every run |
 | 2 Catalogue | Looks for new films and shows on TMDB, keeps only good ones (at least 200 votes and rating 6.0), sends them to the server. | When the last refresh is a week old |
 | 3 Snapshot | Downloads the database again so the model learns from the server's own ids. | Every run |
-| 4 Train | Retrains the "what to watch next" model and the vibe search. | Every run |
+| 4 Train | Rebuilds the vibe search, the MovieLens crowd for Wishmatch, mood tags for new titles (free, Gemma on the Mac, up to an hour) and the written taste profiles. | Every run |
 | 5 Check | Scores the new models. If any score is more than 1% worse than what the server runs now, it is held back. | Every run |
 | 6 Publish | Sends the new models to the server, which checks them and switches over with no downtime. | When step 5 passes |
 | 7 Report | Mac notification with the result; pings healthchecks.io (if you set it up) and a phone alert (ntfy) if anything broke. | Every run |
@@ -25,7 +25,7 @@ bash ops/mac/install.sh
 
 It asks for the server address, the admin token and the ntfy topic, checks it can reach the server, puts the Train button in `~/Applications`, and removes the old 03:30 schedule if it is there.
 
-- **Server address:** `http://192.168.1.183:8000` (mars). Homelab keeps port 8000 open for the app on prod, so the address from before the move still works.
+- **Server address:** your server's address and port. On mars the prod app answers on port 7101: `http://192.168.1.183:7101`.
 - **Admin token:** Homelab makes it for you. In the Homelab companion go to Apps -> Northern Lights -> Secrets -> prod -> ADMIN_TOKEN -> Copy. Without it the server answers 404 on `/admin`.
 
 ## Every day use
