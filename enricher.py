@@ -213,11 +213,10 @@ class TMDBEnricher(BaseEnricher):
 
 
 def load_config(config_path: str = "config.yaml") -> Dict[str, Any]:
-    """Loads configuration from YAML file or falls back to defaults."""
-    if os.path.exists(config_path):
-        with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-    return {}
+    """config.yaml with your config.local.yaml laid on top (services/app_config.py)."""
+    from services.app_config import load_config as load
+
+    return load(config_path)
 
 
 def main() -> None:

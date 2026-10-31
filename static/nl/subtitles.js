@@ -69,7 +69,7 @@
         return body;
       });
     }, function () {
-      var err = new Error("Can’t reach the movie server. Is mars on?");
+      var err = new Error("Can’t reach the movie server. Is the server on?");
       err.code = "unreachable";
       throw err;
     });

@@ -2,7 +2,7 @@
 """Mac-side client for the server's admin API (P6.3 of the old deployment plan).
 
 Standard library only, so it runs with plain `python3`. Reads ~/.couchcinema/env
-(KEY=value lines): CC_SERVER (e.g. http://192.168.1.183:8000) and ADMIN_TOKEN.
+(KEY=value lines): CC_SERVER (e.g. http://192.168.1.20:8000) and ADMIN_TOKEN.
 
     cc.py export <out.db>                         download a consistent copy of the server's database
     cc.py diff-catalogue <before.db> <after.db> <out.jsonl> [--min-votes N --min-rating R]

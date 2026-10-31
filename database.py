@@ -15,6 +15,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
+# Names a new database gives the two rating profiles. Older databases may carry the
+# earlier defaults; sync_profile_names() replaces any of these with the configured people.
+SEEDED_PROFILE_NAMES = {1: "Person 1", 2: "Person 2"}
+_DEFAULT_PROFILE_NAMES = {"Person 1", "Person 2", "Me", "Partner"}
+
 
 class DatabaseManager:
     """Manages SQLite connection, normalized schemas, and queries for the catalogue."""
@@ -260,10 +265,11 @@ class DatabaseManager:
             );
             """
         )
-        # Two seeded profiles (Labiba and Gabriele) so the rating UI is usable
-        # immediately; both are renameable via update_profile(). profile 1 owns the pre-v3 rows.
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (1, 'Labiba');")
-        cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (2, 'Gabriele');")
+        # Two seeded profiles so the rating UI is usable immediately. The server renames
+        # them to the configured people at start-up (sync_profile_names); both can also be
+        # renamed on the Rate tab. profile 1 owns the pre-v3 rows.
+        for pid, name in SEEDED_PROFILE_NAMES.items():
+            cursor.execute("INSERT OR IGNORE INTO profiles (id, name) VALUES (?, ?);", (pid, name))
 
         columns = {row[1] for row in cursor.execute("PRAGMA table_info(watch_history);").fetchall()}
         if "profile_id" not in columns:
@@ -667,12 +673,8 @@ class DatabaseManager:
                         done_at / done_reason ('rated' | 'watched'). Done rows are
                         kept so the list can offer "watched from your list" + undo.
 
-        Also renames the old seeded profiles: id 1 'Me' -> 'Labiba' and id 2
-        'Partner' -> 'Gabriele'. Only rows still carrying the old default name
-        are touched (a custom name is left alone), and a rename is skipped when
-        the target name is already taken (profiles.name is UNIQUE). Runs once,
-        when the DB moves to v11; fresh DBs are already seeded with the new
-        names by v3.
+        (It used to rename the seeded profiles to fixed names; the configured
+        people now name them at start-up instead, see sync_profile_names.)
 
         Idempotent (user_version gate + IF NOT EXISTS), additive only.
         """
@@ -694,14 +696,8 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_watch_later_done_added ON watch_later(done_at, added_at);"
         )
         if version < 11:
-            for pid, old, new in ((1, "Me", "Labiba"), (2, "Partner", "Gabriele")):
-                taken = cursor.execute("SELECT 1 FROM profiles WHERE name = ?;", (new,)).fetchone()
-                if not taken:
-                    cursor.execute(
-                        "UPDATE profiles SET name = ? WHERE id = ? AND name = ?;", (new, pid, old)
-                    )
             cursor.execute("PRAGMA user_version = 11;")
-            print("[Database] Migration v11 applied: watch_later added, seeded profiles renamed.")
+            print("[Database] Migration v11 applied: watch_later added.")
 
     def _migrate_v12_nl_browse(self, cursor: sqlite3.Cursor) -> None:
         """Northern Lights M2 (browse).
@@ -2388,6 +2384,22 @@ class DatabaseManager:
                 """
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def sync_profile_names(self, names: Dict[int, str]) -> List[int]:
+        """Give the configured people's names to profiles that still have a default name
+        ("Person 1", "Me", ...). A name someone chose is never changed. Returns the renamed ids."""
+        renamed: List[int] = []
+        with self.get_connection() as conn:
+            for pid, name in sorted((names or {}).items()):
+                name = (name or "").strip()
+                row = conn.execute("SELECT name FROM profiles WHERE id = ?;", (pid,)).fetchone()
+                if not name or row is None or row[0] not in _DEFAULT_PROFILE_NAMES or row[0] == name:
+                    continue
+                if conn.execute("SELECT 1 FROM profiles WHERE name = ?;", (name,)).fetchone():
+                    continue  # profiles.name is UNIQUE
+                conn.execute("UPDATE profiles SET name = ? WHERE id = ?;", (name, pid))
+                renamed.append(pid)
+        return renamed
 
     def update_profile_name(self, profile_id: int, name: str) -> bool:
         """Renames a rating profile. Returns False when the id or name is bad."""

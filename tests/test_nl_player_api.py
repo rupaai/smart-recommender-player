@@ -319,7 +319,7 @@ def run(tmp):
     for f in ("player.js", "player.css", "player-core.js", "nl.js", "nl.css"):
         check(f"static/nl/{f} served", client.get(f"/static/nl/{f}").status_code == 200)
 
-    # ---- S4: Jellyfin down -> 503 with a plain message (the page shows "Is mars on?")
+    # ---- S4: Jellyfin down -> 503 with a plain message (the page shows "Is the server on?")
     print("server unreachable")
     fake.down = True
     server.jellyfin_playback._ids = {}
@@ -327,7 +327,7 @@ def run(tmp):
     check("play is 503 with a short message, no key", r.status_code == 503 and "Jellyfin" in r.json()["detail"] and SECRET not in r.text, r.text)
     fake.down = False
     js = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static/nl/player.js"), encoding="utf-8").read()
-    check("player.js has the S4 message", "reach the movie server. Is mars on?" in js)
+    check("player.js has the S4 message", "reach the movie server. Is the server on?" in js)
 
     # ---- JELLYFIN_USER_ID may be a user name (the Mac's .env had one); it's resolved once
     print("user id resolution")

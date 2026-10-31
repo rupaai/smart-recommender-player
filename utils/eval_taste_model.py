@@ -235,10 +235,8 @@ def main() -> None:
     ap.add_argument("--json", help="also write the headline numbers to this file (used by the nightly job)")
     args = ap.parse_args()
 
-    import yaml
-    cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml")
-    with open(cfg_path) as f:
-        cfg = ((yaml.safe_load(f) or {}).get("recommender") or {}).get("taste_model") or {}
+    from services.app_config import load_config
+    cfg = (load_config().get("recommender") or {}).get("taste_model") or {}
 
     db = DatabaseManager(args.db)
     print("## Leave-one-out over rated films\n")
