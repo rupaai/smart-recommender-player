@@ -506,7 +506,7 @@ button:disabled { cursor: default; }
 .engine-note::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--taste-text); }
 .mood-tonight { flex-basis: 100%; font-size: 13px; font-weight: 600; color: var(--taste-text); background: var(--taste-bg); border-radius: 999px; padding: 4px 12px; width: fit-content; }
 .mood-tonight-key { font-weight: 700; }
-.engine-note.generative::before { background: var(--ready-solid); }
+.engine-note.wishmatch::before { background: var(--ready-solid); }
 
 .results-container { display: flex; flex-direction: column; gap: 14px; }
 

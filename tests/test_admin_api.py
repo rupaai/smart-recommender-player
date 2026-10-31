@@ -45,8 +45,8 @@ def make_bundle(bundle_id, files, gate="passed", lie_about=None, extra=None):
     return buf.getvalue()
 
 
-def sem(*ids):
-    return json.dumps({"items": {str(i): [0, 0, 0] for i in ids}}).encode()
+def vib(*ids):
+    return json.dumps(list(ids)).encode()
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -76,7 +76,6 @@ with tempfile.TemporaryDirectory() as tmp:
     conn.close()
 
     # Real models are not built in CI: pretend loading them works.
-    state.generative_retriever.reload = lambda: True
     state.vibe_index.reload = lambda: True
     state.vibe_index.is_ready = lambda: True
     real_smoke = model_bundle.smoke_test
@@ -113,7 +112,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a user column is a 400", r.status_code == 400, r.text)
 
     print("model bundles")
-    good = make_bundle("b1", {"tiger/semantic_ids.json": sem(1, 2, 3), "vibe/item_ids.json": b"[1, 2]",
+    good = make_bundle("b1", {"vibe/item_ids.json": vib(1, 2),
                               "db_patch.jsonl": json.dumps(
                                   {"media_type": "movie", "tmdb_id": 2, "fields": {"vibe_cluster_id": 5}}).encode()})
     r = client.post("/admin/model-bundle", headers=H, content=good)
@@ -128,19 +127,19 @@ with tempfile.TemporaryDirectory() as tmp:
     r = client.post("/admin/model-bundle", headers=H, content=good)
     check("installing the same id twice is a 409", r.status_code == 409, r.text)
 
-    bad_sum = make_bundle("b2", {"tiger/semantic_ids.json": sem(1)}, lie_about="tiger/semantic_ids.json")
+    bad_sum = make_bundle("b2", {"vibe/item_ids.json": vib(1)}, lie_about="vibe/item_ids.json")
     r = client.post("/admin/model-bundle", headers=H, content=bad_sum)
     check("bad checksum refused", r.status_code == 422 and "checksum" in r.text, r.text)
 
-    r = client.post("/admin/model-bundle", headers=H, content=make_bundle("b3", {"tiger/semantic_ids.json": sem(1, 999)}))
+    r = client.post("/admin/model-bundle", headers=H, content=make_bundle("b3", {"vibe/item_ids.json": vib(1, 999)}))
     check("a model naming a missing item id is refused", r.status_code == 422 and "not in the database" in r.text, r.text)
 
     r = client.post("/admin/model-bundle", headers=H, content=make_bundle(
-        "b4", {"tiger/semantic_ids.json": sem(1)}, gate="failed"))
+        "b4", {"vibe/item_ids.json": vib(1)}, gate="failed"))
     check("a failed gate is refused", r.status_code == 422 and "gate" in r.text, r.text)
 
     r = client.post("/admin/model-bundle", headers=H, content=make_bundle(
-        "b5", {"tiger/semantic_ids.json": sem(1)}, extra={"sneaky.txt": b"hi"}))
+        "b5", {"vibe/item_ids.json": vib(1)}, extra={"sneaky.txt": b"hi"}))
     check("a file the manifest does not list is refused", r.status_code == 422, r.text)
 
     r = client.post("/admin/model-bundle", headers=H, content=b"not a tarball")
@@ -152,7 +151,7 @@ with tempfile.TemporaryDirectory() as tmp:
     print("real smoke test turns away unusable model files")
     model_bundle.smoke_test = real_smoke
     r = client.post("/admin/model-bundle", headers=H, content=make_bundle(
-        "b6", {"tiger/semantic_ids.json": sem(1), "tiger/prefix_trie.json": b"{}", "tiger/predictor_int8.onnx": b"junk"}))
+        "b6", {"vibe/item_ids.json": vib(1), "vibe/item_vectors.npy": b"junk", "vibe/config.json": b"{}"}))
     check("422 smoke test failure", r.status_code == 422 and "smoke test" in r.text, r.text)
     check("and current is unchanged", os.readlink(link).endswith("b1"))
 
@@ -167,7 +166,7 @@ with tempfile.TemporaryDirectory() as tmp:
             raise RuntimeError("boom")
         real()
 
-    model_bundle2 = make_bundle("b7", {"tiger/semantic_ids.json": sem(2)})
+    model_bundle2 = make_bundle("b7", {"vibe/item_ids.json": vib(2)})
     # Install through the module with the flaky reloader (the app's router holds the original).
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as f:
         f.write(model_bundle2)
@@ -183,7 +182,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     print("rollback and pruning")
     for n in ("b8", "b9", "b10"):
-        r = client.post("/admin/model-bundle", headers=H, content=make_bundle(n, {"tiger/semantic_ids.json": sem(1)}))
+        r = client.post("/admin/model-bundle", headers=H, content=make_bundle(n, {"vibe/item_ids.json": vib(1)}))
         assert r.status_code == 200, r.text
     left = sorted(os.listdir(os.path.join(models, "releases")))
     check("only the newest 3 releases are kept", left == ["b10", "b8", "b9"], left)

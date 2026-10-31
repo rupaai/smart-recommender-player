@@ -18,7 +18,6 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager  # noqa: E402
-from services.generative_retriever import route_recommend  # noqa: E402
 from services.recommender_service import RecommenderService, parse_origin_intent, parse_query_intent  # noqa: E402
 from services.vibe_index import VibeIndex, like_phrases, resolve_like_titles  # noqa: E402
 from services.catalogue_search import CatalogueSearch  # noqa: E402
@@ -123,17 +122,6 @@ def test_recommender(tmp):
     check("without an index nothing changes", plain["vibe"]["used"] is False
           and [it["title"] for it in plain["items"]] == ["Big Hit", "Arrival"], plain["items"])
 
-    class Gen:
-        def is_ready(self):
-            return True
-
-        def recommend(self, **kw):
-            return {"items": [], "engine": "generative"}
-
-    routed = route_recommend(rec, Gen(), "fallback", query="something calm", min_rating_override=0)
-    check("typed request routed to the vibe engine", routed.get("query_routed_to") == "legacy", routed.keys())
-    routed = route_recommend(rec, Gen(), "fallback", query=None)
-    check("no text still goes to the generative engine", routed["engine"] == "generative")
     found = resolve_like_titles("a film like calm film", db, CatalogueSearch(db))
     check("a named title is found by its exact name", found and found[0]["id"] == 2)
 

@@ -855,9 +855,9 @@ function renderRecommendations(movies, engine, total) {
   }
 
   // Which engine ranked the list is said once here, not on every card.
-  const engineNote = engine === 'generative'
-    ? '<span class="engine-note generative" title="Ranked by the model trained on your ratings">Learning your taste</span>'
-    : '<span class="engine-note" title="Ranked by rating and your favourite genres — rate a few more to unlock the learning model">Picked by rating &amp; genre</span>';
+  const engineNote = engine === 'wishmatch'
+    ? '<span class="engine-note wishmatch" title="Ranked by the mood of your wish and both your tastes">Picked for your wish</span>'
+    : '<span class="engine-note" title="Ranked by rating and your favourite genres">Picked by rating &amp; genre</span>';
   header.innerHTML = `<h2>Tonight's picks</h2>${engineNote}${tonightLineHtml()}`;
 
   movies.forEach((m, i) => container.appendChild(buildMovieCard(m, engine, i, i + 1)));

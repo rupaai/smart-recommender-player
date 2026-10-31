@@ -21,7 +21,7 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY server.py database.py scanner.py enricher.py recommender_rules.yaml ./
+COPY server.py database.py recommender_rules.yaml ./
 COPY services ./services
 COPY web ./web
 COPY packages ./packages

@@ -47,23 +47,10 @@ recommender:
   # sum over moods of P(mood) x fit(film, mood). Higher = answers move the order more.
   mood_weight: 3.0
 
-  # Which engine answers on every screen: legacy (today's rules engine, with TIGER per
-  # engine_mode below), tiger (TIGER first) or wishmatch (PROJECT_HANDOVER.md §17; its
-  # settings are in recommender_rules.yaml, wishmatch:). Each falls back to legacy.
+  # Which engine answers on every screen: legacy (the rules engine) or wishmatch
+  # (PROJECT_HANDOVER.md §17; its settings are in recommender_rules.yaml, wishmatch:).
+  # Wishmatch falls back to legacy if it fails.
   engine: wishmatch
-
-  # Recommendation engine router for the TIGER generative retrieval engine
-  # (parallel engine — the legacy SQL/taste recommender is never modified):
-  #   "fallback"        generative first; legacy on missing artifacts/history
-  #   "legacy_only"     legacy engine always (kill-switch)
-  #   "generative_only" generative primary; legacy only on unexpected failure
-  engine_mode: fallback
-  generative:
-    history_threshold: 5    # cold-start gate: legacy engine until 5+ liked items, then generative
-    history_min_rating: 6.0 # only films rated >= this (or seen, unrated) feed the model's history
-    top_k: 40               # semantic ID tuples beam-decoded per request
-    max_seq_len: 10         # sequence length fed to the ONNX predictor
-    candidate_pool: 60      # trie-resolved candidates re-ranked per request
 
   # Learned taste from verdicts, "what worked / didn't" chips and vibe-check answers
   # (services/taste_model.py). Adds weight x facet_fit and weight x cluster_affinity

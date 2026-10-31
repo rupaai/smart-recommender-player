@@ -40,8 +40,6 @@ allow-direct-references = true
 only-include = [
     "server.py",
     "database.py",
-    "scanner.py",
-    "enricher.py",
     "services",
     "web",
     "templates",

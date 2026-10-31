@@ -143,10 +143,7 @@ if [ -n "$DO_TRAIN" ]; then
   cp "$WORK/snapshot.db" "$WORK/snapshot.before.db"
 
   # ---- 4. train ----------------------------------------------------------------
-  [ -f training/tiger/semantic_ids.json ] || fail "train" "training/tiger/semantic_ids.json is missing; build the TIGER item codes once first (training/README.md)"
   [ -f training/data/ml-latest-small/ratings.csv ] || fail "train" "training/data/ml-latest-small/ratings.csv is missing (MovieLens, see training/README.md)"
-  log "4. train: TIGER (about 5 to 15 minutes)"
-  DATABASE_PATH="$WORK/snapshot.db" SKIP_DEPLOY=1 bash training/retrain_tiger.sh || fail "train" "TIGER training or its deployment gates failed"
   log "4. train: vibe index"
   skip_export=(); [ -f "$WORK/vibe/query_encoder.onnx" ] && skip_export=(--skip-export)
   DATABASE_PATH="$WORK/snapshot.db" uv run --with torch --with sentence-transformers --with onnx --with onnxscript \
@@ -172,7 +169,7 @@ if [ -n "$DO_TRAIN" ]; then
   log "5. evaluate"
   uv run python utils/eval_taste_model.py --db "$WORK/snapshot.db" --vibe-dir "$WORK/vibe" --skip-discover --json "$WORK/taste.json" \
     || log "taste model evaluation failed; gating on the other numbers"
-  "${PL[@]}" evaluate --db "$WORK/snapshot.db" --tiger training/tiger --taste-json "$WORK/taste.json" --out "$WORK/metrics.json" \
+  "${PL[@]}" evaluate --db "$WORK/snapshot.db" --taste-json "$WORK/taste.json" --out "$WORK/metrics.json" \
     || fail "evaluate" "could not evaluate the new model"
   "${CC[@]}" model-status >"$WORK/status.json" || fail "evaluate" "could not ask the server which model it runs"
   if gate_msg="$("${PL[@]}" gate --new "$WORK/metrics.json" --status "$WORK/status.json" --max-drop-pct "$("${PL[@]}" setting nightly.gate_max_drop_pct 1.0)")"; then
@@ -185,7 +182,7 @@ if [ -n "$DO_TRAIN" ]; then
   # ---- 6. publish ------------------------------------------------------------------
   wishmatch_arg=(); [ -f "$WORK/wishmatch/crowd.json" ] && wishmatch_arg=(--wishmatch "$WORK/wishmatch")
   BUNDLE="$BUNDLE_DIR/bundle-$TODAY-$(date +%H%M%S).tar.gz"
-  "${CC[@]}" build-bundle "$BUNDLE" --metrics "$WORK/metrics.json" --tiger training/tiger --vibe "$WORK/vibe" \
+  "${CC[@]}" build-bundle "$BUNDLE" --metrics "$WORK/metrics.json" --vibe "$WORK/vibe" \
     ${wishmatch_arg[@]+"${wishmatch_arg[@]}"} --db-before "$WORK/snapshot.before.db" --db-after "$WORK/snapshot.db" --source-db "$WORK/snapshot.db" --gate "$GATE" \
     || fail "publish" "could not build the model bundle"
   bundles=("$BUNDLE_DIR"/bundle-*.tar.gz)   # names carry the date and time: keep the last 3

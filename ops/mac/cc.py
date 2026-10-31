@@ -8,7 +8,7 @@ Standard library only, so it runs with plain `python3`. Reads ~/.couchcinema/env
     cc.py diff-catalogue <before.db> <after.db> <out.jsonl> [--min-votes N --min-rating R]
                                                   what changed between two copies, keyed by (media_type, tmdb_id)
     cc.py push-patch <file.jsonl>                 apply a patch on the server
-    cc.py build-bundle <out.tar.gz> --metrics <metrics.json> [--tiger DIR] [--vibe DIR] [--wishmatch DIR]
+    cc.py build-bundle <out.tar.gz> --metrics <metrics.json> [--vibe DIR] [--wishmatch DIR]
                        [--db-before X.db --db-after Y.db] [--gate passed|failed] [--source-db X.db]
     cc.py push-bundle <file.tar.gz>               install a bundle on the server
     cc.py model-status                            print which model the server runs, with its metrics
@@ -189,20 +189,15 @@ def _sha256(path: str) -> str:
 
 
 # What the server's app actually reads from each folder (training leaves other files around).
-TIGER_FILES = ("predictor_int8.onnx", "semantic_ids.json", "prefix_trie.json", "item_map.json", "config.json")
 VIBE_FILES = ("item_vectors.npy", "item_ids.json", "config.json", "query_encoder.onnx", "anchors.npy", "centroids.npy")
 
 WISHMATCH_FILES = ("crowd.json",)
 
 
-def build_bundle(out: str, *, metrics: Dict[str, Any], tiger: Optional[str], vibe: Optional[str],
+def build_bundle(out: str, *, metrics: Dict[str, Any], vibe: Optional[str],
                  db_before: Optional[str], db_after: Optional[str], gate: str,
                  source_db: Optional[str], wishmatch: Optional[str] = None) -> Dict[str, Any]:
     files: Dict[str, str] = {}   # path inside the bundle -> source on disk
-    if tiger:
-        for n in TIGER_FILES:
-            if os.path.exists(os.path.join(tiger, n)):
-                files[f"tiger/{n}"] = os.path.join(tiger, n)
     if vibe:
         for n in VIBE_FILES:
             if os.path.exists(os.path.join(vibe, n)):
@@ -216,7 +211,7 @@ def build_bundle(out: str, *, metrics: Dict[str, Any], tiger: Optional[str], vib
             if os.path.exists(os.path.join(wishmatch, n)):
                 files[f"wishmatch/{n}"] = os.path.join(wishmatch, n)
     if not files:
-        raise CCError("nothing to bundle: give --tiger, --vibe and/or --wishmatch folders that hold model files")
+        raise CCError("nothing to bundle: give --vibe and/or --wishmatch folders that hold model files")
     patch_path = None
     if db_before and db_after:
         patch_path = out + ".db_patch.jsonl"
@@ -269,7 +264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     b = sub.add_parser("build-bundle")
     b.add_argument("out")
     b.add_argument("--metrics", required=True, help="JSON file of numbers, e.g. {\"hit_rate\": 0.31}")
-    b.add_argument("--tiger"); b.add_argument("--vibe"); b.add_argument("--wishmatch")  # noqa: E702
+    b.add_argument("--vibe"); b.add_argument("--wishmatch")  # noqa: E702
     b.add_argument("--db-before"); b.add_argument("--db-after"); b.add_argument("--source-db")  # noqa: E702
     b.add_argument("--gate", choices=["passed", "failed"], default="passed")
     sub.add_parser("push-bundle").add_argument("file")
@@ -286,7 +281,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif a.cmd == "build-bundle":
             with open(a.metrics, "r", encoding="utf-8") as f:
                 metrics = json.load(f)
-            build_bundle(a.out, metrics=metrics, tiger=a.tiger, vibe=a.vibe, db_before=a.db_before,
+            build_bundle(a.out, metrics=metrics, vibe=a.vibe, db_before=a.db_before,
                          db_after=a.db_after, gate=a.gate, source_db=a.source_db, wishmatch=a.wishmatch)
         elif a.cmd == "push-bundle":
             push_bundle(a.file)

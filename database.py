@@ -4021,64 +4021,6 @@ class DatabaseManager:
                         "size": len(s["members"]), "members": s["members"]}
         return out
 
-    def get_recent_liked_history(
-        self, profile_ids: List[int], limit: int = 30, min_rating: float = 6.0,
-    ) -> List[int]:
-        """Item ids the given profiles actually watched and liked, oldest-first,
-        newest `limit` only.
-
-        This is the generative engine's input. The old source
-        (get_watch_history_chronological, oldest 100 rows) froze the model on
-        the first ratings ever entered, fed it "we haven't seen it" answers as
-        if they were watches, and counted a 3/10 the same as a 10/10.
-        """
-        if not profile_ids:
-            return []
-        ph = ",".join("?" * len(profile_ids))
-        with self.get_connection() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT wh.media_item_id, MAX(wh.watched_at) AS last_at
-                FROM watch_history wh
-                LEFT JOIN rating_details rd
-                       ON rd.profile_id = wh.profile_id AND rd.media_item_id = wh.media_item_id
-                WHERE COALESCE(wh.status, 'seen') = 'seen'
-                  AND wh.profile_id IN ({ph})
-                  AND (
-                        rd.taste_score > 0
-                     OR (rd.taste_score IS NULL AND (wh.user_rating IS NULL OR wh.user_rating >= ?))
-                  )
-                GROUP BY wh.media_item_id
-                ORDER BY last_at DESC, wh.media_item_id DESC
-                LIMIT ?;
-                """,
-                [*profile_ids, min_rating, limit],
-            ).fetchall()
-        return [int(r[0]) for r in reversed(rows)]
-
-    def get_watch_history_chronological(self, limit: int = 200) -> List[Dict[str, Any]]:
-        """Retrieves watch history ordered oldest-first (chronological).
-
-        Used by the generative retrieval engine (TIGER) to build the
-        interaction sequence of semantic IDs, and by the offline training
-        pipeline to bootstrap sequence data.
-        """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT wh.*, mi.title, mi.release_year, mi.genres, mi.rating as tmdb_rating, mi.tier2_keywords
-                FROM watch_history wh
-                JOIN media_items mi ON wh.media_item_id = mi.id
-                ORDER BY wh.watched_at ASC
-                LIMIT ?;
-                """,
-                (limit,),
-            )
-            return [dict(r) for r in cursor.fetchall()]
-
-
-
     @staticmethod
     def _taste_weight(row) -> float:
         """How much one liked film counts toward the taste profile: a verdict's

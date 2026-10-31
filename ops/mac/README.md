@@ -52,7 +52,7 @@ Secrets live in `~/.couchcinema/env` (only you can read it): `CC_SERVER`, `ADMIN
 
 ## What the scores mean
 
-The check is a safety net, not a full test. It asks: given the films you liked so far, does the model's shortlist contain the next one you liked (`tiger_hit_rate`)? And, once the taste model has enough verdicts, how well does it order films you rated (`taste_spearman`, `taste_auc`). A model that got clearly worse, or broke, is not published. The first model with scores is always published.
+The check is a safety net, not a full test. Once the taste model has enough verdicts, it asks how well it orders films you rated (`taste_spearman`, `taste_auc`). A model that got clearly worse, or broke, is not published. The first model with scores is always published, and so is a run with no scores to compare (too few ratings yet).
 
 ## When something looks wrong
 

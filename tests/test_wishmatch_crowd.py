@@ -88,7 +88,7 @@ def main():
     print("bundle")
     import tarfile
     bundle = os.path.join(tmp, "b.tar.gz")
-    manifest = cc.build_bundle(bundle, metrics={}, tiger=None, vibe=None, db_before=None, db_after=None,
+    manifest = cc.build_bundle(bundle, metrics={}, vibe=None, db_before=None, db_after=None,
                                gate="passed", source_db=None, wishmatch=out)
     check("bundle lists wishmatch/crowd.json", list(manifest["files"]) == ["wishmatch/crowd.json"], manifest["files"])
     with tarfile.open(bundle) as t:

@@ -1,7 +1,8 @@
 """Installs model bundles sent by the Mac (P6.2 of the old deployment plan).
 
-A bundle is a .tar.gz with `manifest.json` at its root plus `tiger/`, `vibe/` and an
-optional `db_patch.jsonl`. Layout on the server (next to MODELS_DIR, which points at the
+A bundle is a .tar.gz with `manifest.json` at its root plus `vibe/` (the vibe index),
+`wishmatch/` (the MovieLens crowd) and an optional `db_patch.jsonl`. A `tiger/` folder from
+an older Mac is accepted and ignored. Layout on the server (next to MODELS_DIR, which points at the
 `current` link):
 
     models/releases/<bundle_id>/     the last few bundles, unpacked
@@ -135,16 +136,14 @@ def _verify(folder: str) -> Dict[str, Any]:
 
 def _check_ids(folder: str, db_path: str) -> None:
     ids: set = set()
-    sem = os.path.join(folder, "tiger", "semantic_ids.json")
-    if os.path.exists(sem):
-        with open(sem, "r", encoding="utf-8") as f:
-            ids |= {int(k) for k in (json.load(f).get("items") or {})}
     vib = os.path.join(folder, "vibe", "item_ids.json")
     if os.path.exists(vib):
         with open(vib, "r", encoding="utf-8") as f:
             ids |= {int(i) for i in json.load(f)}
     if not ids:
-        raise BundleError("bundle has neither tiger/semantic_ids.json nor vibe/item_ids.json")
+        if os.path.exists(os.path.join(folder, "wishmatch", "crowd.json")):
+            return   # crowd data only: its ids are matched to the catalogue when it is read
+        raise BundleError("bundle has neither vibe/item_ids.json nor wishmatch/crowd.json")
     conn = sqlite3.connect(db_path)
     try:
         have = {r[0] for r in conn.execute("SELECT id FROM media_items")}
@@ -160,17 +159,8 @@ def _check_ids(folder: str, db_path: str) -> None:
 
 def smoke_test(folder: str, db_path: str) -> None:
     """Loads the model from `folder` as the app would and asks it one question."""
-    from database import DatabaseManager
-    from services.generative_retriever import GenerativeRetriever
     from services.vibe_index import VibeIndex
 
-    if os.path.isdir(os.path.join(folder, "tiger")):
-        retriever = GenerativeRetriever(DatabaseManager(db_path), {})
-        retriever.artifact_dir = os.path.join(folder, "tiger")
-        if not retriever.is_ready():
-            raise BundleError("smoke test: the TIGER model did not load")
-        if not retriever.predict_top_tuples([[0, 0, 0]]):
-            raise BundleError("smoke test: the TIGER model returned no candidates")
     if os.path.isdir(os.path.join(folder, "vibe")):
         index = VibeIndex(os.path.join(folder, "vibe"))
         if not index.is_ready():

@@ -56,3 +56,4 @@ wishmatch_wishes.json*
 # Your own settings (see config.local.example.yaml)
 config.local.yaml
 media/
+sample_library/

@@ -69,7 +69,7 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
                 spread_exempt=_spread_exempt(popup))
             results["engine"] = "legacy"
     else:
-        # Engine switch (recommender.engine): legacy / tiger / wishmatch, each falling back to the
+        # Engine switch (recommender.engine): legacy / wishmatch, each falling back to the
         # untouched legacy recommender. Per-item exclusion is applied after routing so it works for all.
         results = await asyncio.to_thread(state.recommender.route, explicit_genres=req.genres, **kwargs)
 
@@ -110,9 +110,8 @@ async def get_recommendations(req: RecommendRequest) -> Dict[str, Any]:
 
 
 def _recommend_kwargs(req: RecommendRequest, page_size: int) -> Dict[str, Any]:
-    # Resolve mood genres so both engines receive the same context signal
-    # (legacy already does this internally — byte-equivalent for it; the
-    # generative engine needs it passed in explicitly).
+    # Resolve mood genres so every engine receives the same context signal
+    # (legacy already does this internally, so it is byte-equivalent for it).
     genres = req.genres
     if genres is None:
         genres = MOOD_MAPPINGS.get(req.mood_id, MOOD_MAPPINGS[8])["genres"]

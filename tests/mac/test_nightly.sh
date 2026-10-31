@@ -13,10 +13,8 @@ logged() { grep -qE -- "$1" "$LOGFILE" && ok "$2" || fail "$2 (log lacks $1)"; }
 
 new_sandbox() {
   T="$(mktemp -d)"
-  mkdir -p "$T/repo/ops/mac" "$T/repo/training/tiger" "$T/repo/training/data/ml-latest-small" "$T/bin" "$T/home/.couchcinema"
+  mkdir -p "$T/repo/ops/mac" "$T/repo/training/data/ml-latest-small" "$T/bin" "$T/home/.couchcinema"
   cp "$REPO_ROOT/ops/mac/nightly.sh" "$REPO_ROOT/ops/mac/train-now.sh" "$REPO_ROOT/ops/mac/install.sh" "$T/repo/ops/mac/"
-  cp "$REPO_ROOT/training/retrain_tiger.sh" "$T/repo/training/"
-  echo '{"items":{}}' >"$T/repo/training/tiger/semantic_ids.json"
   : >"$T/repo/training/data/ml-latest-small/ratings.csv"
   printf 'CC_SERVER=http://srv.example:8000\nADMIN_TOKEN=tok\nNTFY_TOPIC=testtopic\nHEALTHCHECKS_NIGHTLY_URL=https://hc.example/ping\n' >"$T/home/.couchcinema/env"
   CALLS="$T/calls.log"; : >"$CALLS"
@@ -26,11 +24,11 @@ echo "uv $*" >>"$CALLS"
 args="$*"
 case "$args" in
   *"cc.py export "*) python3 -c "import sqlite3,sys; sqlite3.connect(sys.argv[1]).execute('create table t(x)')" "${args##*cc.py export }" ;;
-  *"cc.py model-status"*) echo '{"current":"b0","manifest":{"metrics":{"tiger_hit_rate":0.5}}}' ;;
+  *"cc.py model-status"*) echo '{"current":"b0","manifest":{"metrics":{"taste_auc":0.5}}}' ;;
   *"cc.py build-bundle "*) rest="${args##*build-bundle }"; : >"${rest%% *}" ;;
   *"cc.py diff-catalogue "*) rest="${args##*diff-catalogue }"; set -- $rest; : >"$3" ;;
   *"pipeline.py setting "*) k="${args##*setting }"; echo "${k##* }" ;;
-  *"pipeline.py evaluate"*) o="${args##*--out }"; echo '{"tiger_hit_rate":0.5}' >"${o%% *}" ;;
+  *"pipeline.py evaluate"*) o="${args##*--out }"; echo '{"taste_auc":0.5}' >"${o%% *}" ;;
   *"pipeline.py gate"*) echo "stub gate message"; exit "${STUB_GATE_EXIT:-0}" ;;
 esac
 if [ -n "${STUB_FAIL:-}" ] && echo "$args" | grep -qE -- "$STUB_FAIL"; then exit 1; fi
@@ -59,8 +57,7 @@ run --skip-catalogue; rc=$?
 has "cc.py export .*/backups/.*\.db" "backs up"
 has "cc.py export .*snapshot\.db" "takes a fresh snapshot"
 hasnt "build_full_catalogue" "no catalogue refresh when skipped"
-has "bootstrap_sequences" "TIGER sequences step ran"
-has "train_tiger_predictor" "TIGER training step ran"
+hasnt "bootstrap_sequences|train_tiger_predictor|retrain_tiger" "no TIGER steps (removed)"
 has "build_vibe_index.py --out .*/work/vibe" "builds the vibe index into the work folder"
 has "uv run --with torch --with sentence-transformers --with onnx --with onnxscript python training/build_vibe_index.py" \
   "installs the vibe-index training dependencies"
@@ -89,7 +86,7 @@ has "backfill_tmdb_vibe" "enrichment ran"
 hasnt "mood_tag\.py" "mood tagging stays off by default"
 has "diff-catalogue .*--min-votes 200 --min-rating 6.0" "quality floor applied (defaults)"
 has "push-patch" "patch pushed"
-hasnt "train_tiger_predictor" "no training with --skip-train"
+hasnt "build_vibe_index" "no training with --skip-train"
 
 echo "== nightly: catalogue failure does not stop the night"
 new_sandbox
@@ -101,7 +98,7 @@ has "curl .*testtopic" "a warning was sent"
 
 echo "== nightly: training failure alerts and stops"
 new_sandbox
-STUB_FAIL="train_tiger_predictor" run --skip-catalogue; rc=$?
+STUB_FAIL="build_vibe_index" run --skip-catalogue; rc=$?
 [ $rc -ne 0 ] && ok "non-zero exit" || fail "should have failed"
 hasnt "push-bundle" "nothing published"
 has "curl .*testtopic" "ntfy alert sent"

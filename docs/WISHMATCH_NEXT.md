@@ -25,7 +25,7 @@ she turns it on (`recommender.engine: wishmatch` in `homelab/config.yaml`, her c
 
 ## Plan
 
-Each step its own PR on its own branch (`<type>/<topic>`, AGENTS.md). Keep legacy and TIGER untouched; every
+Each step its own PR on its own branch (`<type>/<topic>`, AGENTS.md). Keep legacy untouched; every
 number in the `wishmatch:` section of `recommender_rules.yaml`; tests for each.
 
 1. `feat/wishmatch-films-or-shows` - default kind from the wish and the toggle (item 2). Engine already takes
@@ -50,10 +50,8 @@ number in the `wishmatch:` section of `recommender_rules.yaml`; tests for each.
 5. `feat/cards-show-imdb-rt` - cards in the original app, Northern Lights and TV show IMDb and RT first, our
    score as a side note (item 4). Phone, laptop and TV (D-pad) layouts.
 6. Rerun the side-by-side test, update the page, then ask Labiba to turn Wishmatch on.
-7. `feat/faster-train` (later) - a lighter Train button now that Wishmatch is on: skip the TIGER retrain and the
-   vibe index build in `ops/mac/nightly.sh` (they only serve the legacy engine), keep the backup, catalogue
-   refresh, Wishmatch crowd, new-title tags and taste profiles; change the evaluate gate, which today scores the
-   TIGER model, so it doesn't block publishing; keep a setting to turn TIGER back on.
+7. `feat/faster-train` (later) - TIGER's retrain and its gate were removed on 2026-10-31. What is left: maybe skip
+   the vibe index build in `ops/mac/nightly.sh` (it serves legacy search and the taste model).
 
 ## Prompt for a fresh session
 

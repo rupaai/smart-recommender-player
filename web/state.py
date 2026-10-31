@@ -22,7 +22,6 @@ from database import DatabaseManager
 from services import nl_downloads, nl_health
 from services import paths as model_paths
 from services.catalogue_search import CatalogueSearch, _tmdb_get
-from services.generative_retriever import GenerativeRetriever, route_recommend
 from services.jellyfin_playback import JellyfinPlayback
 from services.jellyfin_service import JellyfinService
 from services.media_cleanup import MediaCleanup
@@ -88,24 +87,16 @@ recommender_service = RecommenderService(
     taste_runtime=taste_runtime,
 )
 
-# TIGER generative retrieval engine (parallel — legacy recommender untouched).
-# Artifacts are loaded lazily from models/tiger/; if absent the router
-# automatically serves the existing recommender instead.
-generative_retriever = GenerativeRetriever(db_manager=db, config=config, taste_runtime=taste_runtime)
-
-# Wishmatch (PROJECT_HANDOVER.md §17) and the engine switch: recommender.engine picks legacy, tiger or wishmatch
+# Wishmatch (PROJECT_HANDOVER.md §17) and the engine switch: recommender.engine picks legacy or wishmatch
 # for every screen. The catalogue's mood tags are read on the first Wishmatch request, not at start-up.
 wishmatch_movies = WishmatchMovies(db, MOOD_MAPPINGS)
-recommender = EngineSwitch(engine_name(recommender_cfg), recommender_service, generative_retriever,
-                           wishmatch_movies, route_recommend, generative_retriever.engine_mode)
+recommender = EngineSwitch(engine_name(recommender_cfg), recommender_service, wishmatch_movies)
+
 
 def reload_models() -> None:
     """Loads the model files again after the Mac publishes a new bundle (or one is rolled back)."""
-    tiger_ok = generative_retriever.reload()
     vibe_ok = vibe_index.reload()
     root = model_paths.models_dir()
-    if os.path.isdir(os.path.join(root, "tiger")) and not tiger_ok:
-        raise RuntimeError("the TIGER model did not load")
     if os.path.isdir(os.path.join(root, "vibe")) and not vibe_ok:
         raise RuntimeError(f"the vibe index did not load: {vibe_index.status().get('error')}")
 

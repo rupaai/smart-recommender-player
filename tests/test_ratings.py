@@ -1090,12 +1090,6 @@ def test_concept_intent(build):
               for i in themed),
           [i.get("matched_themes") for i in themed])
 
-    # The generative engine cannot evaluate premise, so it must not serve these.
-    from services.generative_retriever import route_recommend
-    served = route_recommend(r, None, "generative_only", query=Q)
-    check("a concept request is routed away from the generative engine",
-          served.get("query_routed_to") == "legacy", served.get("engine"))
-
 
 def main():
     tmpdir = tempfile.mkdtemp(prefix="ratings_test_")

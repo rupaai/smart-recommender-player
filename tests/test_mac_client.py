@@ -55,7 +55,6 @@ with tempfile.TemporaryDirectory() as tmp:
     from ops.mac import cc
     from services import model_bundle
 
-    state.generative_retriever.reload = lambda: True
     state.vibe_index.reload = lambda: True
     state.vibe_index.is_ready = lambda: True
     model_bundle.smoke_test = lambda folder, db: None
@@ -99,11 +98,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check("pushing it again changes nothing", cc.push_patch(patch)["inserted"] == 0)
 
     print("model bundle")
-    tiger = os.path.join(tmp, "tiger")
-    os.makedirs(tiger)
-    with open(os.path.join(tiger, "semantic_ids.json"), "w") as f:
-        json.dump({"items": {"1": [0, 0, 0], "2": [1, 1, 1]}}, f)
-    with open(os.path.join(tiger, "junk.txt"), "w") as f:
+    vibe = os.path.join(tmp, "vibe")
+    os.makedirs(vibe)
+    with open(os.path.join(vibe, "item_ids.json"), "w") as f:
+        json.dump([1, 2], f)
+    with open(os.path.join(vibe, "junk.txt"), "w") as f:
         f.write("not shipped")
     metrics = os.path.join(tmp, "m.json")
     with open(metrics, "w") as f:
@@ -115,10 +114,10 @@ with tempfile.TemporaryDirectory() as tmp:
     a.commit()
     a.close()
     out = os.path.join(tmp, "b.tar.gz")
-    manifest = cc.build_bundle(out, metrics={"hit_rate": 0.3}, tiger=tiger, vibe=None, db_before=copy, db_after=after,
+    manifest = cc.build_bundle(out, metrics={"hit_rate": 0.3}, vibe=vibe, db_before=copy, db_after=after,
                                gate="passed", source_db=copy)
     check("manifest lists the model files and the patch, not the junk",
-          sorted(manifest["files"]) == ["db_patch.jsonl", "tiger/semantic_ids.json"], manifest["files"])
+          sorted(manifest["files"]) == ["db_patch.jsonl", "vibe/item_ids.json"], manifest["files"])
     check("bundle installs on the server", cc.push_bundle(out)["installed"] == manifest["bundle_id"])
     st = cc.model_status()
     check("server reports the model and its metrics", st["current"] == manifest["bundle_id"]
