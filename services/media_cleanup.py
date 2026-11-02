@@ -71,31 +71,64 @@ def pick(
     favorite_shows: Set[str],
     now: datetime,
     days: float,
+    kept: Optional[Dict[str, int]] = None,
 ) -> List[Dict[str, Any]]:
     """The items to delete. `played_per_person` holds, for each person, the Jellyfin items they have watched
-    (with UserData). An item counts only when it is in every person's list."""
+    (with UserData). An item counts only when it is in every person's list. `kept`, when given, counts why
+    each other watched item stays (keys in KEPT_REASONS), so the report can say why nothing went."""
     if not played_per_person:
         return []
     per_person = [{str(it.get("Id")): it for it in items if it.get("Id")} for items in played_per_person]
+    every_id: Dict[str, Dict[str, Any]] = {}
+    for p in per_person:
+        for item_id, item in p.items():
+            every_id.setdefault(item_id, item)
     out: List[Dict[str, Any]] = []
-    for item_id, item in per_person[0].items():
+
+    def keep(reason: str) -> None:
+        if kept is not None:
+            kept[reason] = kept.get(reason, 0) + 1
+
+    for item_id, item in every_id.items():
         copies = [p.get(item_id) for p in per_person]
-        if any(c is None for c in copies):
-            continue                                       # someone hasn't watched it
-        data = [c.get("UserData") or {} for c in copies]
-        if not all(d.get("Played") for d in data):
+        data = [(c.get("UserData") or {}) if c else {} for c in copies]
+        if any(c is None for c in copies) or not all(d.get("Played") for d in data):
+            keep("not_everyone")                           # someone hasn't watched it
             continue
         if any(d.get("IsFavorite") for d in data) or str(item.get("SeriesId") or "") in favorite_shows:
+            keep("favorite")
             continue
         dates = [parse_date(d.get("LastPlayedDate")) for d in data]
         if any(d is None for d in dates):
-            continue                                       # no date, so 7 days can't be counted: keep it
+            keep("no_date")                                # no date, so 7 days can't be counted: keep it
+            continue
         last = max(dates)
-        if now - last < timedelta(days=days) or not item.get("Path"):
+        if now - last < timedelta(days=days):
+            keep("recent")
+            continue
+        if not item.get("Path"):
+            keep("no_file")
             continue
         out.append({"id": item_id, "name": label(item), "path": item["Path"], "last_watched": last.isoformat()})
     out.sort(key=lambda c: c["last_watched"])
     return out
+
+
+# Why a watched item was kept, in plain words for the admin page and the log.
+KEPT_REASONS = {
+    "not_everyone": "not watched by everyone yet",
+    "favorite": "a favourite (or its show is)",
+    "recent": "watched too recently",
+    "no_date": "no watched date in Jellyfin",
+    "no_file": "no file Jellyfin knows of",
+    "outside": "file outside the Movies and Shows folders",
+}
+
+
+def kept_summary(kept: Dict[str, int]) -> str:
+    """"12 not watched by everyone yet, 3 watched too recently" (biggest first), or "" when nothing was kept."""
+    parts = sorted(kept.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ", ".join(f"{n} {KEPT_REASONS.get(k, k)}" for k, n in parts if n)
 
 
 def _inside(path: str, roots: Iterable[str]) -> Optional[str]:
@@ -170,7 +203,8 @@ class MediaCleanup:
     def run_once(self, now: Optional[datetime] = None) -> Dict[str, Any]:
         s = settings(self.config)
         now = now or datetime.now(timezone.utc)
-        report: Dict[str, Any] = {"ran_at": now.isoformat(), "dry_run": s["dry_run"], "items": [], "error": None}
+        report: Dict[str, Any] = {"ran_at": now.isoformat(), "dry_run": s["dry_run"], "items": [], "error": None,
+                                  "people": 0, "watched": 0, "kept": {}, "kept_text": ""}
         with self._lock:
             try:
                 if not all(os.path.isdir(r) for r in self.roots):
@@ -178,10 +212,14 @@ class MediaCleanup:
                 uids = self._user_ids()
                 played = [self._items(u, "IsPlayed", "Movie,Episode") for u in uids]
                 favorite_shows = {str(it.get("Id")) for u in uids for it in self._items(u, "IsFavorite", "Series")}
-                chosen = pick(played, favorite_shows, now, s["days"])
+                kept: Dict[str, int] = {}
+                chosen = pick(played, favorite_shows, now, s["days"], kept)
+                report["people"] = len(uids)
+                report["watched"] = len({str(it.get("Id")) for items in played for it in items if it.get("Id")})
                 gone: List[str] = []
                 for c in chosen:
                     if not _inside(c["path"], self.roots):
+                        kept["outside"] = kept.get("outside", 0) + 1
                         continue                           # Jellyfin points somewhere else: never touch it
                     entry = {"name": c["name"], "last_watched": c["last_watched"], "deleted": False}
                     if not s["dry_run"]:
@@ -192,6 +230,8 @@ class MediaCleanup:
                         except OSError as e:
                             entry["error"] = type(e).__name__
                     report["items"].append(entry)
+                report["kept"] = kept
+                report["kept_text"] = kept_summary(kept)
                 if gone:
                     if self.db is not None:
                         self.db.remove_source_files(gone)
@@ -201,5 +241,6 @@ class MediaCleanup:
         self.last = report
         verb = "would delete" if s["dry_run"] else "deleted"
         names = ", ".join(i["name"] for i in report["items"]) or "nothing"
-        print(f"[Cleanup] {verb}: {names}" + (f" (error: {report['error']})" if report["error"] else ""), flush=True)
+        why = f"; kept {report['kept_text']}" if report["kept_text"] else ""
+        print(f"[Cleanup] {verb}: {names}{why}" + (f" (error: {report['error']})" if report["error"] else ""), flush=True)
         return report
