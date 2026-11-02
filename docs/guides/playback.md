@@ -54,7 +54,9 @@ If Jellyfin says the TV can't take the original (rare), the player says why and 
 
 - **Laptop** (`/player/`): sends the video untouched or only repackaged; converts the sound
   only when the browser can't play it (to FLAC or stereo AAC). Anything that would re-encode
-  the video asks first.
+  the video asks first. The laptop is given Jellyfin's `main.m3u8` (the copied stream) rather than
+  `master.m3u8`: for HDR films the master list also offers an h264 SDR re-encode, which the browser picks on
+  a screen that isn't HDR (`original_picture_playlist` in `services/jellyfin_playback.py`).
 - **Phone / browser** (`/nl/`): may convert, within the quality cap set on the me page.
 - **Chromecast:** gets a signed, short-lived link to the stream.
 

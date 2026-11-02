@@ -22,7 +22,7 @@ from nl_fake import SECRET  # noqa: E402
 from services.device_profiles import (  # noqa: E402
     BROWSER_PROFILE, CAST_PROFILE, TV_PROFILE, browser_profile, laptop_profile, parse_caps, profile_for,
 )
-from services.jellyfin_playback import VIDEO_COPY_REASONS, video_is_copied  # noqa: E402
+from services.jellyfin_playback import VIDEO_COPY_REASONS, original_picture_playlist, video_is_copied  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -106,6 +106,16 @@ def test_video_is_copied():
           and not video_is_copied(base, None) and not video_is_copied(None, "hevc") and not video_is_copied("", "hevc"))
 
 
+def test_original_picture_playlist():
+    print("original_picture_playlist")
+    url = "/videos/jf1/master.m3u8?MediaSourceId=ms1&VideoCodec=hevc,av1,h264&TranscodeReasons=ContainerNotSupported"
+    check("master.m3u8 becomes main.m3u8, query kept", original_picture_playlist(url) == url.replace("/master.m3u8?", "/main.m3u8?"),
+          original_picture_playlist(url))
+    check("a name like master.m3u8 in the query is left alone",
+          original_picture_playlist("/videos/jf1/main.m3u8?Tag=master.m3u8") == "/videos/jf1/main.m3u8?Tag=master.m3u8")
+    check("no query: still renamed", original_picture_playlist("/videos/jf1/master.m3u8") == "/videos/jf1/main.m3u8")
+
+
 STREAMS = [
     {"Type": "Video", "Index": 0, "Codec": "hevc", "VideoRangeType": "HDR10"},
     {"Type": "Audio", "Index": 1, "Codec": "truehd", "Language": "eng", "Channels": 8, "IsDefault": True, "DisplayTitle": "English - TrueHD"},
@@ -165,7 +175,9 @@ def run_api(tmp):
     fake.mode, fake.reasons, fake.vcodec = "hls", REMUX, "hevc"
     r = play(client="laptop", caps=CAPS)
     d = r.json()
-    check("a remux (container + audio reasons): 200 hls", r.status_code == 200 and d["kind"] == "hls" and "master.m3u8" in d["url"] and SECRET not in r.text, r.text[:300])
+    check("a remux (container + audio reasons): 200 hls", r.status_code == 200 and d["kind"] == "hls" and SECRET not in r.text, r.text[:300])
+    check("... as the copied stream itself (main.m3u8), not Jellyfin's master list with its h264 SDR choice",
+          "/main.m3u8?" in d["url"] and "master.m3u8" not in d["url"] and "VideoCodec=hevc" in d["url"], d["url"])
     b = fake.bodies[0]
     check("the laptop profile went to Jellyfin: 400 Mbps in the profile and at request level",
           b["DeviceProfile"]["MaxStreamingBitrate"] == 400_000_000 and b["MaxStreamingBitrate"] == 400_000_000
@@ -195,8 +207,10 @@ def run_api(tmp):
     r = play(client="laptop", caps=CAPS, allow_conversion=1)
     check("allow_conversion=1: the converted stream, laptop profile kept (400 Mbps)",
           r.status_code == 200 and r.json()["kind"] == "hls" and fake.bodies[0]["MaxStreamingBitrate"] == 400_000_000, r.text[:200])
+    check("... through Jellyfin's master list as before", "/master.m3u8?" in r.json()["url"], r.json()["url"])
     r = client.get(f"/api/nl/play/{alpha}", params={"caps": CAPS})
     check("the phone page (caps only) is never asked: same stream, no can_convert", r.status_code == 200 and r.json()["kind"] == "hls"
+          and "/master.m3u8?" in r.json()["url"]
           and "can_convert" not in r.text and fake.bodies[-1]["DeviceProfile"] == browser_profile(parse_caps(CAPS)))
 
     print("quality: the saved cap is ignored, a picked cap counts as agreeing to a converted copy")
@@ -270,6 +284,7 @@ def run_js():
 def main():
     test_profile()
     test_video_is_copied()
+    test_original_picture_playlist()
     run_js()
     tmp = tempfile.mkdtemp(prefix="nl_laptop_quality_test_")
     try:

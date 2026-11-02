@@ -229,6 +229,19 @@ def _norm_video_codec(name: Any) -> str:
     return _VIDEO_CODEC_ALIASES.get(codec, codec)
 
 
+def original_picture_playlist(transcoding_url: str) -> str:
+    """The stream playlist (main.m3u8) instead of Jellyfin's list of choices (master.m3u8), same settings.
+
+    For an HDR film (HDR10, HDR10+, Dolby Vision) Jellyfin 10.11's master.m3u8 offers two streams at the same bitrate:
+    the copied picture, and an h264 SDR copy (VideoCodec=h264&AllowVideoStreamCopy=false) "for older players". On a
+    screen that isn't HDR (a MacBook Air) hls.js picks the SDR one, so the picture was re-encoded with dull colours and
+    slow seeks (seen on mars, 2026-11-02, "Michael (2026)" and "The Menu"). main.m3u8 is the copied stream itself."""
+    head, sep, query = transcoding_url.partition("?")
+    if head.endswith("/master.m3u8"):
+        head = head[: -len("master.m3u8")] + "main.m3u8"
+    return head + sep + query
+
+
 def video_is_copied(transcoding_url: Any, source_video_codec: Any) -> bool:
     """Does Jellyfin's HLS stream carry the file's video as it is (a remux), judged from its TranscodingUrl?
     True only when every TranscodeReason is a container or audio one (VIDEO_COPY_REASONS), the URL does not say
@@ -1003,7 +1016,7 @@ class JellyfinPlayback:
             kind = "file"
         elif transcoding_url:
             play_method = "DirectStream" if ms.get("SupportsDirectStream") else "Transcode"
-            url = proxy_url(transcoding_url)
+            url = proxy_url(original_picture_playlist(transcoding_url) if copy_video_only else transcoding_url)
             kind = "hls"
         else:
             raise NotPlayable(self._cannot_play_message(jf_id, ms, "no stream offered", device))
