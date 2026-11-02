@@ -70,6 +70,10 @@
         var when = new Date(last.ran_at).toLocaleString();
         var head = last.dry_run ? "Trial run (nothing is deleted yet). Last check " + when + ", would delete:" : "Last check " + when + ", deleted:";
         cnote.textContent = rule + " " + head + (last.items.length ? "" : " nothing.") + (last.error ? " Problem: " + last.error : "");
+        if (last.kept_text) {
+          // Why the rest stayed, so "nothing" is explained: "12 not watched by everyone yet, 3 watched too recently".
+          cnote.textContent += " Of " + last.watched + " watched, kept: " + last.kept_text + ".";
+        }
         last.items.forEach(function (it) {
           var text = it.name + " · watched " + new Date(it.last_watched).toLocaleDateString() + (it.error ? " · could not delete (" + it.error + ")" : "");
           clist.appendChild(el("li", "nl-admin-lib", text));

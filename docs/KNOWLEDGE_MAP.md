@@ -180,7 +180,7 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 
 ## Watched cleanup
 
-- **What:** once a day, deletes a film or episode everyone watched over N days ago (not favourites). Ships in dry run.
+- **What:** once a day, deletes a film or episode everyone watched over N days ago (not favourites). Ships in dry run. The admin page (`/nl/admin`, `static/nl/admin.js`) shows the last run and why the other watched titles were kept (`KEPT_REASONS` in the same file).
 - **Files:** `services/media_cleanup.py`. Setting `media_cleanup:` in `homelab/config.yaml` (`dry_run: false` to really delete).
 - **Tests:** `tests/test_media_cleanup.py`.
 

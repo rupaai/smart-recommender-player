@@ -64,6 +64,21 @@ check("episodes go one by one, named Show S01E02", ids(ep) == ["e"] and ep[0]["n
 check("no watched date: kept", pick([[item("a", None)]], set(), NOW, 7) == [])
 check("nobody configured: nothing", pick([], set(), NOW, 7) == [])
 
+print("why things were kept")
+from services.media_cleanup import kept_summary  # noqa: E402
+kept = {}
+pick([[item("a", 30), item("b", 3), item("c", 30, favorite=True), item("d", None)],
+      [item("a", 30), item("b", 3), item("c", 30), item("d", None), item("e", 30)]], set(), NOW, 7, kept)
+check("each kept reason counted, the one only person 2 watched too",
+      kept == {"recent": 1, "favorite": 1, "no_date": 1, "not_everyone": 1}, kept)
+kept = {}
+pick([[item("a", 30), item("b", 30)], [item("z", 30)]], set(), NOW, 7, kept)
+check("watched by one person each: three kept, not everyone", kept == {"not_everyone": 3}, kept)
+check("plain words, biggest first",
+      kept_summary({"recent": 1, "not_everyone": 12}) == "12 not watched by everyone yet, 1 watched too recently",
+      kept_summary({"recent": 1, "not_everyone": 12}))
+check("nothing kept: empty text", kept_summary({}) == "")
+
 print("deleting files")
 root = tempfile.mkdtemp()
 movies, shows = os.path.join(root, "Movies"), os.path.join(root, "Shows")
@@ -150,7 +165,10 @@ check("the admin page sees the last run", job.public()["last"] is rep)
 film = make_film()
 job = MediaCleanup(cfg, FakePlayback({"u1": [item("b", 10, path=film)]}), lambda: ["u1", "u2"], db, [movies, shows],
                    lambda: None)
-check("second person never watched: kept", job.run_once(NOW)["items"] == [] and os.path.exists(film))
+rep = job.run_once(NOW)
+check("second person never watched: kept", rep["items"] == [] and os.path.exists(film))
+check("the report says why: 1 of 1 watched, not by everyone",
+      rep["watched"] == 1 and rep["people"] == 2 and rep["kept_text"] == "1 not watched by everyone yet", rep)
 
 job = MediaCleanup(cfg, FakePlayback({"default": [item("b", 10, path=film)]}), lambda: [], db, [movies, shows],
                    lambda: None)
@@ -159,7 +177,9 @@ check("no people configured: the default viewer decides", len(job.run_once(NOW)[
 film = make_film()
 elsewhere = {"u1": [item("c", 10, path="/somewhere/else.mkv")]}
 job = MediaCleanup(cfg, FakePlayback(elsewhere), lambda: ["u1"], db, [movies, shows], lambda: None)
-check("Jellyfin path outside Movies/Shows: skipped", job.run_once(NOW)["items"] == [])
+rep = job.run_once(NOW)
+check("Jellyfin path outside Movies/Shows: skipped, and said so",
+      rep["items"] == [] and rep["kept"] == {"outside": 1}, rep)
 
 
 class Down(FakePlayback):
