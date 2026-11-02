@@ -46,7 +46,7 @@ def ids(chosen):
 print("dates and settings")
 check("Jellyfin's 7-digit fractions are read", parse_date("2026-10-13T20:00:00.1234567Z") is not None)
 check("a missing date is None", parse_date(None) is None and parse_date("nonsense") is None)
-check("off unless switched on, dry run by default", settings({}) == {"enabled": False, "days": 7.0, "dry_run": True})
+check("off unless switched on, dry run by default", settings({}) == {"enabled": False, "days": 7.0, "dry_run": True, "watched_by": "all"})
 check("days below 1 are raised to 1", settings({"media_cleanup": {"days_after_watched": 0}})["days"] == 1.0)
 
 print("choosing")
@@ -78,6 +78,18 @@ check("plain words, biggest first",
       kept_summary({"recent": 1, "not_everyone": 12}) == "12 not watched by everyone yet, 1 watched too recently",
       kept_summary({"recent": 1, "not_everyone": 12}))
 check("nothing kept: empty text", kept_summary({}) == "")
+
+print("watched by either of us")
+check("setting: any, else all", settings({"media_cleanup": {"watched_by": "Any"}})["watched_by"] == "any"
+      and settings({})["watched_by"] == "all" and settings({"media_cleanup": {"watched_by": "x"}})["watched_by"] == "all")
+kept = {}
+chosen = pick([[item("a", 30), item("b", 3)], [item("z", 30)]], set(), NOW, 7, kept, "any")
+check("one person watched it 30 days ago: goes", ids(chosen) == ["a", "z"], chosen)
+check("one watched 3 days ago: kept as recent", kept == {"recent": 1}, kept)
+check("both watched: counted from the later one",
+      pick([[item("a", 30)], [item("a", 3)]], set(), NOW, 7, None, "any") == [])
+check("someone part way through: kept", pick([[item("a", 30)]], set(), NOW, 7, None, "any", {"a"}) == [])
+check("a favourite of the one who didn't watch it: kept", pick([[item("a", 30)]], {"a"}, NOW, 7, None, "any") == [])
 
 print("deleting files")
 root = tempfile.mkdtemp()
@@ -115,8 +127,9 @@ print("a full run")
 
 
 class FakePlayback:
-    def __init__(self, played):
+    def __init__(self, played, extra=None):
         self.played = played
+        self.extra = extra or {}       # (uid, "IsFavorite" / "IsResumable") -> items
 
     def resolve_user(self, raw, label=""):
         return raw
@@ -126,8 +139,8 @@ class FakePlayback:
 
     def _request(self, method, path, params=None):
         uid = path.split("/")[2]
-        if params["Filters"] == "IsFavorite":
-            return {"Items": []}
+        if params["Filters"] in ("IsFavorite", "IsResumable"):
+            return {"Items": self.extra.get((uid, params["Filters"]), [])}
         return {"Items": self.played.get(uid, [])}
 
 
@@ -180,6 +193,42 @@ job = MediaCleanup(cfg, FakePlayback(elsewhere), lambda: ["u1"], db, [movies, sh
 rep = job.run_once(NOW)
 check("Jellyfin path outside Movies/Shows: skipped, and said so",
       rep["items"] == [] and rep["kept"] == {"outside": 1}, rep)
+
+
+class WatchlistDB(FakeDB):
+    def __init__(self, listed):
+        super().__init__()
+        self.listed = listed
+        self.asked = None
+
+    def get_sources_by_paths(self, paths):
+        return {p: {"media_item_id": 42} for p in paths}
+
+    def get_watch_later_ids(self, ids, personal_of=None):
+        self.asked = personal_of
+        return {42: [2]} if self.listed else {}
+
+
+film = make_film()
+any_cfg = {"media_cleanup": {"enabled": True, "days_after_watched": 7, "dry_run": True, "watched_by": "any"}}
+wdb = WatchlistDB(True)
+job = MediaCleanup(any_cfg, FakePlayback({"u1": [item("b", 10, path=film)]}), lambda: ["u1", "u2"], wdb,
+                   [movies, shows], lambda: None, lambda: [1, 2])
+rep = job.run_once(NOW)
+check("any: on Gabriele's watchlist, so kept", rep["items"] == [] and rep["kept"] == {"watchlist": 1}, rep)
+check("both people's Just me lists are read", wdb.asked == [1, 2], wdb.asked)
+job = MediaCleanup(any_cfg, FakePlayback({"u1": [item("b", 10, path=film)]}), lambda: ["u1", "u2"],
+                   WatchlistDB(False), [movies, shows], lambda: None)
+check("any: watched by one, on no watchlist: listed", len(job.run_once(NOW)["items"]) == 1)
+started = {("u2", "IsResumable"): [item("b", 1, path=film, played=False)]}
+job = MediaCleanup(any_cfg, FakePlayback({"u1": [item("b", 10, path=film)]}, started), lambda: ["u1", "u2"],
+                   WatchlistDB(False), [movies, shows], lambda: None)
+rep = job.run_once(NOW)
+check("any: the other person is half way through: kept", rep["items"] == [] and rep["kept"] == {"in_progress": 1}, rep)
+fav = {("u2", "IsFavorite"): [item("b", None, path=film, played=False)]}
+job = MediaCleanup(any_cfg, FakePlayback({"u1": [item("b", 10, path=film)]}, fav), lambda: ["u1", "u2"],
+                   WatchlistDB(False), [movies, shows], lambda: None)
+check("any: the other person's favourite movie: kept", job.run_once(NOW)["items"] == [])
 
 
 class Down(FakePlayback):

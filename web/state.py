@@ -170,6 +170,7 @@ def _jellyfin_rescan() -> None:
 media_cleanup = MediaCleanup(
     config, jellyfin_playback, lambda: [p.jellyfin_user_id for p in nl_people.people], db,
     [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
+    lambda: [p.profile_id for p in nl_people.people if p.profile_id],
 )
 
 # "Delete from server" on the title and show pages (services/nl_delete.py): same folders, same file rules.

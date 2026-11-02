@@ -29,7 +29,7 @@ Never copy code to mars or restart containers by hand: everything goes through a
 | File | What it says |
 |---|---|
 | `homelab.yaml` | the app for Homelab: image, port 8000 inside the container, data folders (`/data`, `/models`), the media folder (`/media`), memory cap (2 GB), secrets, and the helper services |
-| `homelab/config.yaml` | the app's settings on mars: people, `/media` paths, `engine: wishmatch`, 500 GB media cap, watched cleanup in dry run. It is built into the image, so changing it needs a PR. |
+| `homelab/config.yaml` | the app's settings on mars: people, `/media` paths, `engine: wishmatch`, 500 GB media cap, watched cleanup (what either of you watched over 7 days ago). It is built into the image, so changing it needs a PR. |
 | `Dockerfile` | what goes into the image (Python 3.12, `uv`, the code folders) |
 
 **Helper services** (also in `homelab.yaml`): **Jellyfin** (plays the files, uses the Intel
