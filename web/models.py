@@ -181,6 +181,11 @@ class NLHiddenBody(BaseModel):
     hidden: bool
 
 
+class NLDeleteBody(BaseModel):
+    season: Optional[int] = None    # a show's season; none = the whole movie or show
+    confirm: bool = False           # must be true: deleting can't be undone
+
+
 class NLPactBody(BaseModel):
     together: bool
 

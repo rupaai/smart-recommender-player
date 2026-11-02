@@ -23,7 +23,7 @@ import os
 import re
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 DEFAULT_DAYS = 7
 FIRST_RUN_DELAY = 10 * 60        # seconds after start, so a restart loop never deletes anything in a hurry
@@ -108,24 +108,37 @@ def _inside(path: str, roots: Iterable[str]) -> Optional[str]:
     return None
 
 
-def delete_files(video: str, roots: Sequence[str]) -> List[str]:
-    """Deletes the video and the files beside it that share its name, then the folders left empty, up to
-    (not including) the Movies or Shows folder. Refuses anything outside those folders. Returns what went."""
-    root = _inside(video, roots)
-    if not root or not os.path.isfile(video) or os.path.islink(video):
+def related_files(video: str, roots: Sequence[str]) -> List[Tuple[str, str]]:
+    """(real path, known path) of the video and the files beside it that share its name (subtitles, .nfo).
+    Empty when the video is outside the Movies and Shows folders, missing, or a link."""
+    if not _inside(video, roots) or not os.path.isfile(video) or os.path.islink(video):
         return []
     folder = os.path.dirname(os.path.realpath(video))
     # Report each file under the path Jellyfin and the catalogue know it by, not its resolved one: a
     # symlinked media folder (or macOS's /var -> /private/var) would otherwise leave catalogue rows behind.
     known_folder = os.path.dirname(video)
     stem = os.path.splitext(os.path.basename(video))[0]
-    removed: List[str] = []
+    out = []
     for name in sorted(os.listdir(folder)):
         full = os.path.join(folder, name)
         if (name == os.path.basename(video) or name.startswith(stem + ".")) and os.path.isfile(full) \
                 and not os.path.islink(full):
-            os.remove(full)
-            removed.append(os.path.join(known_folder, name))
+            out.append((full, os.path.join(known_folder, name)))
+    return out
+
+
+def delete_files(video: str, roots: Sequence[str]) -> List[str]:
+    """Deletes the video and the files beside it that share its name, then the folders left empty, up to
+    (not including) the Movies or Shows folder. Refuses anything outside those folders. Returns what went."""
+    root = _inside(video, roots)
+    files = related_files(video, roots)
+    if not root or not files:
+        return []
+    folder = os.path.dirname(os.path.realpath(video))
+    removed: List[str] = []
+    for full, known in files:
+        os.remove(full)
+        removed.append(known)
     while folder != root and folder.startswith(root + os.sep):
         try:
             os.rmdir(folder)                               # only succeeds when empty

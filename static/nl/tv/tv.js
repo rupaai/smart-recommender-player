@@ -375,6 +375,13 @@
         }
       }));
     }
+    if (window.NLDelete) {
+      // Delete the file from the server for everyone (after a confirmation), then back to Home.
+      actions.appendChild(window.NLDelete.button({
+        itemId: t.id, title: t.title, isShow: t.media_type === "tv", tv: true,
+        onDone: function () { window.location.replace(ROOT); }
+      }));
+    }
     h.info.appendChild(actions);
     h.info.appendChild(subNote);
     var trailerNote = el("p", "tv-trailer-note");
@@ -610,6 +617,13 @@
     var pact = window.NLCouple ? pactSwitch() : null;
     if (pact) { actions.appendChild(pact); }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title, "tv-btn")); }
+    if (window.NLDelete) {
+      // Delete the season on screen or the whole show from the server (after a confirmation).
+      actions.appendChild(window.NLDelete.button({
+        itemId: s.id, title: s.title, isShow: true, tv: true, season: function () { return curSeason; },
+        onDone: function (r) { if (r.title_left) { window.location.reload(); } else { window.location.replace(ROOT); } }
+      }));
+    }
     h.info.appendChild(actions);
     addInterest(h.info, s.id);
     if (s.together_count) {

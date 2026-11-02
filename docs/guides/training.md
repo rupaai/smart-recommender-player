@@ -36,8 +36,9 @@ flowchart TB
 | 5 Check | Scores the taste model on your ratings. If a score fell more than 1% (`nightly.gate_max_drop_pct`), the new bundle is held back. With nothing to compare yet, it goes through. |
 | 6 Publish | Packs everything into a **model bundle** and sends it. The server checks the files, that every title id exists, and that the model loads, then switches over in one step. |
 
-Nothing here can delete films or ratings: the server never removes titles, and the Mac
-never sends watch history back.
+Nothing here can delete films or ratings: training never removes titles, and the Mac
+never sends watch history back. (Deleting a film's file with "Delete from server" keeps its
+ratings, so training still learns from it.)
 
 ## Tags: why they matter
 
