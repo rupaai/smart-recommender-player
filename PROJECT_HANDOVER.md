@@ -13,7 +13,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Branch `ui-polish-dark` is unused; Labiba asked for it to be deleted on GitHub.
 - `codex/decouple-household-server-routers` (2026-10-14, not merged, no PR here): splits `server.py` routes and household config; now far behind `main`. Ask Labiba before reviving or deleting it.
 <!-- open:nl-laptop -->
-- **Laptop app, next:** confirm "Michael (2026)" (DV 7.6) plays untouched in Chrome and Safari after this deploy.
+- **Laptop app, next:** after deploy, play Michael and The Menu on /player in Chrome and Safari and confirm the FFmpeg log shows `-codec:v:0 copy`, colours look right and seeking is quick.
 <!-- /open:nl-laptop -->
 <!-- open:nl-player-polish -->
 - **TV skip, next:** a 92 Mbps remux keeps only about 15 s ahead in memory on the TV (`DEFAULT_BUFFER_BYTES` in tv-app `PlaybackLogic.kt`), so jumps beyond that must still load.
@@ -24,6 +24,9 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 <!-- open:tv-aurora-look -->
 - **TV soft aurora look, next:** check the seek bar and the Play curtain on the real TV.
 <!-- /open:tv-aurora-look -->
+<!-- open:watched-cleanup -->
+- **Watched cleanup, next:** still in dry run on mars (2026-11-02, nothing deleted ever). Labiba to choose the rule (both watched / either watched) after reading the reasons on `/nl/admin`, then set `dry_run: false`.
+<!-- /open:watched-cleanup -->
 <!-- new-open-work -->
 - Workflow: one branch and one PR per piece of work; Labiba merges. Push after every feature.
 
@@ -59,13 +62,13 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - **B1. Recommender rules** (`recommender_rules.yaml`, loaded by `services/recommender_rules.py`, `RECOMMENDER_RULES_PATH` overrides): the only place for word lists and personal choices. Genre names typed ("comedy") are a hard filter, "no X" a hard exclusion; genre hints ("laugh", "scary") pull hard (+2) and add that genre's best titles to the shortlist; tones ("relaxing", "cozy") pull softly and exclude what nothing else asks for; "less X" pushes down. Typed genres beat the mood card, whose genres then only pull. Foreign gate: a non-English title (`home_languages: [en]`) shows only at TMDB 7.8+ with 2,000+ votes (shows 500+), unless the request names a place or language, says "foreign", or ranks the library (`only_ids`). Also holds concept themes, mood cards, places, Choose-for-us defaults, profile mix, tiers, memory, taste and spread numbers. Funnel sizes, engine mode and the taste-model switch stay in `config.yaml`.
 <!-- /feature:recommender-rules -->
 <!-- feature:training -->
-- **C. Training** (`training/`): TIGER pipeline (`training/README.md` steps A-H, `retrain_tiger.sh`) and the vibe index (`build_vibe_index.py`). Needs torch: Mac only.
+- **C. Training** (`training/`, Mac only, needs torch): the vibe index (`build_vibe_index.py`) and the Wishmatch MovieLens crowd (`build_wishmatch_crowd.py`). The Train button runs both (`training/README.md`).
 <!-- /feature:training -->
 <!-- feature:jellyfin -->
 - **D. Jellyfin** (`jellyfin_service.py`): creates and repairs the Movies and Shows libraries, refreshes and checks visibility, diagnostics. The server boots fine when Jellyfin is down.
 <!-- /feature:jellyfin -->
 <!-- feature:tiger -->
-- **E. TIGER** (`generative_retriever.py`): semantic-ID generative retrieval, artifacts in `models/tiger/` (must be built from the same catalogue). The deployed model is still the old synthetic one until the Mac retrain runs.
+- **E. TIGER:** removed on 2026-10-31 (Labiba's choice). `recommender.engine` is now `wishmatch` or `legacy`; `tiger` reads as legacy. A bundle from an older Mac with a `tiger/` folder is accepted and ignored.
 <!-- /feature:tiger -->
 
 ## 5. Running and testing
@@ -117,7 +120,7 @@ The app is **Northern Lights**. The original app's look is the ticket look (§6)
 - **10.5 Vibe engine:** done (`training/build_vibe_index.py` on the Mac, `services/vibe_index.py` serves). Real-model build depends on the Mac run; rebuild after backfills.
 <!-- /feature:vibe-engine -->
 <!-- feature:questions-popup -->
-- **10.6 Questions pop-up:** done. It runs on the mood map (`MoodSession`, §10.10) and opens on every search while "Ask me a few questions first" is on; the old dial-based `PopupSession` is still in the repo. If it never opens, the serving catalogue has no facets or mood tags (`GET /api/vibe/status` shows `mood_data`).
+- **10.6 Questions pop-up:** done. It runs on the mood map (`MoodSession`, §10.10) and opens on every search while "Ask me a few questions first" is on; with `engine: wishmatch` it is Wishmatch's own questions (§17). If it never opens, the serving catalogue has no facets or mood tags (`GET /api/vibe/status` shows `mood_data`). The old dial-based `PopupSession` and its question bank were removed on 2026-10-31.
 <!-- /feature:questions-popup -->
 <!-- feature:verdict-ratings -->
 - **10.7 Verdict ratings:** done. Five verdicts (rewatch, loved, liked, meh, not for me), chips, vibe-check questions, inferred verdicts for old 1-10 ratings, "Sort out my 7s".
@@ -142,11 +145,14 @@ The app is **Northern Lights**. The original app's look is the ticket look (§6)
 - **JSON logs** (`server.py`, `tests/test_homelab_logs.py`): start-up calls `homelab.logs.setup("INFO")` from the Homelab Python plugin `homelab-sdk` (a git dependency pinned to a commit in `pyproject.toml`). Python logging and uvicorn print one JSON line per record, with the level, so Homelab Logs can read them. No token needed. Plain `print()` lines are not changed and show as info. The Dockerfile installs git only so `uv sync` can fetch the plugin. Plan: /mnt/project-files/homehub/logs_build_plan.md.
 <!-- /feature:logs -->
 <!-- feature:nl-laptop -->
-- **Laptop app at /player** (built): pages at `/player` reuse the TV templates, with laptop controls and original quality: a laptop profile (400 Mbps) sends the video untouched or only repackaged, the audio is converted only when needed (FLAC or AAC stereo), and anything that would re-encode the video, including picture subtitles, asks first with "Play a converted copy (lower quality)". Dolby Vision with a base layer (profile 7 `DOVIWithEL`, 8.x) is listed in the laptop's HEVC range types so Jellyfin 10.11 copies it (tagged hvc1, browser shows the HDR10 base); profile 5 (`DOVI`) still converts. Jellyfin's tone mapping is off, so a converted HDR copy looks dull.
+- **Laptop app at /player** (built): pages at `/player` reuse the TV templates, with laptop controls and original quality: a laptop profile (400 Mbps) sends the video untouched or only repackaged, the audio is converted only when needed (FLAC or AAC stereo), and anything that would re-encode the video, including picture subtitles, asks first with "Play a converted copy (lower quality)". Dolby Vision with a base layer (profile 7 `DOVIWithEL`, 8.x) is listed in the laptop's HEVC range types so Jellyfin 10.11 copies it; profile 5 (`DOVI`) still converts. The laptop gets Jellyfin's `main.m3u8` (the copied stream), not `master.m3u8`: for HDR films the master list also offers an h264 SDR re-encode, which hls.js picks on a non-HDR screen (`original_picture_playlist`). Jellyfin calls every HLS stream "Transcode", so `describe_conversion` judges by the reasons: container only = no note, container + sound only = state `sound` (Picture menu only, no pop-up). VP9 films (e.g. The Matrix) still ask for a converted copy.
 <!-- /feature:nl-laptop -->
 <!-- feature:tv-aurora-look -->
 - **TV soft aurora look** (2026-10-29, CSS and TV JS only, server and TV app unchanged): TV pages, laptop `/player` pages and the TV player use deep navy (#0c1220) with three faint glows on one fixed CSS layer (no image), DM Sans from `/static/fonts` (the Archivo face stays only for the phone pages), a 2 px soft-cyan focus ring (#8fd3ff) with a dark shadow and a small scale, and a violet-pink-blue gradient on the main button and the progress and seek lines. Continue watching tags each still "Series" or "Movie"; posters start the meta line with the type and show a "Details ›" chip on focus; the home page says "Press OK to open a title". The TV player's seek bar is a slim film strip (sprocket dashes, chapters as frame gaps, played part tinted) that stays steady when seeking. Play on a title or show page parts two dark halves from an aurora line in the middle and shows the title big in aurora colours, then opens the player (1.8 s, once, skipped with reduced motion). Direction notes: `.impeccable/surfaces/static-nl-tv-tv-css.md`. Not yet seen on the real TV.
 <!-- /feature:tv-aurora-look -->
+<!-- feature:delete-from-server -->
+- **Delete from server** (`services/nl_delete.py`, `static/nl/delete.js`, `/api/nl/delete/{id}`): a button on the web and TV title and show pages deletes a movie, one season or a whole show for everyone. A panel first shows what goes and the space it frees; "Keep it" is focused, and the server refuses without `confirm: true`. Same file rules as the watched cleanup (only under Movies and Shows; subtitles and empty folders go too). The catalogue forgets the files; ratings and history stay. Jellyfin rescans.
+<!-- /feature:delete-from-server -->
 <!-- new-features -->
 
 ## 11. Download tab and "Best match" sort
@@ -162,10 +168,10 @@ Done (schema v11). One shared list, one row per person per title (`watch_later`)
 
 ## 13. Deployment
 <!-- feature:deployment -->
-Live on `mars` under Homelab (`homelab.yaml`; Jellyfin and Prowlarr are Homelab services). CI (`.github/workflows/ci.yml`) runs `make check` and pushes a linux/amd64 image `ghcr.io/rupaai/smart-recommender-player:sha-<sha>` for every push to `main`; Homelab puts it on dev, and prod waits for Promote. Prod answers on port 7101 (2026-10-23; older notes say 8000). Secrets (`TMDB_API_KEY`, `JELLYFIN_API_KEY`, ...) are set in the Homelab companion and arrive as files in `/run/secrets` (`secrets_as: files`; `services/homelab_secrets.py` copies them into the environment at start-up, older Homelab still uses env vars; values are trimmed of spaces and line breaks); `ADMIN_TOKEN` is made by Homelab (`generate_secrets`; copy it from Apps -> Northern Lights -> Secrets), and the cast secret is kept by the app in `/data`. Running downloads are stored in SQLite and start again after a restart. The old couchcinema deploy scripts are gone; README.md has the steps to remove what is left on `mars`. Admin API under `/admin` (Bearer `ADMIN_TOKEN`) for exports, catalogue patches and model bundles. Mac training run, no schedule (Labiba's choice, 2026-10-19: the Mac is off at night): the **Train CouchCinema** button (`ops/mac/train-now.sh`, put in `~/Applications` by `ops/mac/install.sh`, which also removes the old launchd job) checks `/healthz`, then runs `ops/mac/nightly.sh`: backup, catalogue refresh, TIGER retrain, vibe index build, eval gate, publish bundle; catalogue refresh when `~/.couchcinema/last-catalogue` is a week old. Full steps: `ops/mac/README.md`.
+Live on `mars` under Homelab (`homelab.yaml`; Jellyfin and Prowlarr are Homelab services). CI (`.github/workflows/ci.yml`) runs `make check` and pushes a linux/amd64 image `ghcr.io/rupaai/smart-recommender-player:sha-<sha>` for every push to `main`; Homelab puts it on dev, and prod waits for Promote. Prod answers on port 7101 (2026-10-23; older notes say 8000). Secrets (`TMDB_API_KEY`, `JELLYFIN_API_KEY`, ...) are set in the Homelab companion and arrive as files in `/run/secrets` (`secrets_as: files`; `services/homelab_secrets.py` copies them into the environment at start-up, older Homelab still uses env vars; values are trimmed of spaces and line breaks); `ADMIN_TOKEN` is made by Homelab (`generate_secrets`; copy it from Apps -> Northern Lights -> Secrets), and the cast secret is kept by the app in `/data`. Running downloads are stored in SQLite and start again after a restart. The old couchcinema deploy scripts are gone; `docs/guides/deployment.md` has the steps to remove what is left on `mars`. Admin API under `/admin` (Bearer `ADMIN_TOKEN`) for exports, catalogue patches and model bundles. Mac training run, no schedule (Labiba's choice, 2026-10-19: the Mac is off at night): the **Train CouchCinema** button (`ops/mac/train-now.sh`, put in `~/Applications` by `ops/mac/install.sh`, which also removes the old launchd job) checks `/healthz`, then runs `ops/mac/nightly.sh`: backup, catalogue refresh, TIGER retrain, vibe index build, eval gate, publish bundle; catalogue refresh when `~/.couchcinema/last-catalogue` is a week old. Full steps: `ops/mac/README.md`.
 <!-- /feature:deployment -->
 <!-- feature:watched-cleanup -->
-- **Watched cleanup** (`services/media_cleanup.py`, `media_cleanup:` in `homelab/config.yaml`): once a day, deletes a movie or episode that every configured person watched, the last of them over 7 days ago, unless it or its show is a Jellyfin favorite. Only under Movies and Shows; subtitles and empty folders go too. Ships in **dry run** (admin page and log list what would go); set `dry_run: false` to delete. Media cap on `mars`: `torrent.max_media_gb: 500`.
+- **Watched cleanup** (`services/media_cleanup.py`, `media_cleanup:` in `homelab/config.yaml`): once a day, deletes a movie or episode that every configured person watched, the last of them over 7 days ago, unless it or its show is a Jellyfin favorite. Only under Movies and Shows; subtitles and empty folders go too. Ships in **dry run** (admin page and log list what would go); set `dry_run: false` to delete. The report also counts why each other watched item stayed ("12 not watched by everyone yet, 3 watched too recently"). Media cap on `mars`: `torrent.max_media_gb: 500`.
 <!-- /feature:watched-cleanup -->
 <!-- feature:version -->
 - **Version** (`services/app_version.py`): Homelab's `HOMELAB_VERSION` (e.g. `v0.4.0`, `v0.4.0-dev.2`; unset locally) shows in `/healthz` as `version` (null when unset) and as the API docs version (`dev` when unset); the TV app's settings screen shows `Server <version>` when the server sends one. `pyproject.toml` version is only the starting value for Homelab.
