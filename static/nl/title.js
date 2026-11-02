@@ -102,6 +102,13 @@
         }
       }));
     }
+    if (window.NLDelete) {
+      // Delete the file from the server for everyone (after a confirmation), then back to Home.
+      actions.appendChild(window.NLDelete.button({
+        itemId: t.id, title: t.title, isShow: t.media_type === "tv",
+        onDone: function () { window.location.href = "/nl/"; }
+      }));
+    }
     info.appendChild(actions);
     if (window.NLWatch) { info.appendChild(window.NLWatch.interestControl(t.id)); }
     info.appendChild(subNote);

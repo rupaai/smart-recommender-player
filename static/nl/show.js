@@ -174,6 +174,13 @@
       actions.appendChild(n);
     }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title)); }
+    if (window.NLDelete) {
+      // Delete this season or the whole show from the server (after a confirmation).
+      actions.appendChild(window.NLDelete.button({
+        itemId: s.id, title: s.title, isShow: true, season: function () { return season; },
+        onDone: function (r) { if (r.title_left) { window.location.reload(); } else { window.location.href = "/nl/"; } }
+      }));
+    }
     info.appendChild(actions);
     if (window.NLWatch) { info.appendChild(window.NLWatch.interestControl(s.id)); }
     if (s.next_up && s.next_up.name && s.next_up.name.indexOf("Episode ") !== 0) {
