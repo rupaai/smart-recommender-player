@@ -164,7 +164,7 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 
 ## Laptop player (/player)
 
-- Reuses the TV pages with laptop controls. Pages in `web/routes/nl_pages.py` (`/player/...`); laptop profile in `services/device_profiles.py`. Tests: `tests/test_nl_laptop.py`, `tests/test_nl_laptop_quality.py`.
+- Reuses the TV pages with laptop controls. Pages in `web/routes/nl_pages.py` (`/player/...`); laptop profile in `services/device_profiles.py`. The "converting" note (none for a repackage, "Original picture. Only the ... sound is converted" for sound only) is `describe_conversion()` in `services/nl_picture.py`. Tests: `tests/test_nl_laptop.py`, `tests/test_nl_laptop_quality.py`, `tests/test_nl_settings.py` (notes).
 
 ## Casting and the phone keyboard
 

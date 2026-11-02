@@ -522,7 +522,7 @@
   }
   function conversionText() {
     var c = (S.stream && S.stream.conversion) || null;
-    if (!c || c.state !== "converting") { return "Playing as it is: no conversion."; }
+    if (!c || (c.state !== "converting" && c.state !== "sound")) { return "Playing as it is: no conversion."; }
     return c.note + (c.detail ? " (" + c.detail + ")" : "");
   }
   function openPictureMenu() {
@@ -571,6 +571,7 @@
     infoTimer = setInterval(refreshInfoPanel, 1000);
   }
   // A short, friendly line when Jellyfin is converting the stream (once per film, or again after a quality change).
+  // Only the sound converted ("sound": the picture is the original) gets no toast; the Picture menu still says so.
   function noteConversion(stream) {
     var c = stream && stream.conversion;
     if (!c || c.state !== "converting" || !c.note || S.convertNoted === c.note) { return; }

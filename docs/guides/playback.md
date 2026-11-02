@@ -54,7 +54,8 @@ If Jellyfin says the TV can't take the original (rare), the player says why and 
 
 - **Laptop** (`/player/`): sends the video untouched or only repackaged; converts the sound
   only when the browser can't play it (to FLAC or stereo AAC). Anything that would re-encode
-  the video asks first.
+  the video asks first. When only the sound is converted there is no pop-up; the Picture menu says
+  "Original picture. Only the TrueHD sound is converted..." (`describe_conversion` in `services/nl_picture.py`).
 - **Phone / browser** (`/nl/`): may convert, within the quality cap set on the me page.
 - **Chromecast:** gets a signed, short-lived link to the stream.
 
