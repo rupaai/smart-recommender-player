@@ -90,6 +90,9 @@ class FakeJellyfin:
             return FakeResponse(json_data=self._playback(kw.get("json")))
         if path == "/Users/user1/Items/jf1" and method == "GET":
             return FakeResponse(json_data={"Id": "jf1", "UserData": self.user_data, **self.item_extra})
+        if path == "/UserItems/jf1/UserData" and method == "POST":
+            self.sent.append((method, path, {**(kw.get("json") or {}), "userId": (kw.get("params") or {}).get("userId")}))
+            return FakeResponse(json_data={})
         if path.startswith("/Sessions/Playing") or path.startswith("/Users/user1/PlayedItems/"):
             self.sent.append((method, path, kw.get("json")))
             return FakeResponse(204)  # no body, like Jellyfin
@@ -274,6 +277,14 @@ def run(tmp):
     fake.sent.clear()
     r = client.post("/api/nl/progress", content=json.dumps({**base, "event": "stop"}), headers={"Content-Type": "application/json"})
     check("works with a beacon-style JSON body", r.status_code == 200 and fake.sent, r.status_code)
+    fake.sent.clear()
+    client.post("/api/nl/progress", json={**base, "event": "stop"})
+    check("no people, stopped half way: no watched mark", not [x for x in fake.sent if x[1].startswith("/UserItems/")], fake.sent)
+    fake.sent.clear()
+    client.post("/api/nl/progress", json={**base, "event": "stop", "ended": True, "duration_seconds": 2600})
+    marks = [x[2] for x in fake.sent if x[1] == "/UserItems/jf1/UserData"]
+    check("no people, played to the end: marked watched for the default user",
+          len(marks) == 1 and marks[0]["Played"] is True and marks[0]["userId"] == "user1" and marks[0]["PlaybackPositionTicks"] == 0, fake.sent)
     fake.down = True
     r = client.post("/api/nl/progress", json={**base, "event": "progress"})
     check("503 when Jellyfin is down", r.status_code == 503 and SECRET not in r.text, r.status_code)

@@ -427,12 +427,15 @@ async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any
     if not valid_jellyfin_id(req.jellyfin_id):
         raise HTTPException(status_code=400, detail="Bad item id.")
     viewer = _nl_viewer_or_default(request)
+    # Got to the end, or into the credits (90 percent): Jellyfin should count it as watched for each viewer.
+    finished = req.event != "start" and nl_together.is_finished(req.position_seconds, req.duration_seconds, req.ended)
     try:
         await asyncio.to_thread(
             _report_to_users, viewer.jellyfin_users,
             lambda user: state.jellyfin_playback.report_progress(
                 req.event, req.jellyfin_id, req.play_session_id, req.media_source_id,
                 req.position_seconds, req.paused, req.play_method, **({"user": user} if user else {}),
+                finished=finished,
             ),
         )
     except JellyfinUnavailable as e:
@@ -440,7 +443,7 @@ async def nl_progress(req: NLProgressRequest, request: Request) -> Dict[str, Any
     # M9a: "Both of us" finishing a title is the one thing that marks it as seen together.
     if (
         req.event == "stop" and req.media_item_id and viewer.is_both and nl_together.together_possible(state.nl_people.people)
-        and nl_together.is_finished(req.position_seconds, req.duration_seconds, req.ended)
+        and finished
     ):
         await asyncio.to_thread(state.db.mark_seen_together, req.media_item_id, req.source_id)
     return {"success": True}
