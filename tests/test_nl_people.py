@@ -429,6 +429,24 @@ def run(tmp):
     fake.reports.clear()
     client.post("/api/nl/progress", json={**body, "event": "stop"}, headers=cookie("both"))
     check("stop saves the position for both users", sorted(p for _, p, _ in fake.reports) == sorted([UD(LAB), UD(PAR)]), fake.reports)
+    check("an unfinished stop does not mark it watched", all("Played" not in x[2] for x in fake.reports), fake.reports)
+    print("finishing marks it watched for each viewer")
+    fake.reports.clear()
+    client.post("/api/nl/progress", json={**body, "event": "stop", "position_seconds": 5990, "duration_seconds": 6000,
+                                          "ended": True}, headers=cookie("both"))
+    marks = {p: x for _, p, x in fake.reports}
+    check("ended: Played for both users, position back to 0, with a date",
+          sorted(marks) == sorted([UD(LAB), UD(PAR)]) and all(x.get("Played") is True and x["PlaybackPositionTicks"] == 0
+                                                              and x["LastPlayedDate"].endswith("Z") for x in marks.values()), fake.reports)
+    fake.reports.clear()
+    client.post("/api/nl/progress", json={**body, "event": "progress", "position_seconds": 5500, "duration_seconds": 6000},
+                headers=cookie("labiba"))
+    check("in the credits (over 90 percent): Played, position kept", len(fake.reports) == 1 and fake.reports[0][2].get("Played") is True
+          and fake.reports[0][2]["PlaybackPositionTicks"] == 55000000000, fake.reports)
+    fake.reports.clear()
+    client.post("/api/nl/progress", json={**body, "event": "progress", "position_seconds": 3000, "duration_seconds": 6000},
+                headers=cookie("labiba"))
+    check("half way: not Played", len(fake.reports) == 1 and "Played" not in fake.reports[0][2], fake.reports)
     fake.reports.clear()
     fake.fail_users = {PAR}
     r = client.post("/api/nl/progress", json=body, headers=cookie("both"))

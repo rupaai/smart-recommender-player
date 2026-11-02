@@ -78,6 +78,7 @@ flowchart LR
 
 - **What:** the "who's watching?" screen, a cookie per screen, each person's own Jellyfin user and ratings profile, "Both of us".
 - **Files:** `services/nl_people.py`; routes `web/routes/nl_viewer.py`; helper `_nl_viewer` in `web/helpers.py`; pages `templates/nl/who.html`, `templates/nl/tv/who.html`.
+- **Watched marks:** `POST /api/nl/progress` (`web/routes/nl_play.py`) writes each viewer's position to their Jellyfin user, and Played once they reach the end or 90 percent (`report_progress` in `services/jellyfin_playback.py`, `is_finished` in `services/nl_together.py`). Recently Watched and the watched cleanup read these marks.
 - **Per-person settings** (languages, subtitle look, skip length, autoplay, quality cap): `services/nl_settings.py`, `static/nl/prefs.js`, `static/nl/me.js`.
 - **Tests:** `tests/test_nl_people.py`, `tests/test_nl_settings.py`.
 

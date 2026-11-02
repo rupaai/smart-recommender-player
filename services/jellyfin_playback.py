@@ -696,12 +696,18 @@ class JellyfinPlayback:
         paused: bool = False,
         play_method: str = "DirectPlay",
         user: Optional[str] = None,
+        finished: bool = False,
     ) -> None:
         """Tell Jellyfin where the viewer is: the session report as before M4 (Jellyfin's own housekeeping,
         e.g. ending a transcode). With `user` (a configured person's Jellyfin user, M4) the position is
         also written to that user's UserData, so "Both of us" can report one playback to two users.
         The user-scoped PlayingItems endpoints are not used: Jellyfin 10.11 ignores their userId and
-        attributes them to the caller's session (the API key), not to the user."""
+        attributes them to the caller's session (the API key), not to the user.
+
+        For the same reason Jellyfin never marks the title watched for that user by itself, so `finished`
+        (the viewer got to the end or into the credits) writes Played as well; on "stop" the position goes
+        back to 0, as Jellyfin does. Without that, nothing was ever "watched": no Recently Watched row, and
+        the watched cleanup found nothing to delete."""
         paths = {
             "start": "/Sessions/Playing",
             "progress": "/Sessions/Playing/Progress",
@@ -721,16 +727,19 @@ class JellyfinPlayback:
             "CanSeek": True,
         }
         self._send("POST", paths[event], json=body)
-        if user and event != "start":
-            uid = self.resolve_user(user, "northern_lights.people jellyfin_user_id")
+        if event != "start" and (user or finished):
+            uid = self.resolve_user(user, "northern_lights.people jellyfin_user_id") if user else self._user_id()
+            data: Dict[str, Any] = {
+                "PlaybackPositionTicks": 0 if (finished and event == "stop") else ticks,
+                "LastPlayedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
+            }
+            if finished:
+                data["Played"] = True
             status = self._send_status(
                 "POST",
                 f"/UserItems/{jf_id}/UserData",
                 params={"userId": uid},
-                json={
-                    "PlaybackPositionTicks": ticks,
-                    "LastPlayedDate": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"),
-                },
+                json=data,
             )
             if status >= 400:
                 raise JellyfinUnavailable(f"Jellyfin answered {status} when saving the position.")

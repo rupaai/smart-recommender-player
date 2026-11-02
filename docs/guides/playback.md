@@ -21,7 +21,7 @@ sequenceDiagram
   J-->>A: yes, original file / no, needs conversion (and why)
   A-->>S: stream address, audio and subtitle tracks, where to resume
   S->>A: video through /nl/jf/... (the app passes Jellyfin's stream on)
-  S->>A: progress every few seconds (saved for each viewer)
+  S->>A: progress every few seconds (saved for each viewer; at the end or 90% it is marked watched)
 ```
 
 - The **device profile** (`services/device_profiles.py`) lists what each kind of screen can
