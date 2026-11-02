@@ -103,7 +103,7 @@ def describe_conversion(
     hdr: Optional[str] = None,
 ) -> Dict[str, Any]:
     """What the player tells the viewer. `device` is "This TV" or "This browser". Returns
-    {state: direct | converting, note: str | None, detail: str | None, reasons: [...], formats}.
+    {state: direct | sound | converting, note: str | None, detail: str | None, reasons: [...], formats}.
 
     The note is written for a person: "This TV can't play this format, so it's being converted." with the
     parts named in `detail` ("HEVC video, DTS sound"); a conversion that is only down to the quality they
@@ -113,6 +113,14 @@ def describe_conversion(
     if play_method == "DirectPlay" or (play_method == "DirectStream" and rs <= _CONTAINER_REASONS):
         # Repackaging the file (an mkv sent as HLS) leaves picture and sound untouched: nothing to tell.
         return {"state": "direct", "note": None, "detail": None, **base}
+    # Jellyfin calls every HLS stream "Transcode", even a plain repackage. The reasons say what really changes:
+    # container only = picture and sound untouched; container and sound only = the picture is copied as it is.
+    if rs and rs <= _CONTAINER_REASONS:
+        return {"state": "direct", "note": None, "detail": None, **base}
+    if rs & _AUDIO_REASONS and rs <= _AUDIO_REASONS | _CONTAINER_REASONS:
+        sound = f"{formats['audio']} sound" if formats.get("audio") else "sound"
+        note = f"Original picture. Only the {sound} is converted, because {device[0].lower() + device[1:]} can't play it."
+        return {"state": "sound", "note": note, "detail": None, **base}
     video_bad = bool(rs & (_VIDEO_REASONS - _HDR_REASONS))
     audio_bad = bool(rs & _AUDIO_REASONS)
     container_bad = bool(rs & _CONTAINER_REASONS)

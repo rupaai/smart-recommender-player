@@ -111,7 +111,15 @@ def test_pure():
     d = pic.describe_conversion("Transcode", ["VideoCodecNotSupported", "AudioCodecNotSupported"], f_hevc, "This TV")
     check("names the screen and the parts", d["state"] == "converting" and d["note"] == "This TV can't play this format, so it's being converted." and d["detail"] == "HEVC video, DTS sound", d)
     d = pic.describe_conversion("Transcode", ["AudioCodecNotSupported"], f_hevc, "This browser")
-    check("sound only", d["detail"] == "DTS sound" and d["note"].startswith("This browser can't play this format"), d)
+    check("sound only: the picture is the original, only the sound is converted (state 'sound', no alarm)",
+          d["state"] == "sound" and d["note"] == "Original picture. Only the DTS sound is converted, because this browser can't play it.", d)
+    d = pic.describe_conversion("Transcode", ["ContainerNotSupported", "AudioCodecNotSupported"], {"video": "HEVC", "audio": "TrueHD", "hdr": "Dolby Vision"}, "This laptop")
+    check("an mkv repackaged with only the sound converted is 'sound', not 'converting'",
+          d["state"] == "sound" and "TrueHD sound" in d["note"] and "this laptop" in d["note"], d)
+    d = pic.describe_conversion("Transcode", ["ContainerNotSupported"], f_hevc, "This laptop")
+    check("Jellyfin says Transcode for a plain repackage: still no note", d["state"] == "direct" and d["note"] is None, d)
+    d = pic.describe_conversion("Transcode", ["AudioCodecNotSupported", "VideoCodecNotSupported"], f_hevc, "This laptop")
+    check("picture converted too: still 'converting'", d["state"] == "converting", d)
     d = pic.describe_conversion("DirectStream", ["ContainerNotSupported"], f_hevc, "This browser")
     check("an mkv repackaged as HLS is not worth a note", d["state"] == "direct" and d["note"] is None, d)
     check("direct play: nothing", pic.describe_conversion("DirectPlay", [], f_hevc, "This TV")["state"] == "direct")
