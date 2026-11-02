@@ -76,7 +76,9 @@ Next to each title it keeps:
    the original file untouched. See [Playback](playback.md).
 6. **Afterwards.** "How was it?" asks each person for a verdict. That feeds the next picks.
    A film one of you watched more than a week ago is cleaned up to save space, unless it is a
-   favourite, someone is part way through it, or it is on someone's watchlist.
+   favourite, someone is part way through it, or it is on someone's watchlist. You can also
+   delete a film, a season or a whole show yourself with "Delete from server" on its page. It
+   asks first, because it can't be undone.
 
 ## The two apps in one
 

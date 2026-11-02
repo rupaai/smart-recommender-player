@@ -184,6 +184,12 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 - **Files:** `services/media_cleanup.py`. Setting `media_cleanup:` in `homelab/config.yaml` (`watched_by`, `days_after_watched`, `dry_run`).
 - **Tests:** `tests/test_media_cleanup.py`.
 
+## Delete from server
+
+- **What:** a "Delete from server" button on the title and show pages (web and TV) deletes a movie, one season or a whole show for everyone. A panel first shows what goes and how much space it frees; "Keep it" is the first focus. Ratings and watch history stay.
+- **Files:** `services/nl_delete.py` (`LibraryDelete`), routes `GET/POST /api/nl/delete/{id}` in `web/routes/nl_library.py`, panel `static/nl/delete.js` + `static/nl/delete.css` (loaded by both base templates), buttons in `static/nl/title.js`, `static/nl/show.js`, `static/nl/tv/tv.js`. File rules shared with the watched cleanup (`related_files`, `delete_files` in `services/media_cleanup.py`).
+- **Tests:** `tests/test_nl_delete.py`.
+
 ## Status and admin
 
 - **Header status, admin page:** `services/nl_health.py`, `web/routes/nl_admin.py`, `static/nl/health.js`, `admin.js`. Tool links: `northern_lights.tools`.
@@ -228,6 +234,7 @@ Guide: [guides/training.md](guides/training.md).
 | make picks better known / more obscure | `wishmatch.candidates.known` and `min_popularity` |
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
+| delete a film or show by hand | "Delete from server" on its page (web or TV) |
 | turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |

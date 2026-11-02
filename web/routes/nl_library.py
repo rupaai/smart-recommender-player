@@ -28,6 +28,7 @@ from web.helpers import (
     _report_to_users,
 )
 from web.models import (
+    NLDeleteBody,
     NLHiddenBody,
     NLPactBody,
     NLReactBody,
@@ -161,6 +162,28 @@ async def nl_title_data(item_id: int, request: Request) -> Dict[str, Any]:
     data["hidden"] = item_id in await asyncio.to_thread(state.db.get_hidden_ids, viewer.key)
     together = nl_together.together_possible(state.nl_people.people)
     data["together"] = bool(together and data.get("media_type") != "tv" and 0 in await asyncio.to_thread(state.db.get_seen_together, item_id))
+    return data
+
+
+@router.get("/api/nl/delete/{item_id}")
+async def nl_delete_preview(item_id: int, season: Optional[int] = None) -> Dict[str, Any]:
+    """What "Delete from server" would remove (a movie, a whole show, or one season) and the space it frees,
+    for the confirmation step. Deletes nothing."""
+    data = await asyncio.to_thread(state.library_delete.preview, item_id, season)
+    if not data:
+        raise HTTPException(status_code=404, detail="That isn't in the library.")
+    return data
+
+
+@router.post("/api/nl/delete/{item_id}")
+async def nl_delete(item_id: int, body: NLDeleteBody) -> Dict[str, Any]:
+    """Deletes the files of a movie, a whole show, or one season, for everyone. Can't be undone, so it
+    refuses unless `confirm` is true. Ratings and watch history are kept."""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Confirm the delete first.")
+    data = await asyncio.to_thread(state.library_delete.delete, item_id, body.season)
+    if not data:
+        raise HTTPException(status_code=404, detail="That isn't in the library.")
     return data
 
 

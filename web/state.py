@@ -25,6 +25,7 @@ from services.catalogue_search import CatalogueSearch, _tmdb_get
 from services.jellyfin_playback import JellyfinPlayback
 from services.jellyfin_service import JellyfinService
 from services.media_cleanup import MediaCleanup
+from services.nl_delete import LibraryDelete
 from services.nl_browse import NLBrowse
 from services.nl_cast import (
     CastConfig,
@@ -171,6 +172,9 @@ media_cleanup = MediaCleanup(
     [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
     lambda: [p.profile_id for p in nl_people.people if p.profile_id],
 )
+
+# "Delete from server" on the title and show pages (services/nl_delete.py): same folders, same file rules.
+library_delete = LibraryDelete(db, [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan)
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root

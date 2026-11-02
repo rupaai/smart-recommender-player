@@ -7,6 +7,7 @@
   <title>{% block title %}Northern Lights{% endblock %}</title>
   <link rel="stylesheet" href="/static/nl/tv/tv.css">
   <link rel="stylesheet" href="/static/nl/subtitles.css">
+  <link rel="stylesheet" href="/static/nl/delete.css">
   {% block head %}{% endblock %}
 </head>
 <body class="tv-page-{{ page }}" data-page="{{ page }}" data-root="{{ root }}" data-surface="{{ surface }}"{% if item_id is defined %} data-item-id="{{ item_id }}"{% endif %}>
@@ -34,6 +35,7 @@
   <script src="/static/nl/watch.js"></script>
   <script src="/static/nl/polish.js"></script>
   <script src="/static/nl/couple.js"></script>
+  <script src="/static/nl/delete.js"></script>
   <script src="/static/nl/health.js"></script>
   <script src="/static/nl/tv/focus.js"></script>
   <script src="/static/nl/prefs.js"></script>

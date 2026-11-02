@@ -1,0 +1,29 @@
+/* Northern Lights "Delete from server" panel (static/nl/delete.js). Dark like the subtitles panel, so it reads the
+ * same on the light web pages and the TV. .nld-tv is the 10-foot version (sizes in rem, the TV pages scale them). */
+.nld-host { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(0, 0, 0, 0.72); color: #f2f0ec; font-family: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.nld-host *, .nld-host *::before, .nld-host *::after { box-sizing: border-box; }
+.nld-panel { width: min(520px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 22px;
+  background: #18161f; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 18px; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+.nld-title { margin: 0; font-size: 1.25rem; font-weight: 800; line-height: 1.25; overflow-wrap: anywhere; }
+.nld-text { margin: 0; font-size: 0.95rem; line-height: 1.45; color: #cfccd6; }
+.nld-choices, .nld-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.nld-choices:empty { display: none; }
+.nld-buttons { justify-content: flex-end; }
+.nld-btn { min-height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.07); color: inherit; font: inherit; font-weight: 700; cursor: pointer; }
+.nld-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.nld-btn:focus-visible, .nld-btn:focus { outline: 3px solid #7fe0b4; outline-offset: 2px; }
+.nld-btn:disabled { opacity: 0.5; cursor: default; }
+.nld-choice[aria-pressed="true"] { background: #f2f0ec; color: #18161f; border-color: transparent; }
+.nld-danger { background: #c4372f; border-color: transparent; color: #fff; }
+.nld-danger:hover { background: #d8433a; }
+
+.nld-tv .nld-panel { width: 64rem; max-width: 100%; gap: 2rem; padding: 3.5rem; border-radius: 2rem; border-width: 0.1rem; }
+.nld-tv .nld-title { font-size: 2.75rem; }
+.nld-tv .nld-text { font-size: 1.75rem; }
+.nld-tv .nld-choices, .nld-tv .nld-buttons { gap: 1.25rem; }
+.nld-tv .nld-btn { min-height: 4.5rem; padding: 0 2.25rem; border-radius: 1.25rem; font-size: 1.75rem; border-width: 0.1rem; }
+.nld-tv .nld-btn:focus { outline: none; transform: scale(1.05); box-shadow: 0 0 0 0.35rem #7fe0b4; }
+
+@media (prefers-reduced-motion: reduce) { .nld-tv .nld-btn:focus { transform: none; } }
