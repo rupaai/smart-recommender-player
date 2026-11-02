@@ -2,9 +2,10 @@
 Northern Lights watched cleanup (services/media_cleanup.py)
 
 Deletes a movie or an episode when:
-  * every person (northern_lights.people, or the one JELLYFIN_USER_ID viewer) has it marked watched in Jellyfin,
-  * the last of them watched it more than `days_after_watched` days ago,
-  * nobody marked it, or its show, a favorite.
+  * it is marked watched in Jellyfin by every person (northern_lights.people, or the one JELLYFIN_USER_ID
+    viewer), or with `watched_by: any` by at least one of them,
+  * the last of those watched it more than `days_after_watched` days ago,
+  * nobody marked it, or its show, a favorite, nobody is part way through it, and it is on nobody's watchlist.
 
 Only files under the Movies and Shows folders are ever touched. The video goes together with the files next
 to it that share its name (subtitles, .nfo), and folders left empty are removed. Then Jellyfin rescans.
@@ -12,6 +13,7 @@ to it that share its name (subtitles, .nfo), and folders left empty are removed.
     media_cleanup:
       enabled: true
       days_after_watched: 7
+      watched_by: all     # all = everyone watched it; any = one of you is enough
       dry_run: true       # only list what would go (admin page and log); false = delete
 
 The choosing (`pick`) and the deleting (`delete_files`) are plain functions, tested without Jellyfin.
@@ -41,6 +43,8 @@ def settings(config: Dict[str, Any]) -> Dict[str, Any]:
         "enabled": bool(raw.get("enabled", False)),
         "days": max(1.0, days),             # never "delete the moment it ends"
         "dry_run": bool(raw.get("dry_run", True)),
+        # "all": everyone watched it. "any": one person watched it is enough.
+        "watched_by": "any" if str(raw.get("watched_by", "all")).strip().lower() == "any" else "all",
     }
 
 
@@ -72,10 +76,15 @@ def pick(
     now: datetime,
     days: float,
     kept: Optional[Dict[str, int]] = None,
+    watched_by: str = "all",
+    in_progress: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
     """The items to delete. `played_per_person` holds, for each person, the Jellyfin items they have watched
-    (with UserData). An item counts only when it is in every person's list. `kept`, when given, counts why
-    each other watched item stays (keys in KEPT_REASONS), so the report can say why nothing went."""
+    (with UserData). With watched_by "all" an item counts only when it is in every person's list; with "any"
+    one person's list is enough, counted from the last of those who watched it. `favorite_shows` holds the
+    favourite ids (shows, movies, episodes) of everyone. `in_progress` holds the ids someone has started and
+    not finished: those always stay. `kept`, when given, counts why each other watched item stays (keys in
+    KEPT_REASONS), so the report can say why nothing went."""
     if not played_per_person:
         return []
     per_person = [{str(it.get("Id")): it for it in items if it.get("Id")} for items in played_per_person]
@@ -91,11 +100,17 @@ def pick(
 
     for item_id, item in every_id.items():
         copies = [p.get(item_id) for p in per_person]
+        if watched_by == "any":
+            copies = [c for c in copies if c is not None]  # only the people who watched it
         data = [(c.get("UserData") or {}) if c else {} for c in copies]
         if any(c is None for c in copies) or not all(d.get("Played") for d in data):
             keep("not_everyone")                           # someone hasn't watched it
             continue
-        if any(d.get("IsFavorite") for d in data) or str(item.get("SeriesId") or "") in favorite_shows:
+        if item_id in (in_progress or set()):
+            keep("in_progress")                            # someone is part way through (a rewatch, say)
+            continue
+        if any(d.get("IsFavorite") for d in data) or item_id in favorite_shows \
+                or str(item.get("SeriesId") or "") in favorite_shows:
             keep("favorite")
             continue
         dates = [parse_date(d.get("LastPlayedDate")) for d in data]
@@ -118,6 +133,8 @@ def pick(
 KEPT_REASONS = {
     "not_everyone": "not watched by everyone yet",
     "favorite": "a favourite (or its show is)",
+    "in_progress": "someone is part way through it",
+    "watchlist": "on someone's watchlist",
     "recent": "watched too recently",
     "no_date": "no watched date in Jellyfin",
     "no_file": "no file Jellyfin knows of",
@@ -173,13 +190,15 @@ class MediaCleanup:
     `users` returns the configured Jellyfin users (an empty list = the default JELLYFIN_USER_ID user)."""
 
     def __init__(self, config: Dict[str, Any], playback: Any, users: Callable[[], List[str]], db: Any,
-                 roots: Sequence[str], refresh: Callable[[], None]):
+                 roots: Sequence[str], refresh: Callable[[], None],
+                 profiles: Optional[Callable[[], List[int]]] = None):
         self.config = config
         self.playback = playback
         self.users = users
         self.db = db
         self.roots = [os.path.abspath(r) for r in roots]
         self.refresh = refresh
+        self.profiles = profiles or (lambda: [])      # every person's ratings profile, for "Just me" watchlists
         self.last: Optional[Dict[str, Any]] = None
         self._lock = threading.Lock()
 
@@ -196,9 +215,25 @@ class MediaCleanup:
         }) or {}
         return list(data.get("Items") or [])
 
+    def _drop_watchlisted(self, chosen: List[Dict[str, Any]], kept: Dict[str, int]) -> List[Dict[str, Any]]:
+        """Keeps anything still on someone's watchlist in the app (shared or "Just me")."""
+        if not chosen or self.db is None or not hasattr(self.db, "get_watch_later_ids"):
+            return chosen
+        sources = self.db.get_sources_by_paths([c["path"] for c in chosen])
+        item_ids = {p: r["media_item_id"] for p, r in sources.items()}
+        listed = self.db.get_watch_later_ids(list(set(item_ids.values())), self.profiles() or None)
+        out = []
+        for c in chosen:
+            if item_ids.get(c["path"]) in listed:
+                kept["watchlist"] = kept.get("watchlist", 0) + 1
+            else:
+                out.append(c)
+        return out
+
     def public(self) -> Dict[str, Any]:
         s = settings(self.config)
-        return {"enabled": s["enabled"], "dry_run": s["dry_run"], "days": s["days"], "last": self.last}
+        return {"enabled": s["enabled"], "dry_run": s["dry_run"], "days": s["days"], "watched_by": s["watched_by"],
+                "last": self.last}
 
     def run_once(self, now: Optional[datetime] = None) -> Dict[str, Any]:
         s = settings(self.config)
@@ -211,9 +246,11 @@ class MediaCleanup:
                     raise RuntimeError("the Movies or Shows folder is missing")
                 uids = self._user_ids()
                 played = [self._items(u, "IsPlayed", "Movie,Episode") for u in uids]
-                favorite_shows = {str(it.get("Id")) for u in uids for it in self._items(u, "IsFavorite", "Series")}
+                favorites = {str(it.get("Id")) for u in uids for it in self._items(u, "IsFavorite", "Series,Movie,Episode")}
+                started = {str(it.get("Id")) for u in uids for it in self._items(u, "IsResumable", "Movie,Episode")}
                 kept: Dict[str, int] = {}
-                chosen = pick(played, favorite_shows, now, s["days"], kept)
+                chosen = pick(played, favorites, now, s["days"], kept, s["watched_by"], started)
+                chosen = self._drop_watchlisted(chosen, kept)
                 report["people"] = len(uids)
                 report["watched"] = len({str(it.get("Id")) for items in played for it in items if it.get("Id")})
                 gone: List[str] = []

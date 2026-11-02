@@ -62,7 +62,8 @@
     if (!c.enabled) {
       cnote.textContent = "Off. Watched movies and episodes are kept.";
     } else {
-      var rule = "Deletes what everyone watched more than " + c.days + " days ago. Favorites are kept.";
+      var who = c.watched_by === "any" ? "either of you" : "everyone";
+      var rule = "Deletes what " + who + " watched more than " + c.days + " days ago. Favorites, anything part way through and anything on a watchlist are kept.";
       var last = c.last;
       if (!last) {
         cnote.textContent = rule + " First check runs 10 minutes after the app starts.";

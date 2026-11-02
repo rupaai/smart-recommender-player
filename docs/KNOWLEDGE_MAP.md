@@ -180,8 +180,8 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 
 ## Watched cleanup
 
-- **What:** once a day, deletes a film or episode everyone watched over N days ago (not favourites). Ships in dry run. The admin page (`/nl/admin`, `static/nl/admin.js`) shows the last run and why the other watched titles were kept (`KEPT_REASONS` in the same file).
-- **Files:** `services/media_cleanup.py`. Setting `media_cleanup:` in `homelab/config.yaml` (`dry_run: false` to really delete).
+- **What:** once a day, deletes a film or episode watched over N days ago: by everyone (`watched_by: all`) or by either of you (`watched_by: any`, mars). Keeps favourites, anything part way through and anything on a watchlist. `dry_run: true` only lists. The admin page (`/nl/admin`, `static/nl/admin.js`) shows the last run and why the other watched titles were kept (`KEPT_REASONS` in the same file).
+- **Files:** `services/media_cleanup.py`. Setting `media_cleanup:` in `homelab/config.yaml` (`watched_by`, `days_after_watched`, `dry_run`).
 - **Tests:** `tests/test_media_cleanup.py`.
 
 ## Status and admin
@@ -228,7 +228,8 @@ Guide: [guides/training.md](guides/training.md).
 | make picks better known / more obscure | `wishmatch.candidates.known` and `min_popularity` |
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
-| turn on real watched cleanup | `media_cleanup.dry_run: false` in `homelab/config.yaml` |
+| turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
+| clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |
