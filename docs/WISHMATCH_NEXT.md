@@ -50,7 +50,10 @@ number in the `wishmatch:` section of `recommender_rules.yaml`; tests for each.
    the IMDb ratings file (all titles at once) and the Wishmatch switch to `imdb_rating`. Labiba sets the Homelab
    secret `OMDB_API_KEY` herself; never handle the key.
 5. `feat/cards-show-imdb-rt` - cards in the original app, Northern Lights and TV show IMDb and RT first, our
-   score as a side note (item 4). Phone, laptop and TV (D-pad) layouts.
+   score as a side note (item 4). Phone, laptop and TV (D-pad) layouts. **Done 2026-11-05:** the original app's
+   cards (Discover, Later, Rate) show "IMDb 7.8 · RT 93%" (TMDB's star only until IMDb is known); the "Together"
+   score is now a small "ours" note; the web and TV title pages show the same in their facts line. Northern Lights
+   cards and rows had no score before and still have none.
 6. Rerun the side-by-side test, update the page, then ask Labiba to turn Wishmatch on.
 7. `feat/faster-train` (later) - TIGER's retrain and its gate were removed on 2026-10-31. What is left: maybe skip
    the vibe index build in `ops/mac/nightly.sh` (it serves legacy search and the taste model).
