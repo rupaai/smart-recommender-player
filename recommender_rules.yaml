@@ -308,7 +308,7 @@ wishmatch:
     hidden_gem_known: [somewhat, not]         # used instead when the wish asks for hidden gems
   # Share of films and shows in the results when no type is chosen (one pick in three is a show).
   mix: {movie: 0.67, tv: 0.33}
-  # score = match x fit to the wish + taste x fit to your tastes + quality x TMDB rating.
+  # score = match x fit to the wish + taste x fit to your tastes + quality x IMDb / Rotten Tomatoes (below).
   weights:
     match: 1.0
     taste: 0.6
@@ -368,11 +368,19 @@ wishmatch:
     avoid_groups: [flags]     # the model may only rule out content warnings ("the dog can't die")
   tagging_model: gemma3:4b  # tags new titles on the Mac at Train time (free). Won the 2026-10-24 bake-off
                             # (reports/mood_tag_bakeoff.json on the Mac): closest to Haiku on feelings, 3.4 GB, ~40-60 s a title
-  # TMDB rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
+  # Quality from IMDb (Labiba, 2026-10-24), not our own ratings. IMDb and Rotten Tomatoes scores come from
+  # OMDb a little each day (services/title_scores.py); until a title has one, its TMDB rating stands in.
+  quality_source: imdb      # imdb (TMDB until a title has an IMDb score) or tmdb
+  # Rating -> quality 0..1: quality_floor scores 0, quality_ceiling scores 1.
   quality_floor: 5.0
   quality_ceiling: 8.5
-  # ...times votes / (votes + this), so a rating from few votes counts less.
+  # ...times votes / (votes + this), so a rating from few votes counts less. IMDb has about 10x TMDB's votes.
   quality_votes: {movie: 1000, tv: 300}
+  quality_votes_imdb: {movie: 10000, tv: 3000}
+  rt_weight: 0.3            # a Rotten Tomatoes critics score, when there is one, makes up this share of quality
+  # With no rating filter chosen, titles rated below this are left out (IMDb score, TMDB's until known).
+  # The "Any rating" filter chip turns it off; 7+ and 8+ raise it.
+  default_min_rating: 6.0
   # Extra genre hints for Wishmatch only (the legacy engine keeps genre_hints above).
   genre_hints:
     Drama: [tearjerker, tearjerkers, cry, crying, sad, moving, emotional]

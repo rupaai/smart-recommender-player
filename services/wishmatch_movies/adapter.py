@@ -21,7 +21,7 @@ import re
 import sys
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from wishmatch import Item, Reaction, Request, Vocabulary
 
@@ -66,6 +66,27 @@ def typed_decade(text: str) -> Optional[tuple]:
     start = int(century + m.group(2) + "0")
     return start, start + 9
 
+
+
+def title_quality(cfg: Dict[str, Any], kind: str, tmdb_rating: float, tmdb_votes: Any,
+                  imdb_rating: Any, imdb_votes: Any, rt_score: Any) -> Tuple[float, float]:
+    """(rating, quality 0..1) for one title. The rating is IMDb's when OMDb has given one (`quality_source: imdb`),
+    else TMDB's. quality_floor scores 0 and quality_ceiling 1, times votes / (votes + quality_votes[...]) so a rating
+    from few votes counts less (a 9.0 from 40 votes is not a 9.0 from 40,000). A Rotten Tomatoes score, when there
+    is one, makes up `rt_weight` of the quality."""
+    floor = float(cfg.get("quality_floor", 5.0))
+    span = max(0.1, float(cfg.get("quality_ceiling", 8.5)) - floor)
+    if str(cfg.get("quality_source", "imdb")) == "imdb" and imdb_rating:
+        rating, votes = float(imdb_rating), float(imdb_votes or 0)
+        needed = float((cfg.get("quality_votes_imdb") or {}).get(kind, 3000))
+    else:
+        rating, votes = float(tmdb_rating or 0.0), float(tmdb_votes or 0)
+        needed = float((cfg.get("quality_votes") or {}).get(kind, 300))
+    quality = max(0.0, min(1.0, (rating - floor) / span)) * votes / (votes + needed)
+    rt_weight = float(cfg.get("rt_weight", 0.0) or 0.0)
+    if rt_score is not None and 0 < rt_weight <= 1:
+        quality = (1 - rt_weight) * quality + rt_weight * max(0.0, min(1.0, float(rt_score) / 100.0))
+    return rating, quality
 
 class MovieAdapter:
     """Wishmatch's view of the catalogue. `db` is the app's DatabaseManager."""
@@ -122,6 +143,9 @@ class MovieAdapter:
         era, duration = f.get("era"), f.get("duration")
         decade = typed_decade(text)
         min_rating = f.get("min_rating")
+        if min_rating is None and only is None:
+            # No rating filter chosen: poorly rated titles stay out (IMDb score, TMDB's until OMDb has one).
+            min_rating = self.rules().get("default_min_rating")
 
         for iid, item in catalogue.items():
             if kinds and item.kind not in kinds:
@@ -142,7 +166,7 @@ class MovieAdapter:
                 if not (set(origin["countries"]) & x["countries"] or x["language"] in origin["languages"]):
                     continue
             elif only is None and not any_language:
-                row = {"original_language": x["language"], "rating": x["rating"], "vote_count": item.popularity}
+                row = {"original_language": x["language"], "rating": x["tmdb_rating"], "vote_count": item.popularity}
                 if not passes_foreign_gate(row, item.kind, gates.get(item.kind)):
                     continue
             if decade and not (decade[0] <= (x["year"] or 0) <= decade[1]):
@@ -308,7 +332,7 @@ class MovieAdapter:
                 return self._items
             with self.db.get_connection() as conn:
                 sig = tuple(conn.execute(
-                    "SELECT COUNT(*), MAX(vibe_tagged_at), MAX(id) FROM media_items "
+                    "SELECT COUNT(*), MAX(vibe_tagged_at), MAX(id), MAX(scores_checked_at) FROM media_items "
                     "WHERE vibe_tags IS NOT NULL AND vibe_tags != ''").fetchone())
                 if sig != self._signature or not self._items:
                     self._items = self._load(conn)
@@ -318,13 +342,10 @@ class MovieAdapter:
 
     def _load(self, conn: Any) -> Dict[int, Item]:
         cfg = self.rules()
-        floor = float(cfg.get("quality_floor", 5.0))
-        ceil = float(cfg.get("quality_ceiling", 8.5))
-        span = max(0.1, ceil - floor)
         out: Dict[int, Item] = {}
         rows = conn.execute(
-            "SELECT id, media_type, vote_count, rating, original_language, origin_country, genres, "
-            "release_year, runtime, vibe_tags FROM media_items "
+            "SELECT id, media_type, vote_count, rating, imdb_rating, imdb_votes, rt_score, original_language, "
+            "origin_country, genres, release_year, runtime, vibe_tags FROM media_items "
             "WHERE vibe_tags IS NOT NULL AND vibe_tags != ''")
         for r in rows:
             try:
@@ -341,10 +362,9 @@ class MovieAdapter:
                 value = tags.get(field_name) or []
                 if isinstance(value, list):
                     words.extend(str(w) for w in value)
-            rating = float(r["rating"] or 0.0)
-            votes = float(r["vote_count"] or 0)
-            # A rating from few votes counts less (a 9.0 from 40 votes is not a 9.0 from 40,000).
-            confidence = votes / (votes + float(cfg.get("quality_votes", {}).get(str(r["media_type"]), 300)))
+            tmdb_rating = float(r["rating"] or 0.0)
+            rating, quality = title_quality(cfg, str(r["media_type"]), tmdb_rating, r["vote_count"],
+                                            r["imdb_rating"], r["imdb_votes"], r["rt_score"])
             out[int(r["id"])] = Item(
                 id=int(r["id"]),
                 kind=sys.intern(str(r["media_type"] or "movie")),
@@ -353,12 +373,15 @@ class MovieAdapter:
                 vibe=str(tags.get("vibe") or ""),
                 known=sys.intern(str(tags.get("known") or "not")),
                 popularity=float(r["vote_count"] or 0),
-                quality=max(0.0, min(1.0, (rating - floor) / span)) * confidence,
+                quality=quality,
                 extra={
                     "genres": _intern_set(_genres(r["genres"])),
                     "countries": _intern_set(c.strip().upper() for c in str(r["origin_country"] or "").split(",")),
                     "language": str(r["original_language"] or "").strip().lower(),
-                    "rating": rating,
+                    "rating": rating,              # IMDb's when known, else TMDB's: what the rating filter means
+                    "tmdb_rating": tmdb_rating,
+                    "imdb_rating": r["imdb_rating"],
+                    "rt_score": r["rt_score"],
                     "year": r["release_year"],
                     "runtime": r["runtime"],
                 },

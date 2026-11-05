@@ -317,6 +317,44 @@ def main():
     obscure = wm.adapter.catalogue()[ids["Obscure Funny Film"]]
     check("a rating from few votes counts less", obscure.quality < funny.quality, (obscure.quality, funny.quality))
 
+    print("\n[13] Quality from IMDb and Rotten Tomatoes, poorly rated titles left out by default")
+    from services.wishmatch_movies.adapter import title_quality
+    qcfg = {"quality_floor": 5.0, "quality_ceiling": 8.5, "quality_votes": {"movie": 1000},
+            "quality_votes_imdb": {"movie": 10000}, "rt_weight": 0.3}
+    r_imdb, q_imdb = title_quality(qcfg, "movie", 7.0, 5000, 8.5, 1000000, None)
+    r_tmdb, q_tmdb = title_quality(qcfg, "movie", 7.0, 5000, None, None, None)
+    check("IMDb's score is used when known", r_imdb == 8.5 and q_imdb > q_tmdb, (r_imdb, q_imdb, q_tmdb))
+    check("TMDB's stands in until then", r_tmdb == 7.0)
+    check("quality_source: tmdb ignores IMDb", title_quality(dict(qcfg, quality_source="tmdb"), "movie", 7.0, 5000,
+                                                              8.5, 1000000, None)[0] == 7.0)
+    _, q_rt_high = title_quality(qcfg, "movie", 7.0, 5000, 7.0, 200000, 98)
+    _, q_rt_low = title_quality(qcfg, "movie", 7.0, 5000, 7.0, 200000, 15)
+    check("a Rotten Tomatoes score moves quality", q_rt_high > q_rt_low, (q_rt_high, q_rt_low))
+    _, q_few = title_quality(qcfg, "movie", 0, 0, 9.0, 300, None)
+    _, q_many = title_quality(qcfg, "movie", 0, 0, 9.0, 300000, None)
+    check("an IMDb score from few votes counts less", q_few < q_many, (q_few, q_many))
+    with db.get_connection() as conn:
+        conn.execute("UPDATE media_items SET imdb_rating = 4.2, imdb_votes = 80000, rt_score = 10, "
+                     "scores_checked_at = '2026-11-05' WHERE id = ?", (ids["Funny Film 0"],))
+        conn.execute("UPDATE media_items SET imdb_rating = 8.9, imdb_votes = 900000, rt_score = 97, "
+                     "scores_checked_at = '2026-11-05' WHERE id = ?", (ids["Funny Film 5"],))
+    wm.adapter._checked = 0  # re-read now (new scores change the catalogue's signature)
+    cat = wm.adapter.catalogue()
+    check("new scores are picked up", cat[ids["Funny Film 5"]].extra["imdb_rating"] == 8.9
+          and cat[ids["Funny Film 5"]].extra["rt_score"] == 97)
+    check("the well-rated film outranks its twin on quality",
+          cat[ids["Funny Film 5"]].quality > cat[ids["Funny Film 4"]].quality)
+    default_ids = {p["id"] for p in wm.recommend(query="something funny", page_size=40, media_type="movie")["items"]}
+    check("no rating filter: an IMDb 4.2 film is left out", ids["Funny Film 0"] not in default_ids
+          and ids["Funny Film 5"] in default_ids)
+    any_ids = {p["id"] for p in wm.recommend(query="something funny", page_size=40,
+                                             min_rating_override=0.0, media_type="movie")["items"]}
+    check("'Any rating' lets it back in", ids["Funny Film 0"] in any_ids)
+    eight = {p["id"] for p in wm.recommend(query="something funny", page_size=40,
+                                           min_rating_override=8.0, media_type="movie")["items"]}
+    check("8+ means the IMDb score (the IMDb 8.9 film in, TMDB 7.5 films without one out)",
+          ids["Funny Film 5"] in eight and all(cat[i].extra["rating"] >= 8.0 for i in eight), eight)
+
     print("\n[8] The wishmatch: rules only use vocabulary words")
     rules = load_wishmatch_rules()
     lex = rules.get("lexicon") or {}
