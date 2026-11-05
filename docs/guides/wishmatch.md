@@ -65,11 +65,14 @@ Each candidate gets one number, made of:
 |---|---|---|
 | match | 1.0 | how well the title's mood tags fit the wish's words |
 | taste | 0.6 | how much this person (or both of you) liked titles with similar moods |
-| quality | 0.3 | its rating, counting less when few people voted |
+| quality | 0.3 | its IMDb score (TMDB's until OMDb has one) and, when there is one, its Rotten Tomatoes score; counts less when few people voted |
 | crowd | 0.4 | films only: MovieLens fans of films you loved also loved this |
 | genre hint | 0.4 | a word that hints at a genre ("scary" -> Horror) |
 
 All weights live in `recommender_rules.yaml` under `wishmatch.weights`.
+
+With no rating filter chosen, titles rated below 6 are left out (`wishmatch.default_min_rating`, the IMDb
+score). "Any rating" lets them back in; 7+ and 8+ mean the IMDb score too. Our own ratings only steer taste.
 
 **Taste** comes from your verdicts: feelings and dials that are more common among titles you
 loved than among everything you rated count for you; the same for what you disliked. Your
@@ -116,7 +119,7 @@ top 10 (right genre, well known, nothing already seen...) on a copy of the catal
 - Live status: `GET /api/rec/status` (is the wish reader up, how long it took last time).
 
 - IMDb and Rotten Tomatoes scores: `services/title_scores.py` collects them a little each day on
-  mars (OMDb's free key allows 1,000 lookups a day, best-known films first). Wishmatch does not
-  use them yet.
+  mars (OMDb's free key allows 1,000 lookups a day, best-known films first). Wishmatch's quality and
+  rating filter use them (`title_quality` in `services/wishmatch_movies/adapter.py`).
 
 What is planned next is in `docs/WISHMATCH_NEXT.md`.
