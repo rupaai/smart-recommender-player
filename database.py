@@ -2477,7 +2477,7 @@ class DatabaseManager:
             SELECT wl.media_item_id, wl.profile_id, wl.added_at, wl.done_at, wl.done_reason, wl.owner_profile_id,
                    p.name AS profile_name,
                    m.title, m.release_year, m.media_type, m.poster_url, m.genres,
-                   m.runtime, m.rating, m.overview,
+                   m.runtime, m.rating, m.imdb_rating, m.rt_score, m.overview,
                    (SELECT s.file_path FROM media_sources s
                      WHERE s.media_item_id = m.id AND s.source_type = 'local'
                      ORDER BY s.id LIMIT 1) AS file_path
@@ -2694,7 +2694,8 @@ class DatabaseManager:
                 chunk = ids[start:start + 500]
                 marks = ",".join("?" * len(chunk))
                 for r in conn.execute(
-                    f"SELECT id, media_type, title, release_year, genres, rating, vote_count, runtime, poster_url, overview "
+                    f"SELECT id, media_type, title, release_year, genres, rating, vote_count, runtime, poster_url, overview, "
+                    f"imdb_rating, rt_score "
                     f"FROM media_items WHERE id IN ({marks});", chunk
                 ):
                     out[r["id"]] = dict(r)

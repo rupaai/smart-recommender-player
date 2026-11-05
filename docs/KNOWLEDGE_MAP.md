@@ -190,7 +190,8 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 - **What:** once a day on mars prod, finds each title's IMDb number (TMDB, free) and asks OMDb (omdbapi.com, free key: 1,000 lookups a day) for its IMDb score, Rotten Tomatoes critics score and Metacritic score. Best-known films first. Wishmatch's quality and rating filter use them (`title_quality` in `services/wishmatch_movies/adapter.py`, `quality_source`, `rt_weight`, `default_min_rating` in `recommender_rules.yaml`); the cards will show them (`docs/WISHMATCH_NEXT.md`).
 - **Files:** `services/title_scores.py` (`TitleScores`), started in `server.py` (`start_title_scores`); by hand `utils/fetch_title_scores.py` (`--status` shows progress). Columns `media_items.imdb_id`, `imdb_rating`, `imdb_votes`, `rt_score`, `metacritic`, `scores_checked_at`; daily counts in `title_scores_days` (schema v24).
 - **Settings:** `title_scores:` in `config.yaml` (off) and `homelab/config.yaml` (on, `run_in: [prod]`, `omdb_per_day: 1000`). Key: Homelab secret `OMDB_API_KEY`.
-- **Tests:** `tests/test_title_scores.py`.
+- **On cards:** IMDb and Rotten Tomatoes first, TMDB only until IMDb is known, our own score as a small "ours" note: `scoreMeta` in `static/app.js` (original app), `scoreFacts` in `static/nl/nl.js` (web and TV title pages, from the title API's `scores`, made by `card_scores` in `services/title_scores.py`).
+- **Tests:** `tests/test_title_scores.py`, `tests/test_card_scores.py` (+ `tests/js/card_scores_check.js`).
 
 ## Delete from server
 
