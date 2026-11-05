@@ -36,6 +36,17 @@ Never copy code to mars or restart containers by hand: everything goes through a
 graphics for conversion), **Prowlarr** (download search), **Ollama** (the wish reader; 3 GB
 memory cap; only prod downloads the model). Dev gets its own empty copies.
 
+**Prowlarr's port is not open on the home network.** Only the app reaches Prowlarr, at
+`http://prowlarr:9696`. To see Prowlarr's page from the Mac, open an SSH tunnel and keep it
+running. Then open http://localhost:9696.
+
+```bash
+ssh -L 9696:$(ssh rupaai@192.168.1.183 "sudo docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' homelab-northern-lights-prod-prowlarr-1"):9696 rupaai@192.168.1.183
+```
+
+The container name is `homelab-<app>-<env>-<service>-1`, so for dev use `dev` in place of
+`prod`. The container IP can change after a restart. Run the command again if the tunnel fails.
+
 Home Assistant and Matter also run on mars. Nothing here may touch them.
 
 ## Secrets
