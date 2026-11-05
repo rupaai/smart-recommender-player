@@ -187,7 +187,7 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 
 ## IMDb and Rotten Tomatoes scores
 
-- **What:** once a day on mars prod, finds each title's IMDb number (TMDB, free) and asks OMDb (omdbapi.com, free key: 1,000 lookups a day) for its IMDb score, Rotten Tomatoes critics score and Metacritic score. Best-known films first. Nothing reads the scores yet (Wishmatch and the cards will, `docs/WISHMATCH_NEXT.md`).
+- **What:** once a day on mars prod, finds each title's IMDb number (TMDB, free) and asks OMDb (omdbapi.com, free key: 1,000 lookups a day) for its IMDb score, Rotten Tomatoes critics score and Metacritic score. Best-known films first. Wishmatch's quality and rating filter use them (`title_quality` in `services/wishmatch_movies/adapter.py`, `quality_source`, `rt_weight`, `default_min_rating` in `recommender_rules.yaml`); the cards will show them (`docs/WISHMATCH_NEXT.md`).
 - **Files:** `services/title_scores.py` (`TitleScores`), started in `server.py` (`start_title_scores`); by hand `utils/fetch_title_scores.py` (`--status` shows progress). Columns `media_items.imdb_id`, `imdb_rating`, `imdb_votes`, `rt_score`, `metacritic`, `scores_checked_at`; daily counts in `title_scores_days` (schema v24).
 - **Settings:** `title_scores:` in `config.yaml` (off) and `homelab/config.yaml` (on, `run_in: [prod]`, `omdb_per_day: 1000`). Key: Homelab secret `OMDB_API_KEY`.
 - **On cards:** IMDb and Rotten Tomatoes first, TMDB only until IMDb is known, our own score as a small "ours" note: `scoreMeta` in `static/app.js` (original app), `scoreFacts` in `static/nl/nl.js` (web and TV title pages, from the title API's `scores`, made by `card_scores` in `services/title_scores.py`).
@@ -244,6 +244,8 @@ Guide: [guides/training.md](guides/training.md).
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
 | delete a film or show by hand | "Delete from server" on its page (web or TV) |
+| let poorly rated titles into Wishmatch by default | `wishmatch.default_min_rating` (IMDb score; the "Any rating" chip does it per search) |
+| weigh Rotten Tomatoes more or less | `wishmatch.rt_weight` |
 | change how many OMDb lookups a day | `title_scores.omdb_per_day` in `homelab/config.yaml` (free key: 1,000) |
 | turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |

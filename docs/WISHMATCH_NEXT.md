@@ -43,6 +43,9 @@ number in the `wishmatch:` section of `recommender_rules.yaml`; tests for each.
      ask Labiba before the first download) and fill `imdb_rating` / `imdb_votes`; run at Train; carried to mars
      by the catalogue patch (add the columns to `services/catalogue_patch.py`).
    - Wishmatch quality uses `imdb_rating` (fallback TMDB); the rating filter (`min_rating`) means IMDb.
+     **Done 2026-11-05** (`feat/wishmatch-imdb-quality`): `title_quality` in the adapter, `rt_weight: 0.3`, and
+     `default_min_rating: 6.0` when no filter is chosen ("Any rating" turns it off). The IMDb ratings file is
+     still optional: it would give every title an IMDb score at once instead of OMDb's 1,000 a day.
 4. `feat/omdb-scores` - Rotten Tomatoes scores via OMDb (item 3/4). **Decided 2026-11-05: free key**
    (1,000 lookups a day). Built: `services/title_scores.py` runs once a day on mars prod, gets IMDb numbers from
    TMDB, then IMDb score, votes, `rt_score` and `metacritic` from OMDb; best-known films first (about 5 days for
