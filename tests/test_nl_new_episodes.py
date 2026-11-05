@@ -294,6 +294,16 @@ def run(tmp):
     r = client.post("/api/nl/new-episodes/download", json={"tmdb_id": 500, "season": 0})
     check("bad numbers are refused", r.status_code == 422, r.text)
 
+    print("the pages")
+    for url in ("/nl/new", "/nl/tv/new", "/player/new"):
+        r = client.get(url)
+        check(f"{url} loads with the page script", r.status_code == 200 and "/static/nl/new-episodes.js" in r.text, r.status_code)
+    tv = client.get("/nl/tv/new").text
+    check("the TV page is a TV page (tv.js starts it)", 'data-page="new"' in tv and "/static/nl/tv/tv.js" in tv)
+    check("the laptop page links stay under /player/", 'href="/player/new"' in client.get("/player/new").text)
+    check("the TV nav has New & popular", 'href="/nl/tv/new"' in client.get("/nl/tv/").text)
+    check("the web nav has New", 'href="/nl/new"' in client.get("/nl/").text)
+
 
 def test_static():
     print("wiring")
@@ -301,6 +311,17 @@ def test_static():
     check("config.yaml has the new_episodes: settings", "new_episodes:" in cfg and "recent_days:" in cfg)
     route = open(os.path.join(ROOT, "web/routes/nl_new.py"), encoding="utf-8").read()
     check("the route reuses the Download tab's start_download", "from web.routes.torrents import start_download" in route)
+    js = open(os.path.join(ROOT, "static/nl/new-episodes.js"), encoding="utf-8").read()
+    tvjs = open(os.path.join(ROOT, "static/nl/tv/tv.js"), encoding="utf-8").read()
+    home = open(os.path.join(ROOT, "static/nl/home.js"), encoding="utf-8").read()
+    check("new-episodes.js: text only via textContent, no innerHTML or eval", "innerHTML" not in js and "eval(" not in js)
+    check("new-episodes.js: never handles a magnet link, only copy_id", "magnet" not in js and "copy_id" in js)
+    check("new-episodes.js: buttons and copies are remote-focusable rows on the TV",
+          'setAttribute("data-nl-focus", "")' in js and '"data-nl-row", "new-"' in js and '"data-nl-row", "copies-"' in js)
+    check("tv.js starts the page and the home row", 'page === "new"' in tvjs and "NLNew.mount" in tvjs and "NLNew.homeRow" in tvjs)
+    check("home.js has the New episodes row", "NLNew.homeRow" in home)
+    tvhome = open(os.path.join(ROOT, "templates/nl/tv/home.html"), encoding="utf-8").read()
+    check("TV home has a focusable New episodes row", 'data-nl-row="new-episodes"' in tvhome)
 
 
 if __name__ == "__main__":

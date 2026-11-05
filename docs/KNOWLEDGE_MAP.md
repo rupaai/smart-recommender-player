@@ -143,7 +143,8 @@ flowchart LR
 
 Guide: [guides/new-episodes.md](guides/new-episodes.md).
 - **What:** new episodes of your shows and popular shows still airing, each with a Download button that starts the best matching copy. All on the server; pages only show it.
-- **Files:** `services/nl_new_episodes.py` (lists, which episode to offer, matching copies), `web/routes/nl_new.py` (API). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
+- **Files:** `services/nl_new_episodes.py` (lists, which episode to offer, matching copies), `web/routes/nl_new.py` (API).
+- **Pages:** `/nl/new`, `/nl/tv/new`, `/player/new` (`web/routes/nl_pages.py`, templates `templates/nl/new.html`, `templates/nl/tv/new.html`); drawn by `static/nl/new-episodes.js` (web, TV and laptop; started by `static/nl/new-web.js` or `tv.js`). The "New episodes" row on home is `NLNew.homeRow` in the same file. Styles in `nl.css` and `tv.css` (`*-new-*`). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
 - **Settings:** `new_episodes:` in `config.yaml`. Needs the TMDB key (free).
 - **Tests:** `tests/test_nl_new_episodes.py`.
 

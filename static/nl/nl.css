@@ -385,3 +385,28 @@ a.nl-health-part:hover { text-decoration-color: currentColor; }
 .nl-admin-lib { overflow-wrap: anywhere; }
 .nl-admin-tools { display: flex; flex-wrap: wrap; gap: 10px; }
 @media (max-width: 520px) { .nl-admin-dl { grid-template-columns: 1fr; } .nl-admin-dl dd { margin-bottom: 6px; } }
+
+/* ---- New & popular (static/nl/new-episodes.js) */
+.nl-new { max-width: 900px; }
+.nl-new-section { margin: 8px 0 28px; }
+.nl-new-h { font-size: 1.4rem; }
+.nl-new-sub, .nl-new-empty { margin: 6px 0 0; color: var(--text-2); }
+.nl-new-list { display: grid; gap: 12px; margin-top: 12px; }
+.nl-new-item { display: flex; gap: 14px; padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.nl-new-art { flex: none; width: 92px; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.nl-new-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nl-new-main { min-width: 0; flex: 1; }
+.nl-new-title { margin: 0; font-size: 1.1rem; }
+.nl-new-line { margin: 4px 0 0; font-weight: 700; color: var(--ready); }
+.nl-new-meta, .nl-new-ep { margin: 4px 0 0; color: var(--text-2); font-size: 0.92rem; }
+.nl-new-overview { margin: 6px 0 0; font-size: 0.92rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nl-new-msg { margin: 6px 0 0; font-weight: 600; }
+.nl-new-msg:empty { display: none; }
+.nl-new-msg.is-ok { color: var(--ready); }
+.nl-new-msg.is-bad { color: #a3201f; }
+.nl-new-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.nl-new-copies { display: grid; gap: 8px; margin-top: 10px; }
+.nl-new-copy { display: flex; align-items: center; gap: 10px; }
+.nl-new-copy-text { min-width: 0; }
+.nl-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
+.nl-new-copy-meta, .nl-new-copy-empty { color: var(--text-2); font-size: 0.85rem; }

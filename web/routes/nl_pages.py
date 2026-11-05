@@ -56,6 +56,12 @@ async def nl_downloads_page(request: Request) -> Any:
     return _nl_page(request, "nl/downloads.html", {"active": "downloads"})
 
 
+@router.get("/nl/new", response_class=HTMLResponse)
+async def nl_new_page(request: Request) -> Any:
+    """New & popular: new episodes of your shows and popular shows, with a Download button."""
+    return _nl_page(request, "nl/new.html", {"active": "new"})
+
+
 @router.get("/nl/admin", response_class=HTMLResponse)
 async def nl_admin_page(request: Request) -> Any:
     """Web only: there is deliberately no TV version and no link from the TV pages."""
@@ -103,6 +109,11 @@ async def nl_tv_downloads(request: Request) -> Any:
     return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, "tv")
 
 
+@router.get("/nl/tv/new", response_class=HTMLResponse)
+async def nl_tv_new(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/new.html", {"page": "new"}, "tv")
+
+
 @router.get("/nl/tv/me", response_class=HTMLResponse)
 async def nl_tv_me(request: Request) -> Any:
     return _nl_page(request, "nl/tv/me.html", {"page": "me"}, "tv")
@@ -147,6 +158,11 @@ async def player_choose(request: Request) -> Any:
 @router.get("/player/downloads", response_class=HTMLResponse)
 async def player_downloads(request: Request) -> Any:
     return _nl_page(request, "nl/tv/downloads.html", {"page": "downloads"}, "laptop")
+
+
+@router.get("/player/new", response_class=HTMLResponse)
+async def player_new(request: Request) -> Any:
+    return _nl_page(request, "nl/tv/new.html", {"page": "new"}, "laptop")
 
 
 @router.get("/player/me", response_class=HTMLResponse)

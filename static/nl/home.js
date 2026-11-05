@@ -1,4 +1,4 @@
-/* Northern Lights home (M2): Continue Watching, then Movies and Shows rows. */
+/* Northern Lights home (M2): Continue Watching, New episodes, then Movies and Shows rows. */
 (function () {
   "use strict";
   var NL = window.NL;
@@ -14,6 +14,11 @@
 
   // M7b: the poster rows on home can be hidden per title (Continue watching cannot).
   function hideable(it) { it.hideable = true; return NL.posterCard(it); }
+
+  // New episodes to download (its own call: TMDB answers can take a moment the first time).
+  if (window.NLNew) {
+    window.NLNew.homeRow(document.getElementById("nl-new-row"), document.getElementById("nl-new-row-list"), NL.posterCard, { root: "/nl/" });
+  }
 
   NL.fetchJSON("/api/nl/home").then(function (data) {
     var any = false;
