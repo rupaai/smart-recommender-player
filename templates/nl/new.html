@@ -1,0 +1,11 @@
+{% extends "nl/base.html" %}
+{% block title %}New & popular - Northern Lights{% endblock %}
+{% block main %}
+  <div class="nl-page-head">
+    <h1>New &amp; popular</h1>
+    <p class="nl-sub">New episodes to download, from your shows and from what's popular this week.</p>
+  </div>
+  <p id="nl-status" class="nl-status" role="status">Loading&hellip;</p>
+  <div id="nl-new" class="nl-new"></div>
+{% endblock %}
+{% block scripts %}<script src="/static/nl/new-episodes.js"></script><script src="/static/nl/new-web.js"></script>{% endblock %}

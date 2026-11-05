@@ -296,3 +296,28 @@ html.laptop .tv-card:hover .tv-details { display: flex; }
 .tv-health[data-level="bad"] .tv-health-dot { background: #ff6b5b; }
 .tv-health-part.is-bad { color: var(--bad); }
 .tv-health-part.is-warn { color: var(--warn); }
+
+/* ---- New & popular (static/nl/new-episodes.js): new episodes to download */
+.tv-new-section { padding: 1rem var(--side) 2rem; }
+.tv-new-h { font-size: 2.5rem; }
+.tv-new-sub { margin: 0.5rem 0 0; color: var(--text-2); }
+.tv-new-empty { color: var(--text-2); }
+.tv-new-list { display: grid; gap: 1rem; margin-top: 1.5rem; }
+.tv-new-item { display: flex; gap: 2.5rem; padding: 1.25rem 0; border-top: 0.1rem solid var(--line); }
+.tv-new-art { flex: none; width: 11rem; aspect-ratio: 2 / 3; border-radius: 1rem; overflow: hidden; background: var(--surface-2); }
+.tv-new-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tv-new-main { min-width: 0; flex: 1; }
+.tv-new-title { margin: 0; font-size: 2.25rem; letter-spacing: -0.01em; }
+.tv-new-line { margin: 0.5rem 0 0; font-weight: 700; color: var(--ready); }
+.tv-new-meta, .tv-new-ep { margin: 0.35rem 0 0; color: var(--text-2); }
+.tv-new-msg { margin: 0.5rem 0 0; font-weight: 700; }
+.tv-new-msg:empty { display: none; }
+.tv-new-msg.is-ok { color: var(--ready); }
+.tv-new-msg.is-bad { color: var(--bad); }
+.tv-new-msg-link { text-decoration: underline; }
+.tv-new-actions { display: flex; flex-wrap: wrap; gap: 1.25rem; padding: 1rem 0.5rem 0.25rem; }
+.tv-new-copies { display: grid; gap: 0.75rem; padding: 1rem 0.5rem 0; }
+.tv-new-copy { display: flex; align-items: center; gap: 1.5rem; }
+.tv-new-copy-text { min-width: 0; }
+.tv-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80rem; }
+.tv-new-copy-meta, .tv-new-copy-empty { color: var(--text-2); }

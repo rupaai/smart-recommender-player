@@ -3,6 +3,14 @@
 This part of the player app shows TV episodes that came out recently, so you can download them in one tap.
 All the work happens on the server (mars). The TV and the web pages only show the list and send your tap.
 
+## Where you see it
+
+- **Home** (web, TV and laptop): a "New episodes" row. Your shows come first, then popular ones. Choosing a
+  poster opens the New & popular page at that show.
+- **New & popular page**: "New & popular" in the TV and laptop menu, "New" on the web (`/nl/new`). Each show
+  has a Download button ("Get S02E05" or "Get season 3"), "Other copies" and, if it's on the server,
+  "Open show". After a tap the button says "Downloading" and links to Downloads.
+
 ## The two lists
 
 **New episodes of your shows.** A show counts as "yours" when the server has files of it, one of you marked
