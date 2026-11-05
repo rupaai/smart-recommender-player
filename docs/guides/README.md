@@ -9,6 +9,7 @@ of the app does, how it does it, what it costs, and what you can change.
 | [Wishmatch](wishmatch.md) | how recommendations are picked, the questions, both tastes, and how to tune it |
 | [Playback](playback.md) | how a film plays at original quality, audio and subtitles, and why something converts |
 | [TV app](tv-app.md) | the Android TV app: installing, updates, the remote, the player |
+| [New & popular](new-episodes.md) | which new episodes and popular shows are listed, and what the Download button gets |
 | [Training and tagging](training.md) | the Train button on the Mac: what it builds, what is free and what costs money |
 | [Deployment](deployment.md) | how code gets onto the server (mars), secrets, dev and prod, rolling back |
 

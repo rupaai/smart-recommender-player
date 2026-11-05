@@ -26,6 +26,7 @@ from services.jellyfin_playback import JellyfinPlayback
 from services.jellyfin_service import JellyfinService
 from services.media_cleanup import MediaCleanup
 from services.nl_delete import LibraryDelete
+from services.nl_new_episodes import NewEpisodes, wishmatch_taste
 from services.nl_browse import NLBrowse
 from services.nl_cast import (
     CastConfig,
@@ -41,6 +42,7 @@ from services.nl_people import (
 from services.nl_picks import NLPicks
 from services.nl_polish_b import NLExtras
 from services.nl_type import TypeChannels
+from services.recommender_rules import RULES, foreign_gate, passes_foreign_gate
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services.taste_runtime import TasteRuntime
 from services.torrent_service import (
@@ -160,6 +162,21 @@ def _nl_tmdb(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dic
 
 
 nl_extras = NLExtras(db, nl_browse, _nl_tmdb, lambda: recommender_service.vibe_index)
+
+
+# Northern Lights "New & popular" (services/nl_new_episodes.py): new episodes of your shows and popular shows,
+# with one-tap download. Settings: new_episodes: in config.yaml. TMDB only (free).
+def _new_episodes_taste(ids, profile_ids):
+    everyone = [p.profile_id for p in nl_people.people if p.profile_id is not None]
+    people = list(profile_ids) + [p for p in everyone if p not in profile_ids]
+    return wishmatch_taste(wishmatch_movies.engine, ids, people, together=len(profile_ids) > 1)
+
+
+_tv_gate = foreign_gate(RULES, "tv")
+nl_new_episodes = NewEpisodes(
+    db, _nl_tmdb, config, taste=_new_episodes_taste, searcher=torrent_searcher,
+    foreign_gate=lambda row: passes_foreign_gate(row, "tv", _tv_gate),
+)
 
 
 def _jellyfin_rescan() -> None:

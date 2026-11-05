@@ -27,6 +27,26 @@ from web.models import (
 router = APIRouter()
 
 
+def start_download(movie_id: int, magnet: str, title: str, media_type: str) -> str:
+    """Starts one download in the background and returns its id. Shared by the Download tab and the
+    Northern Lights "New & popular" page (web/routes/nl_new.py). Must run on the event loop."""
+    download_id = uuid.uuid4().hex
+    now = time.time()
+    state.download_requests.remember(download_id, magnet, title, media_type, movie_id=movie_id)
+    downloads_store[download_id] = {
+        "download_id": download_id,
+        "movie_id": movie_id,
+        "name": title,
+        "media_type": media_type,
+        "status": "connecting",
+        "progress": 0.0,
+        "error": None,
+        "created_at": now,
+    }
+    asyncio.create_task(state.run_download(download_id, movie_id, magnet, title, media_type))
+    return download_id
+
+
 @router.post("/api/torrent/search")
 async def search_torrents(req: TorrentSearchRequest) -> Dict[str, Any]:
     """Searches for torrents matching the query with configurable sort order and media type (movies/shows)."""
@@ -60,20 +80,7 @@ async def download_torrent(req: TorrentDownloadRequest) -> Dict[str, Any]:
 
         if req.movie_id and req.movie_id > 0:
             _log_outcome(req.movie_id, "downloaded")
-        download_id = uuid.uuid4().hex
-        now = time.time()
-        state.download_requests.remember(download_id, req.magnet_link, clean_movie_title, media_type, movie_id=movie_id)
-        downloads_store[download_id] = {
-            "download_id": download_id,
-            "movie_id": movie_id,
-            "name": clean_movie_title,
-            "media_type": media_type,
-            "status": "connecting",
-            "progress": 0.0,
-            "error": None,
-            "created_at": now,
-        }
-        asyncio.create_task(state.run_download(download_id, movie_id, req.magnet_link, clean_movie_title, media_type))
+        download_id = start_download(movie_id, req.magnet_link, clean_movie_title, media_type)
         return {
             "success": True,
             "download_id": download_id,
