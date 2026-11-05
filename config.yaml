@@ -94,6 +94,22 @@ torrent_ranking:
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
 
+# Northern Lights "New & popular" (services/nl_new_episodes.py): new episodes of your shows and popular
+# shows still airing, with one-tap download. Uses TMDB only (free). Every key is optional.
+new_episodes:
+  recent_days: 45          # the latest episode came out within this many days
+  your_shows_max: 60       # how many of your shows are checked (most recently active first)
+  skip_rated_below: 5      # a show someone rated below this (1-10) is not "yours"
+  popular_pages: 2         # TMDB trending pages read (20 shows each)
+  popular_max: 18          # cards in "Popular right now"
+  min_rating: 7.0          # TMDB rating floor for popular shows
+  min_votes: 100           # and the votes behind it
+  min_taste: -0.15         # popular shows that clearly don't fit your taste (-1..1) are left out
+  taste_weight: 0.6        # popular order: this much taste, the rest how much it's trending
+  skip_genres: [News, Talk, Reality, Soap, Kids]
+  cache_hours: 6           # TMDB answers are reused this long
+  list_minutes: 15         # a built page is reused this long per viewer
+
 # Northern Lights "Who's watching" (M4). With no people the app has one viewer
 # (JELLYFIN_USER_ID) and no who's-watching screen. Add your people in config.local.yaml
 # (see config.local.example.yaml): each needs a Jellyfin user and a ratings profile.

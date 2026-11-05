@@ -38,6 +38,7 @@ from web.routes import (
     discover,
     nl_admin,
     nl_library,
+    nl_new,
     nl_pages,
     nl_picks,
     nl_play,
@@ -139,6 +140,7 @@ app.include_router(nl_picks.router)
 app.include_router(nl_admin.router)
 app.include_router(nl_pages.router)
 app.include_router(nl_type.router)
+app.include_router(nl_new.router)
 app.include_router(ratings.router)
 app.include_router(torrents.router)
 

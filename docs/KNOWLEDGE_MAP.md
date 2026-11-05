@@ -139,6 +139,14 @@ flowchart LR
 - **Pages:** Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
 - **Tests:** `tests/test_ranking.py`, `tests/test_disk_guard.py`, `tests/test_download_resume.py`, `tests/test_nl_downloads.py`.
 
+## New & popular (new episodes to download)
+
+Guide: [guides/new-episodes.md](guides/new-episodes.md).
+- **What:** new episodes of your shows and popular shows still airing, each with a Download button that starts the best matching copy. All on the server; pages only show it.
+- **Files:** `services/nl_new_episodes.py` (lists, which episode to offer, matching copies), `web/routes/nl_new.py` (API). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
+- **Settings:** `new_episodes:` in `config.yaml`. Needs the TMDB key (free).
+- **Tests:** `tests/test_nl_new_episodes.py`.
+
 ## Library and browsing (Northern Lights)
 
 - **What:** home rows, Movies and Shows, title and show pages, search, next episode, recently added, hide from home, cast and trailer.
@@ -250,6 +258,7 @@ Guide: [guides/training.md](guides/training.md).
 | turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
+| change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |
 | change which files play untouched on the TV | `TV_PROFILE` in `services/device_profiles.py` |

@@ -654,9 +654,10 @@ def test_download_survives_refresh(build):
     from web import state
     from web.routes import torrents
 
-    src = inspect.getsource(torrents.download_torrent)
-    check("download is dispatched with asyncio.create_task",
-          "asyncio.create_task" in src)
+    src = inspect.getsource(torrents.download_torrent) + inspect.getsource(torrents.start_download)
+    check("download is dispatched with asyncio.create_task (in start_download)",
+          "asyncio.create_task" in inspect.getsource(torrents.start_download)
+          and "start_download(" in inspect.getsource(torrents.download_torrent))
     check("no binding to an HTTP client session/websocket",
           not any(k in src for k in ("WebSocket", "request.state", "BackgroundTask")))
     check("progress state lives in a module-level dict",
