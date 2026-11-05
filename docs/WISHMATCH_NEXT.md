@@ -43,10 +43,12 @@ number in the `wishmatch:` section of `recommender_rules.yaml`; tests for each.
      ask Labiba before the first download) and fill `imdb_rating` / `imdb_votes`; run at Train; carried to mars
      by the catalogue patch (add the columns to `services/catalogue_patch.py`).
    - Wishmatch quality uses `imdb_rating` (fallback TMDB); the rating filter (`min_rating`) means IMDb.
-4. `feat/rotten-tomatoes` - Rotten Tomatoes scores via OMDb (item 3/4). **Needs Labiba's decision first:**
-   free OMDb key (1,000 lookups a day, best-known first: the titles she sees get scores within days, the whole
-   catalogue in about 50 days) or paid (about $1 a month, all in a day). She puts `OMDB_API_KEY` in the Mac's
-   `.env` herself; never handle the key. Store `rt_score` (+ `metacritic` if free in the same call).
+4. `feat/omdb-scores` - Rotten Tomatoes scores via OMDb (item 3/4). **Decided 2026-11-05: free key**
+   (1,000 lookups a day). Built: `services/title_scores.py` runs once a day on mars prod, gets IMDb numbers from
+   TMDB, then IMDb score, votes, `rt_score` and `metacritic` from OMDb; best-known films first (about 5 days for
+   films with 1,000+ votes, about 51 days for all 50,500 titles). It also fills `imdb_id`, so step 3 only needs
+   the IMDb ratings file (all titles at once) and the Wishmatch switch to `imdb_rating`. Labiba sets the Homelab
+   secret `OMDB_API_KEY` herself; never handle the key.
 5. `feat/cards-show-imdb-rt` - cards in the original app, Northern Lights and TV show IMDb and RT first, our
    score as a side note (item 4). Phone, laptop and TV (D-pad) layouts.
 6. Rerun the side-by-side test, update the page, then ask Labiba to turn Wishmatch on.

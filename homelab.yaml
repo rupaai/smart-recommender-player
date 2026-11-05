@@ -38,7 +38,8 @@ env:
   OLLAMA_URL: http://ollama:11434   # Wishmatch's wish reader (PROJECT_HANDOVER.md §17)
 
 # You type these in the companion.
-secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY]
+# OMDB_API_KEY: IMDb / Rotten Tomatoes scores (services/title_scores.py); without it only IMDb numbers are fetched.
+secrets: [TMDB_API_KEY, JELLYFIN_API_KEY, JELLYFIN_USER_ID, PROWLARR_API_KEY, OMDB_API_KEY]
 # Homelab makes these itself. ADMIN_TOKEN is what the Mac sends (ops/mac): copy it from
 # Apps -> Northern Lights -> Secrets. Cast links need no secret from you; the app keeps its own in /data.
 generate_secrets: [ADMIN_TOKEN]

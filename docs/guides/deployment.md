@@ -40,7 +40,8 @@ Home Assistant and Matter also run on mars. Nothing here may touch them.
 
 ## Secrets
 
-The TMDB key, Jellyfin key and user, and Prowlarr key are typed once into the Homelab
+The TMDB key, Jellyfin key and user, Prowlarr key and OMDb key (`OMDB_API_KEY`, for IMDb and
+Rotten Tomatoes scores; free from omdbapi.com) are typed once into the Homelab
 companion (Apps, Northern Lights, Secrets). They reach the app as files in `/run/secrets`,
 which `services/homelab_secrets.py` reads at start-up. `ADMIN_TOKEN` (for the Mac's Train
 button) is made by Homelab; copy it from the same screen. After changing a secret, restart

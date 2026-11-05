@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from services.admin_api import build_router as build_admin_router
 from services.media_cleanup import FIRST_RUN_DELAY, RUN_EVERY
+from services import title_scores as title_scores_job
 from services.torrent_service import (
     downloads_store,
 )
@@ -93,6 +94,24 @@ async def start_media_cleanup() -> None:
         while True:
             await asyncio.to_thread(state.media_cleanup.run_once)
             await asyncio.sleep(RUN_EVERY)
+
+    asyncio.create_task(loop())
+
+
+@app.on_event("startup")
+async def start_title_scores() -> None:
+    """Once a day, IMDb numbers from TMDB and scores from OMDb (title_scores: in the settings; prod only)."""
+    if not title_scores_job.runs_here(state.title_scores.cfg):
+        return
+
+    async def loop() -> None:
+        await asyncio.sleep(title_scores_job.FIRST_RUN_DELAY)
+        while True:
+            try:
+                await asyncio.to_thread(state.title_scores.run_once)
+            except Exception as e:  # noqa: BLE001
+                print(f"[TitleScores] Run failed ({type(e).__name__}: {e}); trying again tomorrow.", flush=True)
+            await asyncio.sleep(title_scores_job.RUN_EVERY)
 
     asyncio.create_task(loop())
 

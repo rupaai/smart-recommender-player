@@ -115,4 +115,8 @@ top 10 (right genre, well known, nothing already seen...) on a copy of the catal
   pop-up, the engine switch).
 - Live status: `GET /api/rec/status` (is the wish reader up, how long it took last time).
 
+- IMDb and Rotten Tomatoes scores: `services/title_scores.py` collects them a little each day on
+  mars (OMDb's free key allows 1,000 lookups a day, best-known films first). Wishmatch does not
+  use them yet.
+
 What is planned next is in `docs/WISHMATCH_NEXT.md`.

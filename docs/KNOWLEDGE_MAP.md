@@ -185,6 +185,13 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 - **Files:** `services/media_cleanup.py`. Setting `media_cleanup:` in `homelab/config.yaml` (`watched_by`, `days_after_watched`, `dry_run`).
 - **Tests:** `tests/test_media_cleanup.py`.
 
+## IMDb and Rotten Tomatoes scores
+
+- **What:** once a day on mars prod, finds each title's IMDb number (TMDB, free) and asks OMDb (omdbapi.com, free key: 1,000 lookups a day) for its IMDb score, Rotten Tomatoes critics score and Metacritic score. Best-known films first. Nothing reads the scores yet (Wishmatch and the cards will, `docs/WISHMATCH_NEXT.md`).
+- **Files:** `services/title_scores.py` (`TitleScores`), started in `server.py` (`start_title_scores`); by hand `utils/fetch_title_scores.py` (`--status` shows progress). Columns `media_items.imdb_id`, `imdb_rating`, `imdb_votes`, `rt_score`, `metacritic`, `scores_checked_at`; daily counts in `title_scores_days` (schema v24).
+- **Settings:** `title_scores:` in `config.yaml` (off) and `homelab/config.yaml` (on, `run_in: [prod]`, `omdb_per_day: 1000`). Key: Homelab secret `OMDB_API_KEY`.
+- **Tests:** `tests/test_title_scores.py`.
+
 ## Delete from server
 
 - **What:** a "Delete from server" button on the title and show pages (web and TV) deletes a movie, one season or a whole show for everyone. A panel first shows what goes and how much space it frees; "Keep it" is the first focus. Ratings and watch history stay.
@@ -236,6 +243,7 @@ Guide: [guides/training.md](guides/training.md).
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
 | delete a film or show by hand | "Delete from server" on its page (web or TV) |
+| change how many OMDb lookups a day | `title_scores.omdb_per_day` in `homelab/config.yaml` (free key: 1,000) |
 | turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |

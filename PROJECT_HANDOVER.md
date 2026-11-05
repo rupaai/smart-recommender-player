@@ -46,6 +46,7 @@ Read this first in a fresh session instead of reading the whole repo. It says wh
 - Core tables: `media_items` (TMDB metadata, `UNIQUE(media_type, tmdb_id)`, `vote_count`, collection fields, vibe fields `tagline`, `vibe_tags`, `facets`, `vibe_cluster_id`, `season_count`), `media_sources` (files; a show has one row per episode; `jellyfin_id` cache), `profiles` (1 Labiba, 2 Gabriele), `watch_history` (per profile; `status` seen / not_seen, "not seen" carries no rating).
 - Ratings: `rating_details` (verdict, chips, vibe-check answers, `taste_score` -1..+1, `inferred`), `rating_history`, `rating_pairs`, `season_ratings`. Feedback: `discover_sessions`, `discover_impressions`, `vibe_clusters`, `mood_tag_batches`. Lists: `watch_later`.
 - Northern Lights (v12-v20): `nl_show_prefs`, `nl_person_prefs`, `nl_interest`, `nl_show_viewer_prefs`, `nl_hidden_titles`, `nl_seen_together`, `nl_pacts`, `nl_vetoes`, `nl_chooser`.
+- Title scores (v24): `media_items.imdb_id`, `imdb_rating`, `imdb_votes`, `rt_score`, `metacritic`, `scores_checked_at`, and `title_scores_days` (lookups per day), filled on mars by `services/title_scores.py`.
 - Migrations are additive and idempotent. Tests that pin a schema number use "this version or newer".
 
 ## 4. Core subsystems

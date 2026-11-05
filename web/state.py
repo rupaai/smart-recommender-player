@@ -43,6 +43,7 @@ from services.nl_polish_b import NLExtras
 from services.nl_type import TypeChannels
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services.taste_runtime import TasteRuntime
+from services.title_scores import TitleScores
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -172,6 +173,9 @@ media_cleanup = MediaCleanup(
     [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
     lambda: [p.profile_id for p in nl_people.people if p.profile_id],
 )
+
+# IMDb and Rotten Tomatoes scores, a little each day (services/title_scores.py, `title_scores:` setting).
+title_scores = TitleScores(config, db_path)
 
 # "Delete from server" on the title and show pages (services/nl_delete.py): same folders, same file rules.
 library_delete = LibraryDelete(db, [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan)
