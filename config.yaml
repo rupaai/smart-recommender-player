@@ -137,3 +137,14 @@ nightly:
   # costs API credit, so this ships off.
   mood_tag_limit: 0
   keep_backup_days: 30
+
+# IMDb and Rotten Tomatoes scores (services/title_scores.py): once a day, IMDb numbers from TMDB (free) and
+# scores from OMDb (omdbapi.com, key OMDB_API_KEY; the free key allows 1,000 lookups a day). Best-known films
+# first. Off here; homelab/config.yaml turns it on for mars prod.
+title_scores:
+  enabled: false
+  run_in: [prod]            # Homelab environments that run it; dev would use up the same key's daily limit
+  omdb_per_day: 1000
+  imdb_ids_per_day: 2000
+  films_first: true         # Rotten Tomatoes rarely scores shows
+  refresh_after_days: 180   # once every title has scores, ask again for the oldest

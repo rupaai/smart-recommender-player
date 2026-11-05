@@ -157,6 +157,7 @@ class DatabaseManager:
             self._migrate_v21_download_requests(cursor)
             self._migrate_v22_wishmatch_profiles(cursor)
             self._migrate_v23_nl_track_memory(cursor)
+            self._migrate_v24_title_scores(cursor)
 
     def _migrate_v1_media_items_unique(self, cursor, conn) -> None:
         """v1 migration: table-level `tmdb_id UNIQUE` -> composite `UNIQUE(media_type, tmdb_id)`.
@@ -1002,6 +1003,32 @@ class DatabaseManager:
         if version < 23:
             cursor.execute("PRAGMA user_version = 23;")
             print("[Database] Migration v23 applied: nl_track_memory added.")
+
+    def _migrate_v24_title_scores(self, cursor: sqlite3.Cursor) -> None:
+        """IMDb and Rotten Tomatoes scores per title (services/title_scores.py fills them once a day on mars).
+        `imdb_id` comes from TMDB ('' = TMDB has none), `imdb_id_checked` = 1 once asked. `scores_checked_at` is
+        when OMDb was last asked (NULL = never). `title_scores_days` counts the lookups made per day, so a restart
+        never goes over OMDb's daily limit. Additive only."""
+        version = cursor.execute("PRAGMA user_version;").fetchone()[0]
+        cols = {row[1] for row in cursor.execute("PRAGMA table_info(media_items);").fetchall()}
+        for name, kind in (("imdb_id", "TEXT"), ("imdb_id_checked", "INTEGER NOT NULL DEFAULT 0"),
+                           ("imdb_rating", "REAL"), ("imdb_votes", "INTEGER"), ("rt_score", "INTEGER"),
+                           ("metacritic", "INTEGER"), ("scores_checked_at", "TEXT")):
+            if name not in cols:
+                cursor.execute(f"ALTER TABLE media_items ADD COLUMN {name} {kind};")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_media_items_imdb_id ON media_items(imdb_id);")
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS title_scores_days (
+                day TEXT PRIMARY KEY,
+                tmdb_calls INTEGER NOT NULL DEFAULT 0,
+                omdb_calls INTEGER NOT NULL DEFAULT 0
+            );
+            """
+        )
+        if version < 24:
+            cursor.execute("PRAGMA user_version = 24;")
+            print("[Database] Migration v24 applied: IMDb / Rotten Tomatoes score columns added.")
 
     def get_track_memory(self, viewer_key: str, media_item_id: int) -> Dict[str, Any]:
         """{audio, subtitle} remembered for a title: this viewer's own choice, else the latest one anyone made for it
