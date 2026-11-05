@@ -141,7 +141,7 @@
   // One quiet line on the home page, beside the first poster row: OK on a poster opens its page.
   function placeRowHint() {
     Array.prototype.forEach.call(document.querySelectorAll(".tv-row-hint"), function (n) { n.remove(); });
-    var ids = ["tv-picks", "tv-recent-added", "tv-recent-watched", "tv-movies", "tv-shows"];
+    var ids = ["tv-picks", "tv-new-row", "tv-recent-added", "tv-recent-watched", "tv-movies", "tv-shows"];
     for (var i = 0; i < ids.length; i++) {
       var section = document.getElementById(ids[i]);
       if (section && !section.hidden) {
@@ -202,6 +202,10 @@
       var any = false;
       any = fillRow("tv-continue", "tv-continue-list", data.continue_watching, wideCard) || any;
       initPicks();
+      if (window.NLNew) {   // New episodes to download: its own call, so a slow TMDB never holds up home
+        window.NLNew.homeRow(document.getElementById("tv-new-row"), document.getElementById("tv-new-row-list"), posterCard,
+          { root: ROOT }).then(placeRowHint);
+      }
       any = fillRow("tv-recent-added", "tv-recent-added-list", data.recently_added, posterCard) || any;
       any = fillRow("tv-recent-watched", "tv-recent-watched-list", data.recently_watched, posterCard) || any;
       if (toggle) {
@@ -1045,6 +1049,13 @@
     window.NLDownloads.mount(document.getElementById("tv-downloads"), { tv: true, href: tvHref, status: setStatus });
   }
 
+  /* ----------------------------------------------------- new & popular */
+
+  function initNew() {
+    window.NLFocus.remember(false);
+    window.NLNew.mount(document.getElementById("tv-new"), { tv: true, href: tvHref, status: setStatus, downloads: ROOT + "downloads" });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -1056,4 +1067,5 @@
   else if (page === "watchlist") { initWatchlist(); }
   else if (page === "choose") { initChoose(); }
   else if (page === "downloads") { initDownloads(); }
+  else if (page === "new") { initNew(); }
 })();
