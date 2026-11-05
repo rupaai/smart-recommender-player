@@ -36,6 +36,7 @@
     } else if (t.runtime) {
       facts.push(NL.fmtRuntime(t.runtime));
     }
+    facts = facts.concat(NL.scoreFacts(t.scores));
     head.appendChild(NL.el("p", "nl-facts", facts.join(" · ")));
     if (t.together && window.NLCouple) {
       var seen = window.NLCouple.togetherBadge(false);

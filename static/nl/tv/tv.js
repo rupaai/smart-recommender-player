@@ -317,6 +317,7 @@
     } else if (t.runtime) {
       facts.push(NL.fmtRuntime(t.runtime));
     }
+    facts = facts.concat(NL.scoreFacts(t.scores));
     h.info.appendChild(el("p", "tv-facts", facts.join(" · ")));
     if (t.genres && t.genres.length) { h.info.appendChild(genres(t.genres)); }
     if (t.overview) { h.info.appendChild(el("p", "tv-overview", t.overview)); }

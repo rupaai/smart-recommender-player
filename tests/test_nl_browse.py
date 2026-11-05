@@ -227,6 +227,11 @@ def run(tmp):
     check("Resume offered at 40:00", t["can_resume"] and t["resume_seconds"] == 2400 and t["resume_href"] == f"/nl/play/{ids['Alpha']}?resume=1"
           and t["restart_href"].endswith("resume=0") and t["progress"] == 40, t)
     check("backdrop through the proxy", t["backdrop"].startswith("/nl/jf/Items/jfA/Images/Backdrop") and SECRET not in r.text, t["backdrop"])
+    check("scores: TMDB stands in while IMDb is unknown", t["scores"]["imdb"] is None and t["scores"]["rt"] is None, t["scores"])
+    with db.get_connection() as conn:
+        conn.execute("UPDATE media_items SET imdb_rating = 7.84, rt_score = 91 WHERE id = ?", (ids["Alpha"],))
+    s2 = client.get(f"/api/nl/title/{ids['Alpha']}").json()["scores"]
+    check("scores: IMDb and Rotten Tomatoes, no TMDB once IMDb is known", s2 == {"imdb": 7.8, "rt": 91, "tmdb": None}, s2)
     r = client.get(f"/api/nl/title/{ids['Beta']}")
     check("an unwatched movie has a plain Play link", r.json()["play_href"] == f"/nl/play/{ids['Beta']}" and not r.json()["can_resume"], r.text)
     r = client.get(f"/api/nl/title/{ids['Sigma']}")

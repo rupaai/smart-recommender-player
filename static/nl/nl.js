@@ -24,6 +24,16 @@
     });
   }
 
+  // IMDb and Rotten Tomatoes first (Labiba, 2026-10-24); TMDB's rating only while there is no IMDb score yet.
+  function scoreFacts(scores) {
+    var out = [];
+    if (!scores) { return out; }
+    if (scores.imdb) { out.push("IMDb " + Number(scores.imdb).toFixed(1)); }
+    if (scores.rt !== null && scores.rt !== undefined) { out.push("RT " + scores.rt + "%"); }
+    if (!scores.imdb && scores.tmdb) { out.push("TMDB " + Number(scores.tmdb).toFixed(1)); }
+    return out;
+  }
+
   function fmtRuntime(min) {
     if (!min) { return ""; }
     var h = Math.floor(min / 60), m = min % 60;
@@ -225,7 +235,7 @@
   }
 
   window.NL = {
-    el: el, fetchJSON: fetchJSON, fmtRuntime: fmtRuntime, fmtClock: fmtClock, metaLine: metaLine,
+    el: el, fetchJSON: fetchJSON, fmtRuntime: fmtRuntime, scoreFacts: scoreFacts, fmtClock: fmtClock, metaLine: metaLine,
     fillImage: fillImage, progressBar: progressBar, posterCard: posterCard, wideCard: wideCard, setStatus: setStatus
   };
 })();

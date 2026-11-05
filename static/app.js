@@ -1065,7 +1065,7 @@ function buildLaterCard(e, rank, animate = true) {
   const meta = [];
   if (e.release_year) meta.push(escapeHtml(e.release_year));
   if (e.runtime) meta.push(formatRuntime(e.runtime));
-  if (e.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(e.rating).toFixed(1))}</span>`);
+  meta.push(...scoreMeta(e));
 
   const action = e.file_path
     ? `<button class="btn-watch play" onclick="playLocalItem(${id}, ${jsArg(e.title)})">${icon('play')}<span>Play now</span></button>`
@@ -1226,7 +1226,6 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
     const tier = m.co_view_tier;
     if (tier === 'A') reasons.push(`<span class="badge badge-coview-a" title="You both rated this highly">${icon('heart', 'icon badge-icon')}You both liked it</span>`);
     if (tier === 'B') reasons.push(`<span class="badge badge-coview-b" title="${escapeHtml(m.tier_reason || "One of you loved it; the other hasn't seen it")}">${escapeHtml(m.tier_reason || "He'd recommend this")}</span>`);
-    if (m.combined_score && tier === 'A') reasons.push(`<span class="badge badge-coview-score" title="Your combined score">Together ${icon('star', 'icon badge-icon filled')}${escapeHtml(m.combined_score)}</span>`);
     // Series order: a sequel swapped for the film to watch first, or a later
     // entry whose earlier ones are already seen.
     if (m.series_note) reasons.push(`<span class="badge badge-series" title="${escapeHtml(m.series_note)}">${escapeHtml(m.replaced_sequel_title ? `Start of ${m.series_name || 'the series'}` : `#${m.series_position} of ${m.series_size}`)}</span>`);
@@ -1234,14 +1233,16 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
     // layer is invisible.
     if (m.matched_themes && m.matched_themes.length) reasons.push(`<span class="badge badge-theme" title="Themes matched from the premise">${escapeHtml(m.matched_themes.join(' · '))}</span>`);
     // Learned taste: the real largest contributors to facet_fit / cluster_affinity.
-    (m.taste_reasons || []).forEach((t) => reasons.push(`<span class="badge badge-taste" title="facet fit ${escapeHtml(m.facet_fit ?? 0)} · cluster ${escapeHtml(m.cluster_affinity ?? 0)}">${escapeHtml(t)}</span>`));
+    (m.taste_reasons || []).forEach((t) => reasons.push(`<span class="badge badge-taste" title="Why it fits your taste">${escapeHtml(t)}</span>`));
     if (m.taste_bonus > 0) reasons.push(`<span class="badge badge-bonus" title="+${escapeHtml(m.taste_bonus)} taste boost">Fits your taste</span>`);
     if (m.query_boost > 0) reasons.push(`<span class="badge badge-query" title="+${escapeHtml(m.query_boost)} match boost">Matches your description</span>`);
 
     const meta = [];
     if (m.release_year) meta.push(escapeHtml(m.release_year));
     if (m.runtime) meta.push(formatRuntime(m.runtime));
-    if (m.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(m.rating).toFixed(1))}</span>`);
+    meta.push(...scoreMeta(m));
+    // Our own score: only a small side note (Labiba, 2026-10-24); IMDb and Rotten Tomatoes come first.
+    if (m.combined_score && tier === 'A') meta.push(`<span class="ours-note" title="Your combined rating">ours ${escapeHtml(m.combined_score)}</span>`);
 
     const hasLocalFile = m.file_path && m.file_path.length > 0;
     const actionButtonHtml = hasLocalFile
@@ -1278,6 +1279,16 @@ function buildMovieCard(m, engine, index = 0, rank = 1) {
     `;
     card.querySelectorAll('.btn-later').forEach(paintWatchLaterButton);
     return card;
+}
+
+// Card scores (Labiba, 2026-10-24): IMDb and Rotten Tomatoes first. TMDB's rating stands in only while a
+// title has no IMDb score yet (services/title_scores.py fetches them a little each day).
+function scoreMeta(m) {
+  const out = [];
+  if (m.imdb_rating) out.push(`<span class="star" title="IMDb rating">IMDb ${escapeHtml(Number(m.imdb_rating).toFixed(1))}</span>`);
+  if (m.rt_score !== null && m.rt_score !== undefined) out.push(`<span class="star" title="Rotten Tomatoes critics score">RT ${escapeHtml(Number(m.rt_score))}%</span>`);
+  if (!m.imdb_rating && m.rating) out.push(`<span class="star" title="TMDB rating (IMDb score not fetched yet)">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(m.rating).toFixed(1))}</span>`);
+  return out;
 }
 
 function formatRuntime(min) {
@@ -2492,7 +2503,7 @@ function renderRateCard() {
   const meta = [];
   if (item.release_year) meta.push(escapeHtml(item.release_year));
   if (item.runtime) meta.push(formatRuntime(item.runtime));
-  if (item.rating) meta.push(`<span class="star" title="TMDB rating">${icon('star', 'icon meta-star filled')}${escapeHtml(Number(item.rating).toFixed(1))}</span>`);
+  meta.push(...scoreMeta(item));
 
   if (state.rateCardShownId !== item.id) {
     card.classList.remove('enter');

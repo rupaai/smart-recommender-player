@@ -103,6 +103,18 @@ def parse_omdb(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def card_scores(row: Dict[str, Any]) -> Dict[str, Any]:
+    """What a card shows (Labiba, 2026-10-24): IMDb and Rotten Tomatoes first; TMDB's rating only while a title
+    has no IMDb score yet. {"imdb": 7.8 | None, "rt": 93 | None, "tmdb": 7.5 | None}."""
+    imdb = row.get("imdb_rating")
+    tmdb = row.get("rating")
+    return {
+        "imdb": round(float(imdb), 1) if imdb else None,
+        "rt": int(row["rt_score"]) if row.get("rt_score") is not None else None,
+        "tmdb": round(float(tmdb), 1) if tmdb and not imdb else None,
+    }
+
+
 class StopRun(Exception):
     """A service said no for today (limit reached, bad key, no network). Nothing is marked."""
 

@@ -548,6 +548,7 @@ button:disabled { cursor: default; }
 
 .movie-meta { font-size: 13px; color: var(--text-2); margin-top: 4px; font-variant-numeric: tabular-nums; }
 .movie-meta .star { color: var(--text); font-weight: 700; }
+.movie-meta .ours-note { font-size: 0.8em; color: var(--text-3); }
 .movie-genres { font-size: 12px; color: var(--text-3); margin-top: 2px; }
 
 .movie-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }

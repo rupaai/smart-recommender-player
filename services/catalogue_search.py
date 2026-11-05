@@ -122,7 +122,7 @@ class CatalogueSearch:
                 f"""
                 SELECT mi.id, mi.media_type, mi.tmdb_id, mi.title, mi.original_title,
                        mi.release_year, mi.genres, mi.runtime, mi.rating, mi.vote_count,
-                       mi.poster_url, mi.overview,
+                       mi.poster_url, mi.overview, mi.imdb_rating, mi.rt_score,
                        EXISTS(SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id) AS in_library
                 FROM media_items mi WHERE mi.id IN ({marks})
                 """,

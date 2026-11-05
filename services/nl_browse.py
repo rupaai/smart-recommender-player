@@ -19,6 +19,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from services.title_scores import card_scores
 from services.jellyfin_playback import (
     PROXY_PREFIX,
     JellyfinPlayback,
@@ -446,6 +447,7 @@ class NLBrowse:
             "runtime": None if is_show else item.get("runtime"),
             "genres": genres,
             "overview": item.get("overview") or "",
+            "scores": card_scores(item),   # IMDb and Rotten Tomatoes (TMDB until IMDb is known)
             "poster_url": item.get("poster_url"),
             "backdrop": None,
             "image_fallback": None,
