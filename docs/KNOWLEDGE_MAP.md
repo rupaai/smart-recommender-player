@@ -221,7 +221,7 @@ Guide: [guides/deployment.md](guides/deployment.md).
 - **Files:** `homelab.yaml` (how Homelab runs it), `homelab/config.yaml` (its settings), `Dockerfile`, `.github/workflows/ci.yml` (checks, then builds the image on `main`).
 - **Flow:** merge to `main` -> CI builds `ghcr.io/rupaai/smart-recommender-player:sha-...` -> Homelab puts it on dev -> you press Promote for prod. Never deploy by hand.
 - **Secrets:** set in the Homelab companion; they arrive as files and `services/homelab_secrets.py` reads them.
-- **Tests:** `tests/test_layout.py` (the image copies every folder the server needs), `tests/test_homelab_secrets.py`, `tests/test_homelab_logs.py`.
+- **Tests:** `tests/test_layout.py` (the image copies every folder the server needs), `tests/test_homelab_secrets.py`, `tests/test_homelab_logs.py`, `tests/test_homelab_ports.py` (Prowlarr publishes no port).
 
 ## Training and tagging (Mac)
 

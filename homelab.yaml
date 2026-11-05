@@ -60,7 +60,7 @@ services:
     image: lscr.io/linuxserver/prowlarr:version-2.6.5.5623
     env: {PUID: "1000", PGID: "1000"}
     data: [{name: prowlarr-config, path: /config}]
-    ports: ["9696:9696"]
+    # No ports: only the app reaches it, at http://prowlarr:9696. Open its page with the SSH tunnel in docs/guides/deployment.md.
     memory: 512m
   # Ollama runs the small open-weight model that reads Wishmatch wishes. No ports: only the app
   # reaches it. Idle it is a sleeping process; the model loads on a search and unloads after
