@@ -14,6 +14,10 @@
     <ul class="nl-scroller nl-scroller-picks" id="nl-picks-list"></ul>
     <p id="nl-picks-empty" class="nl-meta" hidden></p>
   </section>
+  <section id="nl-new-row" class="nl-row" hidden aria-labelledby="nl-new-row-h">
+    <div class="nl-row-head"><h2 id="nl-new-row-h">New episodes</h2><a href="/nl/new">See all</a></div>
+    <ul class="nl-scroller" id="nl-new-row-list"></ul>
+  </section>
   <section id="nl-recent-added" class="nl-row" hidden aria-labelledby="nl-recent-added-h">
     <div class="nl-row-head"><h2 id="nl-recent-added-h">Recently added</h2></div>
     <ul class="nl-scroller" id="nl-recent-added-list"></ul>
@@ -31,4 +35,4 @@
     <ul class="nl-scroller" id="nl-shows-list"></ul>
   </section>
 {% endblock %}
-{% block scripts %}<script src="/static/nl/home.js"></script><script src="/static/nl/picks.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/nl/new-episodes.js"></script><script src="/static/nl/home.js"></script><script src="/static/nl/picks.js"></script>{% endblock %}
