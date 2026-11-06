@@ -39,17 +39,20 @@ def _schema(vocab: Vocabulary, avoid_groups: Optional[List[str]] = None) -> Dict
 
 
 def wish_system(vocab: Vocabulary, noun: str = "items") -> str:
-    """The fixed part of the prompt, kept short. The model only picks words: every word it writes
-    costs time on a small processor, and the mood dials come from the word lookup and the words."""
+    """The fixed part of every prompt: who the model helps and the vocabulary. Wish readings and
+    question wordings share it word for word, so Ollama keeps it read in memory (its "prompt cache")
+    and each call only reads the few new words after it. On a small processor, reading this list
+    again is most of a call's time. The task goes in the prompt after it (wish_prompt, question_prompt)."""
     groups = "\n".join(f"{g}: {', '.join(words)}" for g, words in vocab.tags.items())
-    return (
-        f"Pick words for a request for {noun}. Answer JSON: w = up to 4 words that fit the request, "
-        "a = words it rules out with no / not / without (usually none). Use only these words:\n" + groups
-    )
+    return f"You help someone choose {noun}. Mood words:\n" + groups
 
 
 def wish_prompt(text: str) -> str:
-    return text
+    """The task for a wish. The model only picks words: every word it writes costs time on a small
+    processor, and the mood dials come from the word lookup and the words."""
+    return ("Pick mood words for this request. Answer JSON: w = up to 4 words that fit it, "
+            "a = words it rules out with no / not / without (usually none). Use only the mood words.\n"
+            f"Request: {text}")
 
 
 def parse_answer(raw: Optional[str], vocab: Vocabulary) -> Optional[Wish]:
@@ -216,6 +219,11 @@ class LLMWishReader:
             model = self._cache.get(key)
         return merge(lookup, model)
 
+    def prime(self, vocab: Vocabulary, text: str = "something good tonight") -> bool:
+        """One throwaway reading, so the model is loaded and has the shared start of the prompt in
+        memory before the first real search. Nothing is remembered. True when the model answered."""
+        return self.complete(wish_prompt(text), _schema(vocab, self.avoid_groups), wish_system(vocab, self.noun)) is not None
+
     def cached(self, text: str) -> Optional[Wish]:
         return self._cache.get(" ".join((text or "").lower().split()))
 
@@ -227,7 +235,7 @@ def question_prompt(about: str, options: List[str], noun: str = "items") -> str:
 
 
 def word_question(about: str, options: List[str], complete: Optional[Complete] = None,
-                  noun: str = "items") -> Dict[str, Any]:
+                  noun: str = "items", system: str = "") -> Dict[str, Any]:
     """A plain-English question for a choice between `options` (vocabulary words). Without a
     model, or when its answer doesn't fit, a fixed sentence and the words themselves."""
     fallback = {"question": f"More {about}?" if len(options) < 2 else f"Which feels right: {', '.join(options[:-1])} "
@@ -237,7 +245,7 @@ def word_question(about: str, options: List[str], complete: Optional[Complete] =
     schema = {"type": "object", "properties": {"question": {"type": "string"},
                                                "options": {"type": "array", "items": {"type": "string"}}},
               "required": ["question", "options"]}
-    raw = complete(question_prompt(about, options, noun), schema, "Answer only JSON.")
+    raw = complete(question_prompt(about, options, noun), schema, system or "Answer only JSON.")
     try:
         data = json.loads(raw or "")
         q, opts = str(data["question"]).strip(), [str(o).strip() for o in data["options"]]
@@ -254,29 +262,59 @@ class QuestionWorder:
     The questions come from a small fixed set (a mood dial, or a few feeling words), so after a few
     searches nearly every question is already worded and answers at once. A question not worded yet
     waits up to `wait_seconds` for the model; a slower answer is still collected in the background and
-    remembered, and this time the fixed sentence is used. Only the model's wordings are remembered."""
+    remembered, and this time the fixed sentence is used. Only the model's wordings are remembered.
+    system: the shared start of every prompt (wish_system), so the model's memory of it is reused.
+    store: an AnswerFile that keeps the wordings across restarts (a deploy restarts the app)."""
 
     def __init__(self, complete: Complete, noun: str = "items", wait_seconds: Optional[float] = None,
-                 cache_size: int = 512):
+                 cache_size: int = 512, system: str = "", store: Any = None):
         self.complete = complete
         self.noun = noun
         self.wait_seconds = wait_seconds
         self.cache_size = cache_size
+        self.system = system
+        self.store = store
         self._cache: "OrderedDict[tuple, Dict[str, Any]]" = OrderedDict()
         self._pending: Dict[tuple, threading.Thread] = {}
         self._lock = threading.Lock()
+        for raw_key, raw in (store.load() if store is not None else {}).items():
+            try:
+                about, options = json.loads(raw_key)
+                worded = json.loads(raw)
+                if isinstance(worded, dict) and worded.get("source") == "model":
+                    self._cache[(str(about), tuple(str(o) for o in options))] = worded
+            except (ValueError, TypeError):
+                continue
+
+    @staticmethod
+    def _store_key(key: tuple) -> str:
+        return json.dumps([key[0], list(key[1])])
 
     def _ask(self, key: tuple) -> None:
         try:
-            worded = word_question(key[0], list(key[1]), self.complete, self.noun)
+            worded = word_question(key[0], list(key[1]), self.complete, self.noun, self.system)
             if worded.get("source") == "model":
                 with self._lock:
                     self._cache[key] = worded
                     while len(self._cache) > self.cache_size:
                         self._cache.popitem(last=False)
+                if self.store is not None:
+                    self.store.add(self._store_key(key), json.dumps(worded))
         finally:
             with self._lock:
                 self._pending.pop(key, None)
+
+    def known(self, about: str, options: List[str]) -> bool:
+        return (about, tuple(options)) in self._cache
+
+    def preword(self, about: str, options: List[str]) -> bool:
+        """Words this question now (waiting for the model) unless it is already worded. True when
+        the model was asked. Used at server start, so the questions people meet are ready."""
+        key = (about, tuple(options))
+        if not options or key in self._cache:
+            return False
+        self._ask(key)
+        return True
 
     def word(self, about: str, options: List[str]) -> Dict[str, Any]:
         key = (about, tuple(options))

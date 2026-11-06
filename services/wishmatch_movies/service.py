@@ -15,10 +15,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import os
+import threading
+import time
 
 from wishmatch import LLMWishReader, OllamaClient, QuestionWorder, Request, Wishmatch, word_question
 
-from wishmatch.llm import AnswerFile
+from wishmatch.llm import AnswerFile, wish_system
+from wishmatch.questions import trait_choices
 
 from .adapter import MovieAdapter
 from .session import WishmatchSession
@@ -37,16 +40,21 @@ class WishmatchMovies:
                                wait_seconds=float(cfg.get("wait_seconds", 8)),
                                avoid_groups=list(cfg.get("avoid_groups") or ["flags"]),
                                skip_when_understood=bool(cfg.get("skip_when_understood", True)),
-                               store=self._answers(cfg)) if self.ollama else None
+                               store=self._answers(cfg.get("answers_file"), cfg)) if self.ollama else None
+        self.reader = reader
         self.engine = Wishmatch(self.adapter, reader=reader)
         # Question wording waits less than a wish: a slow answer falls back to a fixed sentence this
         # time and is remembered, so each question is worded by the model once.
         qcfg = self.adapter.rules().get("questions") or {}
         self.question_client = self._ollama({**(self.adapter.rules().get("wish_reader") or {}),
                                              "max_tokens": 60}) if qcfg.get("model_wording", True) else None
+        # Same start of prompt as the wish reader (wish_system), so the model's memory of it is shared.
         self.question_worder = QuestionWorder(self.question_client.generate, noun="films and TV shows",
-                                              wait_seconds=float(qcfg.get("wording_timeout_seconds", 6))) \
+                                              wait_seconds=float(qcfg.get("wording_timeout_seconds", 6)),
+                                              system=wish_system(self.adapter.vocabulary(), "films and TV shows"),
+                                              store=self._answers(qcfg.get("wordings_file"), cfg)) \
             if self.question_client else None
+        self.warmup: Dict[str, Any] = {"state": "not run"}
         self.moods = mood_mappings or {}
 
     @staticmethod
@@ -62,10 +70,11 @@ class WishmatchMovies:
         return OllamaClient(url, str(cfg["model"]), timeout=float(cfg.get("timeout_seconds", 60)),
                             keep_alive=str(cfg.get("keep_alive", "5m")), options=options)
 
-    def _answers(self, cfg: Dict[str, Any]) -> Optional[AnswerFile]:
-        """Where the model's wish readings are kept across restarts: `answers_file`, next to the
-        database unless it is a full path. None when unset or when the database is in memory."""
-        name = str(cfg.get("answers_file") or "")
+    def _answers(self, name: Any, cfg: Dict[str, Any]) -> Optional[AnswerFile]:
+        """A file that keeps the model's answers across restarts (`answers_file` for wish readings,
+        `questions.wordings_file` for question wordings): next to the database unless it is a full
+        path. None when unset or when the database is in memory."""
+        name = str(name or "")
         db_path = str(getattr(self.db, "db_path", "") or "")
         if not name or (not os.path.isabs(name) and (not db_path or db_path == ":memory:")):
             return None
@@ -73,12 +82,43 @@ class WishmatchMovies:
         return AnswerFile(path, tag=str(cfg.get("model") or ""))
 
     def start(self) -> None:
-        """At server start: ask Ollama to download the wish reader's model if it lacks it (in the background).
-        Under Homelab only in the environments `pull_in` names (prod), so dev never downloads it."""
+        """At server start, in the background: ask Ollama to download the wish reader's model if it
+        lacks it, then warm it up (warm_at_start). Under Homelab only in the environments `pull_in`
+        names (prod), so dev never downloads or loads it."""
         cfg = self.adapter.rules().get("wish_reader") or {}
         env = os.getenv("HOMELAB_ENV", "")
-        if self.ollama and cfg.get("auto_pull", True) and (not env or env in (cfg.get("pull_in") or ["prod"])):
+        if not self.ollama or (env and env not in (cfg.get("pull_in") or ["prod"])):
+            return
+        if cfg.get("auto_pull", True):
             self.ollama.ensure_model(background=True)
+        if cfg.get("warm_at_start", True):
+            threading.Thread(target=self.warm, name="wishmatch-warmup", daemon=True).start()
+
+    def warm(self, wait_for_model_seconds: float = 3600.0) -> Dict[str, Any]:
+        """Gets the model ready before the first search: words every mood-dial question not worded
+        yet (kept in the wordings file, so this runs once per model), then one throwaway wish reading
+        so the model is loaded with the shared start of the prompt in its memory. Done last, so that
+        memory is the wish reader's. Waits for a first download to finish. The result is in /api/rec/status."""
+        if not self.ollama:
+            return self.warmup
+        started = time.time()
+        self.warmup = {"state": "waiting for the model"}
+        while not self.ollama.status().get("has_model"):
+            if time.time() - started > wait_for_model_seconds:
+                self.warmup = {"state": "skipped: the model is not in Ollama"}
+                return self.warmup
+            time.sleep(10)
+        self.warmup = {"state": "warming"}
+        worded = 0
+        qcfg = self.adapter.rules().get("questions") or {}
+        if self.question_worder is not None and qcfg.get("preword_at_start", True):
+            for about, options in trait_choices(self.adapter.vocabulary()):
+                worded += int(self.question_worder.preword(about, options))
+        primed = bool(self.reader and self.reader.prime(self.adapter.vocabulary()))
+        self.warmup = {"state": "done" if primed or worded else "failed", "questions_worded": worded,
+                       "primed": primed, "seconds": round(time.time() - started, 1)}
+        print(f"[Wishmatch] Warm-up: {self.warmup}", flush=True)
+        return self.warmup
 
     # --- requests -------------------------------------------------------------
     def wish_text(self, query: Optional[str], mood_id: Optional[int], sub_mood: Optional[str] = None) -> str:
@@ -196,4 +236,4 @@ class WishmatchMovies:
             by_known[item.known] = by_known.get(item.known, 0) + 1
         reader = self.ollama.status() if self.ollama else {"enabled": False}
         return {"tagged_titles": len(catalogue), "by_type": counts, "crowd": self.adapter.crowd_status(),
-                "wish_reader": reader}
+                "wish_reader": reader, "warmup": self.warmup}

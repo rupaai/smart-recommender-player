@@ -759,6 +759,71 @@ def test_question_worder_does_not_remember_failures():
     assert w.word("tone", ["silly", "witty"])["source"] == "model"
 
 
+def test_wish_and_question_prompts_start_the_same():
+    # The model keeps the start of the last prompt in memory; both kinds of call must share it.
+    from wishmatch.llm import LLMWishReader, QuestionWorder, wish_system
+    systems = []
+
+    def model(prompt, schema=None, system=""):
+        systems.append(system)
+        if "question" in prompt:
+            return '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}'
+        return '{"w": ["cozy"], "a": []}'
+
+    shared = wish_system(VOCAB, "films")
+    LLMWishReader(model, noun="films").read("pirates", VOCAB, read_wish("pirates", VOCAB, LEX))
+    QuestionWorder(model, noun="films", system=shared, wait_seconds=1).word("tone", ["silly", "witty"])
+    assert systems == [shared, shared], systems
+    assert "pirates" not in shared and "cozy" in shared      # the wish comes after the shared part
+
+
+def test_question_wordings_survive_a_restart_and_can_be_prepared():
+    import tempfile
+    from wishmatch.llm import AnswerFile, QuestionWorder
+    calls = []
+
+    def model(*a, **k):
+        calls.append(1)
+        return '{"question": "Goofy or clever?", "options": ["Goofy", "Clever"]}'
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/wordings.json"
+        first = QuestionWorder(model, store=AnswerFile(path, tag="m1"))
+        assert first.preword("tone", ["silly", "witty"]) is True
+        assert first.preword("tone", ["silly", "witty"]) is False   # already worded: not asked again
+        again = QuestionWorder(model, store=AnswerFile(path, tag="m1"), wait_seconds=0)   # a new server start
+        assert again.known("tone", ["silly", "witty"])
+        assert again.word("tone", ["silly", "witty"])["question"] == "Goofy or clever?"
+        assert len(calls) == 1
+        assert not QuestionWorder(model, store=AnswerFile(path, tag="m2")).known("tone", ["silly", "witty"])
+
+
+def test_prime_reads_a_throwaway_wish_without_remembering_it():
+    from wishmatch.llm import LLMWishReader
+    calls = []
+    r = LLMWishReader(lambda *a, **k: calls.append(a) or '{"w": [], "a": []}')
+    assert r.prime(VOCAB) is True and len(calls) == 1
+    assert r.cached("something good tonight") is None
+    assert LLMWishReader(lambda *a, **k: None).prime(VOCAB) is False
+
+
+def test_trait_choices_match_the_dial_questions():
+    from wishmatch.questions import trait_choices, trait_words
+    choices = trait_choices(VOCAB)
+    assert len(choices) == len(VOCAB.traits)
+    for (about, options), ends in zip(choices, VOCAB.traits.values()):
+        low, high = trait_words(ends)
+        assert about == f"{low} or {high}" and options == [low, high]
+
+
+def test_ollama_timing_reads_its_counts():
+    from wishmatch import OllamaClient
+    t = OllamaClient.timing({"load_duration": 2_000_000_000, "prompt_eval_count": 12, "prompt_eval_duration": 500_000_000,
+                             "eval_count": 20, "eval_duration": 3_250_000_000})
+    assert t == {"load_seconds": 2.0, "read_tokens": 12, "read_seconds": 0.5, "write_tokens": 20, "write_seconds": 3.25}
+    assert OllamaClient.timing({})["read_seconds"] is None
+
+
 def test_ollama_client_fails_quietly_without_a_server():
     from wishmatch import OllamaClient
     c = OllamaClient("http://127.0.0.1:9", "tiny", timeout=0.5)
