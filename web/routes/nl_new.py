@@ -78,6 +78,26 @@ async def nl_new_episode_copies(
     return {"copies": copies}
 
 
+@router.get("/api/nl/new-episodes/show/{tmdb_id}/seasons")
+async def nl_new_episode_seasons(tmdb_id: int) -> Dict[str, Any]:
+    """The show's seasons for the season picker (aired and had counts)."""
+    try:
+        return await asyncio.to_thread(state.nl_new_episodes.seasons, tmdb_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/api/nl/new-episodes/show/{tmdb_id}/season/{season}")
+async def nl_new_episode_season(tmdb_id: int, season: int) -> Dict[str, Any]:
+    """One season's episodes: which aired and which you already have."""
+    if season < 1 or season > 200:
+        raise HTTPException(status_code=422, detail="No such season.")
+    try:
+        return await asyncio.to_thread(state.nl_new_episodes.season, tmdb_id, season)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/api/nl/new-episodes/download")
 async def nl_new_episode_download(body: NewDownloadRequest) -> Dict[str, Any]:
     """Finds the best copy (or uses the chosen `copy_id`) and starts it. Progress shows on Downloads."""

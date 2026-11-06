@@ -8,8 +8,9 @@ All the work happens on the server (mars). The TV and the web pages only show th
 - **Home** (web, TV and laptop): a "New episodes" row. Your shows come first, then popular ones. Choosing a
   poster opens the New & popular page at that show.
 - **New & popular page**: "New & popular" in the TV and laptop menu, "New" on the web (`/nl/new`). Each show
-  has a Download button ("Get S02E05" or "Get season 3"), "Other copies" and, if it's on the server,
-  "Open show". After a tap the button says "Downloading" and links to Downloads.
+  has a Download button ("Get S01E01"), "Other copies", "Seasons" and, if it's on the server, "Open show".
+  "Seasons" lists every season; pick one to see its episodes (on the server, out, or coming on a date) and
+  get any episode, or "Get whole season" once a season has finished. After a tap the button says "Downloading" and links to Downloads.
 
 ## The two lists
 
@@ -32,10 +33,16 @@ Shows that fit your taste move up the list; the rest follow TMDB's trending orde
 
 ## What the Download button gets
 
-- If the latest season has **finished** and you're missing two or more of its episodes: the whole season,
-  as one "season pack" (one download with every episode).
-- Otherwise: the **first episode you're missing** from the latest season. For a show you've never had, that's
-  episode 1 of the season that's airing now.
+Always one episode, the next one in watching order, so you can start watching while the rest come:
+
+- **A show you never had** (popular shows, or one only on Watch later): **S1E1**, even if the show is on
+  season 3. Use "Seasons" to start somewhere else.
+- **A show with files on the server**: the first episode you're missing, going on from the first episode
+  you have. If you have S1E1-3 and S2E1, that's S2E2; a gap (S1E2 missing) comes first.
+- **A show you marked as seen but have no files of** (you watched it somewhere else): the first episode of
+  the latest season.
+
+A whole season is only downloaded when you choose "Get whole season" in the season list.
 
 The server searches for that episode the same way the Download tab does and ranks copies with "Best match"
 (quality, how many people share it, sensible size). It drops copies of a different episode, a different show
@@ -70,5 +77,5 @@ Everything is in `new_episodes:` in `config.yaml`:
 
 - `services/nl_new_episodes.py`: the lists, which episode to offer, and picking a copy.
 - `web/routes/nl_new.py`: `GET /api/nl/new-episodes`, `GET /api/nl/new-episodes/copies`,
-  `POST /api/nl/new-episodes/download`.
+  `GET /api/nl/new-episodes/show/{tmdb_id}/seasons`, `.../season/{n}`, `POST /api/nl/new-episodes/download`.
 - `tests/test_nl_new_episodes.py`.

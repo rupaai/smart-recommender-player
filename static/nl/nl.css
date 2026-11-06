@@ -410,3 +410,8 @@ a.nl-health-part:hover { text-decoration-color: currentColor; }
 .nl-new-copy-text { min-width: 0; }
 .nl-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
 .nl-new-copy-meta, .nl-new-copy-empty { color: var(--text-2); font-size: 0.85rem; }
+.nl-new-seasons { margin-top: 10px; }
+.nl-new-season-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.nl-new-episodes { display: grid; gap: 8px; margin-top: 10px; }
+.nl-new-ep-row { display: flex; align-items: center; gap: 10px; }
+.nl-new-ep-state { flex: none; min-width: 72px; color: var(--text-2); font-size: 0.85rem; font-weight: 600; }
