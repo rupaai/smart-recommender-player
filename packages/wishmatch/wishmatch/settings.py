@@ -61,6 +61,15 @@ DEFAULTS: Dict[str, Any] = {
         "trait_weight": 0.5,         # share of the taste score from traits (the rest from tags)
         "declared_weight": 0.3,      # a declared like adds this to a tag's affinity, a declared dislike subtracts it
     },
+    # A wish made from what people watched lately (recent.py), for picks with nothing typed.
+    "recent": {
+        "half_life_days": 14,        # a watch this many days ago counts half as much as one today
+        "max_traits": 4,             # at most this many traits in the wish
+        "max_spread": 0.18,          # a trait is used only when the recent items agree on it this closely
+        "min_tag_share": 0.35,       # a tag is used when it is on at least this share of the recent items
+        "max_tags": 4,
+        "dislike_below": -0.3,       # a reaction below this makes the item's tags ones to avoid
+    },
     # Reason words shown under each pick.
     "explain": {"max_reasons": 3, "hide_groups": []},   # hide_groups: vocabulary tag groups never shown as reasons
     # Word lookup that turns typed words into vocabulary words. See wish.py.

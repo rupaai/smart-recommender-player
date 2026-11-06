@@ -99,6 +99,29 @@ declared you like or avoid. With few ratings, taste counts less (it is "shrunk")
 Films and shows are mixed 2:1 (`wishmatch.mix`). Each card shows up to three reasons ("cosy,
 witty, fans of Paddington loved it"). Content warnings are never shown as reasons.
 
+## Today's picks (nothing typed)
+
+Each day mars makes a list of films for you, one for Gabriele and one for both of you, from what you
+watched in the last 30 days. Nothing is typed: the "wish" is made from those titles instead.
+
+1. What counts as watched lately: Jellyfin's played marks (with the date, per person), plus titles
+   marked seen or rated in the app. Your verdict counts: a loved title about twice, a "not for me"
+   title only as moods to avoid. A watch two weeks ago counts half as much as one today.
+2. The wish: the mood dials those titles agree on (say all calm and warm), and the feelings most of
+   them share (cosy, witty). Where they disagree, that dial is left out.
+3. The rest is ordinary Wishmatch: your taste, the MovieLens fans, IMDb / Rotten Tomatoes quality,
+   well-known titles, nothing seen and nothing played lately.
+4. Each card says "Because you watched X": the recent title it is most like.
+
+On the home page (phone, TV and laptop) it is the "Picked for you today" row. A film already on the
+server opens its page; any other card is a "Get it" button: mars finds the best copy (Best match, as on
+the Download tab) and downloads it.
+
+The list is made the first time someone asks each day and kept in `daily_picks.json` next to the
+database. API: `GET /api/nl/daily-picks` (for the viewer on that screen; "Both of us" gets the joint
+list). Settings: `wishmatch.daily_picks` and `wishmatch.recent` in `recommender_rules.yaml`. Free: no
+model is asked.
+
 ## Costs
 
 Free. The wish reader runs on the server, the tagging on the Mac. The only paid option is
@@ -117,6 +140,8 @@ profiles, about 1 cent per 100 titles for tags), and only when you ask for it.
 | wait less for the AI reader | `wishmatch.wish_reader.wait_seconds` |
 | skip loading the AI at server start | `wishmatch.wish_reader.warm_at_start: false` |
 | let the partner count more when alone | `wishmatch.people.other_weight` |
+| look further back for today's picks | `wishmatch.daily_picks.days` |
+| let older watches count more | `wishmatch.recent.half_life_days` |
 
 After a change, `uv run python utils/compare_engines.py` runs 30 sample wishes and checks each
 top 10 (right genre, well known, nothing already seen...) on a copy of the catalogue.

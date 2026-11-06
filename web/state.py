@@ -47,6 +47,7 @@ from services.recommender_rules import RULES, foreign_gate, passes_foreign_gate
 from services.recommender_service import MOOD_MAPPINGS, RecommenderService
 from services.taste_runtime import TasteRuntime
 from services.title_scores import TitleScores
+from services.wishmatch_movies.daily import DailyPicks
 from services.torrent_service import (
     TorrentDownloader,
     TorrentSearcher,
@@ -217,6 +218,17 @@ media_cleanup = MediaCleanup(
     [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan,
     lambda: [p.profile_id for p in nl_people.people if p.profile_id],
 )
+
+# Today's movie picks from what each of you watched lately (services/wishmatch_movies/daily.py,
+# `wishmatch.daily_picks` in recommender_rules.yaml). Jellyfin's played marks are read per person.
+def _played_by(profile_id):
+    person = next((p for p in nl_people.people if p.profile_id == profile_id), None)
+    if nl_people.configured and person is None:
+        return []
+    return nl_browse.played_titles([person.jellyfin_user_id if person else None])
+
+
+daily_picks = DailyPicks(wishmatch_movies, _played_by)
 
 # IMDb and Rotten Tomatoes scores, a little each day (services/title_scores.py, `title_scores:` setting).
 title_scores = TitleScores(config, db_path)

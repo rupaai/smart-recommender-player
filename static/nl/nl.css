@@ -410,6 +410,12 @@ a.nl-health-part:hover { text-decoration-color: currentColor; }
 .nl-new-copy-text { min-width: 0; }
 .nl-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; }
 .nl-new-copy-meta, .nl-new-copy-empty { color: var(--text-2); font-size: 0.85rem; }
+
+/* Picked for you today (daily-picks.js): a card that isn't on the server is a "Get it" button. */
+.nl-daily-get { appearance: none; border: 0; background: none; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.nl-daily-get[aria-disabled="true"] { cursor: default; }
+.nl-daily-msg { margin: 4px 0 0; font-size: 0.8rem; color: var(--text-2); }
+.nl-daily-msg:empty { display: none; }
 .nl-new-seasons { margin-top: 10px; }
 .nl-new-season-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .nl-new-episodes { display: grid; gap: 8px; margin-top: 10px; }

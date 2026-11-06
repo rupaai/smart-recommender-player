@@ -333,6 +333,21 @@ wishmatch:
     tag_shrink: 3.0
     trait_weight: 0.5       # half the taste score from mood dials, half from feelings
     declared_weight: 0.3    # a feeling in your written profile's likes / dislikes moves its affinity by this much
+  # Today's picks from what you watched lately (services/wishmatch_movies/daily.py). No model, free.
+  daily_picks:
+    enabled: true
+    days: 30                # what was watched in this many days counts
+    per_list: 12            # picks per list (you alone, Gabriele alone, both of you)
+    kinds: [movie]          # films only; [movie, tv] would mix in shows
+    file: daily_picks.json  # today's lists, kept next to the database
+  # How "what you watched lately" becomes a wish (the core's wishmatch/recent.py).
+  recent:
+    half_life_days: 14      # a watch two weeks ago counts half as much as one today
+    max_traits: 4           # at most this many mood dials
+    max_spread: 0.18        # a dial is used only when the recent titles agree on it this closely (0..0.5)
+    min_tag_share: 0.35     # a feeling is used when this share of the recent titles have it
+    max_tags: 4
+    dislike_below: -0.3     # a title you disliked lately (taste score below this) adds its feelings to "avoid"
   explain:
     max_reasons: 3
     hide_groups: [flags]    # content warnings (infidelity, animal harm) are never shown as reasons

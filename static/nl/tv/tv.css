@@ -321,6 +321,12 @@ html.laptop .tv-card:hover .tv-details { display: flex; }
 .tv-new-copy-text { min-width: 0; }
 .tv-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80rem; }
 .tv-new-copy-meta, .tv-new-copy-empty { color: var(--text-2); }
+
+/* Picked for you today (daily-picks.js): a card that isn't on the server is a "Get it" button. */
+.tv-daily-get { appearance: none; border: 0; background: none; padding: 0; margin: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; width: 100%; }
+.tv-daily-msg { margin: 0.4rem 0 0; font-size: 1.4rem; font-weight: 700; color: var(--text-2); }
+.tv-daily-msg:empty { display: none; }
+
 .tv-new-seasons { padding: 1rem 0.5rem 0; }
 .tv-new-season-chips { display: flex; flex-wrap: wrap; gap: 1rem; }
 .tv-new-season-chips .tv-pill[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
