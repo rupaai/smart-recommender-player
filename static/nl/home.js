@@ -20,6 +20,11 @@
     window.NLNew.homeRow(document.getElementById("nl-new-row"), document.getElementById("nl-new-row-list"), NL.posterCard, { root: "/nl/" });
   }
 
+  // Today's films from what you watched lately (made once a day on the server).
+  if (window.NLDaily) {
+    window.NLDaily.homeRow(document.getElementById("nl-daily"), document.getElementById("nl-daily-list"), {});
+  }
+
   NL.fetchJSON("/api/nl/home").then(function (data) {
     var any = false;
     any = fill("nl-continue", "nl-continue-list", data.continue_watching, NL.wideCard) || any;

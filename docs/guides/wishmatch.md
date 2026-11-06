@@ -103,6 +103,10 @@ watched in the last 30 days. Nothing is typed: the "wish" is made from those tit
    well-known titles, nothing seen and nothing played lately.
 4. Each card says "Because you watched X": the recent title it is most like.
 
+On the home page (phone, TV and laptop) it is the "Picked for you today" row. A film already on the
+server opens its page; any other card is a "Get it" button: mars finds the best copy (Best match, as on
+the Download tab) and downloads it.
+
 The list is made the first time someone asks each day and kept in `daily_picks.json` next to the
 database. API: `GET /api/nl/daily-picks` (for the viewer on that screen; "Both of us" gets the joint
 list). Settings: `wishmatch.daily_picks` and `wishmatch.recent` in `recommender_rules.yaml`. Free: no

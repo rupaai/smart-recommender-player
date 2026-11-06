@@ -9,6 +9,7 @@ import asyncio
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from services.nl_choose import clean_tz
 from services.nl_picks import PicksError, parse_max_runtime
@@ -144,4 +145,47 @@ async def nl_daily_picks(request: Request, fresh: bool = False) -> Dict[str, Any
     if not together:
         others = [p for p in state.wishmatch_movies.adapter.people() if p not in people]
         people = people + others
-    return await asyncio.to_thread(state.daily_picks.today_list, people, together, fresh)
+    data = await asyncio.to_thread(state.daily_picks.today_list, people, together, fresh)
+    return await asyncio.to_thread(_daily_marks, data)
+
+
+def _daily_marks(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Marks each card `ready` (a file on the server: href to its page) or `downloading`, at ask time."""
+    from web.routes.nl_new import _downloading_ids   # avoids a loop at import time
+    picks = data.get("picks") or []
+    ids = [int(c["id"]) for c in picks if c.get("id") is not None]
+    have = set()
+    if ids:
+        marks = ",".join("?" * len(ids))
+        with state.db.get_connection() as conn:
+            have = {int(r[0]) for r in conn.execute(
+                f"SELECT DISTINCT media_item_id FROM media_sources WHERE media_item_id IN ({marks})", ids)}
+    busy = _downloading_ids()
+    out = dict(data)
+    out["picks"] = [{**c, "ready": c.get("id") in have, "downloading": c.get("id") in busy,
+                     "href": f"/nl/title/{c['id']}" if c.get("id") in have else None} for c in picks]
+    return out
+
+
+class DailyGetBody(BaseModel):
+    media_item_id: int = Field(..., ge=1)
+
+
+@router.post("/api/nl/daily-picks/download")
+async def nl_daily_pick_download(body: DailyGetBody) -> Dict[str, Any]:
+    """"Get it" on a pick: mars finds the best copy of that film (Best match, same as the Download tab)
+    and starts it. Progress shows on Downloads. The page never sees the torrent link."""
+    from services.nl_film_copies import best_film_copy
+    from web.routes.torrents import start_download
+    item = await asyncio.to_thread(state.db.get_item_by_id, body.media_item_id)
+    if not item or item.get("media_type") != "movie":
+        raise HTTPException(status_code=404, detail="That film isn't in the catalogue.")
+    try:
+        copy = await asyncio.to_thread(best_film_copy, state.torrent_searcher, item["title"], item.get("release_year"))
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    download_id = start_download(body.media_item_id, copy["magnet"], item["title"], "movie")
+    return {"success": True, "download_id": download_id, "release": copy.get("name") or "",
+            "message": f"Downloading {copy.get('name') or item['title']}"}

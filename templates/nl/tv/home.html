@@ -10,6 +10,10 @@
     <div id="tv-picks-chips" class="tv-chips" data-nl-row="picks-chips"></div>
     <ul class="tv-row" data-nl-row="picks" id="tv-picks-list"></ul>
   </section>
+  <section id="tv-daily" class="tv-section" hidden aria-labelledby="tv-daily-h">
+    <h2 id="tv-daily-h">Picked for you today</h2>
+    <ul class="tv-row" data-nl-row="daily-picks" id="tv-daily-list"></ul>
+  </section>
   <section id="tv-new-row" class="tv-section" hidden aria-labelledby="tv-new-row-h">
     <h2 id="tv-new-row-h">New episodes</h2>
     <ul class="tv-row" data-nl-row="new-episodes" id="tv-new-row-list"></ul>
@@ -35,4 +39,4 @@
     <ul class="tv-row" data-nl-row="shows" id="tv-shows-list"></ul>
   </section>
 {% endblock %}
-{% block scripts %}<script src="/static/nl/new-episodes.js"></script>{% endblock %}
+{% block scripts %}<script src="/static/nl/new-episodes.js"></script><script src="/static/nl/daily-picks.js"></script>{% endblock %}
