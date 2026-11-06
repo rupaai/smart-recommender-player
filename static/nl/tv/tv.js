@@ -206,6 +206,10 @@
         window.NLNew.homeRow(document.getElementById("tv-new-row"), document.getElementById("tv-new-row-list"), posterCard,
           { root: ROOT }).then(placeRowHint);
       }
+      if (window.NLDaily) {   // Picked for you today: films from what you watched lately
+        window.NLDaily.homeRow(document.getElementById("tv-daily"), document.getElementById("tv-daily-list"),
+          { tv: true, href: tvHref }).then(placeRowHint);
+      }
       any = fillRow("tv-recent-added", "tv-recent-added-list", data.recently_added, posterCard) || any;
       any = fillRow("tv-recent-watched", "tv-recent-watched-list", data.recently_watched, posterCard) || any;
       if (toggle) {
