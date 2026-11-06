@@ -123,6 +123,16 @@ new_episodes:
     - {key: hulu, name: Hulu, id: 15}
     - {key: paramount, name: Paramount+, id: 531}
 
+# New episodes that download by themselves (services/nl_auto_episodes.py): for each show you're watching,
+# mars keeps the next few episodes ready, fetching them one at a time in order. Off here; on for mars.
+auto_episodes:
+  enabled: false
+  run_in: [prod]            # Homelab environments that run it
+  check_hours: 3            # how often mars looks
+  episodes_ahead: 3         # unwatched episodes kept ready per show
+  active_days: 60           # a show counts as "being watched" this long after the last watch or new file
+  shows_per_run: 10         # at most this many downloads started per look
+
 # Northern Lights "Who's watching" (M4). With no people the app has one viewer
 # (JELLYFIN_USER_ID) and no who's-watching screen. Add your people in config.local.yaml
 # (see config.local.example.yaml): each needs a Jellyfin user and a ratings profile.

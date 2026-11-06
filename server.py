@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 
 from services.admin_api import build_router as build_admin_router
 from services.media_cleanup import FIRST_RUN_DELAY, RUN_EVERY
+from services import nl_auto_episodes as auto_episodes_job
 from services import title_scores as title_scores_job
 from services.torrent_service import (
     downloads_store,
@@ -113,6 +114,24 @@ async def start_title_scores() -> None:
             except Exception as e:  # noqa: BLE001
                 print(f"[TitleScores] Run failed ({type(e).__name__}: {e}); trying again tomorrow.", flush=True)
             await asyncio.sleep(title_scores_job.RUN_EVERY)
+
+    asyncio.create_task(loop())
+
+
+@app.on_event("startup")
+async def start_auto_episodes() -> None:
+    """Every few hours, the next episodes of the shows you watch, one at a time in order (auto_episodes:)."""
+    if not auto_episodes_job.runs_here(state.nl_auto_episodes.cfg):
+        return
+
+    async def loop() -> None:
+        await asyncio.sleep(auto_episodes_job.FIRST_RUN_DELAY)
+        while True:
+            try:
+                await nl_new.auto_episodes_once()
+            except Exception as e:  # noqa: BLE001
+                print(f"[AutoEpisodes] Look failed ({type(e).__name__}: {e}); trying again later.", flush=True)
+            await asyncio.sleep(float(state.nl_auto_episodes.cfg["check_hours"]) * 3600)
 
     asyncio.create_task(loop())
 

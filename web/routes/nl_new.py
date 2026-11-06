@@ -120,3 +120,23 @@ async def nl_new_episode_download(body: NewDownloadRequest) -> Dict[str, Any]:
     state.nl_new_episodes.forget_lists()
     return {"success": True, "download_id": download_id, "media_item_id": picked["media_item_id"],
             "release": picked["release"], "message": f"Downloading {picked['release']}"}
+
+
+@router.get("/api/nl/auto-episodes")
+async def nl_auto_episodes_status() -> Dict[str, Any]:
+    """New episodes that download by themselves: the settings and what the last look did per show."""
+    return state.nl_auto_episodes.public()
+
+
+async def auto_episodes_once() -> Dict[str, Any]:
+    """One look (server.py runs it every `auto_episodes.check_hours` on mars): plan and find copies in a
+    worker thread, start the downloads here on the event loop."""
+    auto = state.nl_auto_episodes
+    plan = await asyncio.to_thread(auto.plan)
+    found = await asyncio.to_thread(auto.find_copies, plan)
+    for line in found:
+        start_download(line["media_item_id"], line["magnet"], line["title"], "tv")
+        line.update(action="started", why=f"Downloading {line['release']}")
+    if found:
+        state.nl_new_episodes.forget_lists()
+    return auto.finish(plan)

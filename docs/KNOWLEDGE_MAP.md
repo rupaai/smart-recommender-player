@@ -148,6 +148,7 @@ Guide: [guides/new-episodes.md](guides/new-episodes.md).
 - **Pages:** `/nl/new`, `/nl/tv/new`, `/player/new` (`web/routes/nl_pages.py`, templates `templates/nl/new.html`, `templates/nl/tv/new.html`); drawn by `static/nl/new-episodes.js` (web, TV and laptop; started by `static/nl/new-web.js` or `tv.js`). The "New episodes" row on home is `NLNew.homeRow` in the same file. Styles in `nl.css` and `tv.css` (`*-new-*`). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
 - **Settings:** `new_episodes:` in `config.yaml`. The service tabs are `providers`, their country is `watch_region` (set yours in `config.local.yaml`). Needs the TMDB key (free).
 - **Tests:** `tests/test_nl_new_episodes.py`.
+- **By themselves:** `services/nl_auto_episodes.py` keeps the next episodes of the shows you watch ready, one at a time in order (job `start_auto_episodes` in `server.py`, `auto_episodes_once` in `web/routes/nl_new.py`, last run at `GET /api/nl/auto-episodes`). Settings `auto_episodes:` in `config.yaml` (off) and `homelab/config.yaml` (on in prod). Tests `tests/test_nl_auto_episodes.py`.
 
 ## Library and browsing (Northern Lights)
 
@@ -262,6 +263,7 @@ Guide: [guides/training.md](guides/training.md).
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
 | change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
+| keep more or fewer episodes ready, or stop auto-downloading episodes | `auto_episodes.episodes_ahead` / `enabled` in `homelab/config.yaml` |
 | change the streaming-service tabs or their country | `new_episodes.providers` and `watch_region` (country in `config.local.yaml`) |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |

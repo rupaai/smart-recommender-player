@@ -124,6 +124,15 @@ media_cleanup:
   watched_by: any
   dry_run: false
 
+# New episodes that download by themselves, one at a time in order (services/nl_auto_episodes.py).
+auto_episodes:
+  enabled: true
+  run_in: [prod]
+  check_hours: 3
+  episodes_ahead: 3
+  active_days: 60
+  shows_per_run: 10
+
 # IMDb and Rotten Tomatoes scores (services/title_scores.py), once a day in prod only. Labiba chose OMDb's
 # free key on 2026-11-05: 1,000 lookups a day, best-known films first (about 5 days for films with 1,000+
 # votes, about 51 days for the whole catalogue). The key is the Homelab secret OMDB_API_KEY.
