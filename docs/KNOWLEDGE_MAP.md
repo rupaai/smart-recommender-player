@@ -96,7 +96,7 @@ flowchart LR
 - **Film/TV part** (`services/wishmatch_movies/`): `adapter.py` turns catalogue rows into items, `service.py` (`WishmatchMovies`), `session.py` the questions pop-up.
 - **Settings:** `wishmatch:` in `recommender_rules.yaml` (weights, candidate counts, film/show mix, the wish-reader model and its wait time, questions).
 - **Word list:** `services/vibe_vocab.py` (mood dials and feeling words) plus `wishmatch.lexicon` and `wishmatch.genre_hints` in `recommender_rules.yaml`. A word that does nothing goes there.
-- **Today's picks** (from what you watched lately, nothing typed): `services/wishmatch_movies/daily.py` (`DailyPicks`), the core's `packages/wishmatch/wishmatch/recent.py` (turns recent titles into a wish), route `GET /api/nl/daily-picks` in `web/routes/nl_picks.py`. Settings `wishmatch.daily_picks` and `wishmatch.recent`. Kept per day in `daily_picks.json` next to the database. Test `tests/test_wishmatch_daily.py`. Home row "Picked for you today" (web, TV, laptop): `static/nl/daily-picks.js` (`NLDaily.homeRow`, started by `home.js` and `tv.js`; styles `*-daily-*` in `nl.css` / `tv.css`). "Get it": `POST /api/nl/daily-picks/download` finds the best copy with `services/nl_film_copies.py` and starts it like the Download tab. Test `tests/test_nl_daily_row.py`.
+- **Today's picks** (from what you watched lately, nothing typed): `services/wishmatch_movies/daily.py` (`DailyPicks`), the core's `packages/wishmatch/wishmatch/recent.py` (turns recent titles into a wish), route `GET /api/nl/daily-picks` in `web/routes/nl_picks.py`. Settings `wishmatch.daily_picks` and `wishmatch.recent`. Kept per day in `daily_picks.json` next to the database. Test `tests/test_wishmatch_daily.py`. Home row "Picked for you today" (web, TV, laptop): `static/nl/daily-picks.js` (`NLDaily.homeRow`, started by `home.js` and `tv.js`; styles `*-daily-*` in `nl.css` / `tv.css`). "Get it": `POST /api/nl/daily-picks/download` finds the best copy with `NewEpisodes.pick` (kind "movie", same as films on New & popular) and starts it. Test `tests/test_nl_daily_row.py`.
 - **Taste profiles:** `utils/wishmatch_profiles.py` (made at Train time); read or edit them at `GET/PUT /api/rec/movies/profile/{person}`.
 - **Tests:** `packages/wishmatch/tests/` (run by `tests/test_wishmatch_core.py`), `tests/test_wishmatch_movies.py`, `tests/test_wishmatch_crowd.py`, `tests/test_wishmatch_profiles.py`, `tests/test_compare_engines.py`.
 - **Remove it:** delete `packages/wishmatch/`, `services/wishmatch_movies/`, the `wishmatch:` section, and set `engine: legacy`.
@@ -140,13 +140,13 @@ flowchart LR
 - **Pages:** Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
 - **Tests:** `tests/test_ranking.py`, `tests/test_disk_guard.py`, `tests/test_download_resume.py`, `tests/test_nl_downloads.py`.
 
-## New & popular (new episodes to download)
+## New & popular (new episodes and films to download)
 
 Guide: [guides/new-episodes.md](guides/new-episodes.md).
-- **What:** new episodes of your shows and popular shows still airing, each with a Download button that starts the best matching copy. All on the server; pages only show it.
+- **What:** new episodes of your shows, popular shows still airing, popular films, and a tab per streaming service (popular shows and films on Netflix, Prime Video...), each with a Download button that starts the best matching copy. Shows start at the next episode in watching order; "Seasons" picks any episode. All on the server; pages only show it.
 - **Files:** `services/nl_new_episodes.py` (lists, which episode to offer, matching copies), `web/routes/nl_new.py` (API).
 - **Pages:** `/nl/new`, `/nl/tv/new`, `/player/new` (`web/routes/nl_pages.py`, templates `templates/nl/new.html`, `templates/nl/tv/new.html`); drawn by `static/nl/new-episodes.js` (web, TV and laptop; started by `static/nl/new-web.js` or `tv.js`). The "New episodes" row on home is `NLNew.homeRow` in the same file. Styles in `nl.css` and `tv.css` (`*-new-*`). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
-- **Settings:** `new_episodes:` in `config.yaml`. Needs the TMDB key (free).
+- **Settings:** `new_episodes:` in `config.yaml`. The service tabs are `providers`, their country is `watch_region` (set yours in `config.local.yaml`). Needs the TMDB key (free).
 - **Tests:** `tests/test_nl_new_episodes.py`.
 
 ## Library and browsing (Northern Lights)
@@ -262,6 +262,7 @@ Guide: [guides/training.md](guides/training.md).
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
 | change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
+| change the streaming-service tabs or their country | `new_episodes.providers` and `watch_region` (country in `config.local.yaml`) |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |
 | change which files play untouched on the TV | `TV_PROFILE` in `services/device_profiles.py` |

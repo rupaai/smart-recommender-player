@@ -173,19 +173,19 @@ class DailyGetBody(BaseModel):
 
 @router.post("/api/nl/daily-picks/download")
 async def nl_daily_pick_download(body: DailyGetBody) -> Dict[str, Any]:
-    """"Get it" on a pick: mars finds the best copy of that film (Best match, same as the Download tab)
-    and starts it. Progress shows on Downloads. The page never sees the torrent link."""
-    from services.nl_film_copies import best_film_copy
+    """"Get it" on a pick: mars finds the best copy of that film and starts it, the same way as a film on
+    the New & popular page (NewEpisodes.pick, kind "movie"). Progress shows on Downloads. The page never
+    sees the torrent link."""
     from web.routes.torrents import start_download
     item = await asyncio.to_thread(state.db.get_item_by_id, body.media_item_id)
-    if not item or item.get("media_type") != "movie":
+    if not item or item.get("media_type") != "movie" or not item.get("tmdb_id"):
         raise HTTPException(status_code=404, detail="That film isn't in the catalogue.")
     try:
-        copy = await asyncio.to_thread(best_film_copy, state.torrent_searcher, item["title"], item.get("release_year"))
+        picked = await asyncio.to_thread(state.nl_new_episodes.pick, int(item["tmdb_id"]), None, None, None, "movie")
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
-    download_id = start_download(body.media_item_id, copy["magnet"], item["title"], "movie")
-    return {"success": True, "download_id": download_id, "release": copy.get("name") or "",
-            "message": f"Downloading {copy.get('name') or item['title']}"}
+    download_id = start_download(body.media_item_id, picked["magnet"], item["title"], "movie")
+    return {"success": True, "download_id": download_id, "release": picked["release"],
+            "message": f"Downloading {picked['release']}"}
