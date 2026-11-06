@@ -301,6 +301,36 @@ def main():
           (texts, asked))
     wm.question_worder = None
 
+    print("\n[11b] Warm-up at server start")
+    from wishmatch import LLMWishReader
+    from wishmatch.questions import trait_choices
+
+    class FakeOllama:
+        def status(self):
+            return {"has_model": True}
+
+    calls = []
+
+    def warm_model(prompt, schema=None, system=""):
+        calls.append("question" if "question" in prompt else "wish")
+        if "question" in prompt:
+            n = json.loads(prompt[prompt.index("["):prompt.index("]") + 1])
+            return json.dumps({"question": "Which one?", "options": [f"Pick {i}" for i in range(len(n))]})
+        return '{"w": [], "a": []}'
+
+    saved = (wm.ollama, wm.reader, wm.question_worder)
+    wm.ollama, wm.reader = FakeOllama(), LLMWishReader(warm_model)
+    wm.question_worder = QuestionWorder(warm_model, wait_seconds=0)
+    first = wm.warm()
+    dials = len(trait_choices(wm.adapter.vocabulary()))
+    check("warm-up words every dial question, then reads one wish last", first["questions_worded"] == dials
+          and first["primed"] and calls[-1] == "wish" and calls.count("question") == dials, (first, calls))
+    check("a worded question is then ready at once", wm.question_worder.known(*trait_choices(wm.adapter.vocabulary())[0]))
+    again = wm.warm()
+    check("a second warm-up only loads the model", again["questions_worded"] == 0 and again["primed"], again)
+    check("the warm-up shows in the status", wm.warmup["state"] == "done")
+    wm.ollama, wm.reader, wm.question_worder = saved
+
     print("\n[12] Decades, 'sci-fi' and genre hints (step 7 fixes)")
     from services.wishmatch_movies.adapter import typed_decade
     check("decades are read", typed_decade("an 80s classic") == (1980, 1989) and typed_decade("1990s thriller") == (1990, 1999)

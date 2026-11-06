@@ -96,6 +96,7 @@ flowchart LR
 - **Film/TV part** (`services/wishmatch_movies/`): `adapter.py` turns catalogue rows into items, `service.py` (`WishmatchMovies`), `session.py` the questions pop-up.
 - **Settings:** `wishmatch:` in `recommender_rules.yaml` (weights, candidate counts, film/show mix, the wish-reader model and its wait time, questions).
 - **Word list:** `services/vibe_vocab.py` (mood dials and feeling words) plus `wishmatch.lexicon` and `wishmatch.genre_hints` in `recommender_rules.yaml`. A word that does nothing goes there.
+- **Speed:** model answers kept in `wishmatch_wishes.json` and `wishmatch_wordings.json` next to the database; warm-up at server start (`WishmatchMovies.warm`, status in `GET /api/rec/status`); time it with `utils/time_wishmatch.py <server>`.
 - **Taste profiles:** `utils/wishmatch_profiles.py` (made at Train time); read or edit them at `GET/PUT /api/rec/movies/profile/{person}`.
 - **Tests:** `packages/wishmatch/tests/` (run by `tests/test_wishmatch_core.py`), `tests/test_wishmatch_movies.py`, `tests/test_wishmatch_crowd.py`, `tests/test_wishmatch_profiles.py`, `tests/test_compare_engines.py`.
 - **Remove it:** delete `packages/wishmatch/`, `services/wishmatch_movies/`, the `wishmatch:` section, and set `engine: legacy`.
@@ -251,6 +252,7 @@ Guide: [guides/training.md](guides/training.md).
 | change films vs shows share | `wishmatch.mix` in `recommender_rules.yaml` |
 | make picks better known / more obscure | `wishmatch.candidates.known` and `min_popularity` |
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
+| load the model at server start / word questions ahead | `wishmatch.wish_reader.warm_at_start`, `wishmatch.questions.preword_at_start` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
 | delete a film or show by hand | "Delete from server" on its page (web or TV) |
 | let poorly rated titles into Wishmatch by default | `wishmatch.default_min_rating` (IMDb score; the "Any rating" chip does it per search) |
