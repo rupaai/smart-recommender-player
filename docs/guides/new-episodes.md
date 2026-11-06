@@ -1,18 +1,20 @@
-# New & popular: new episodes to download
+# New & popular: new episodes and films to download
 
-This part of the player app shows TV episodes that came out recently, so you can download them in one tap.
+This part of the player app shows TV episodes that came out recently, popular films, and what's popular on
+each streaming service (Netflix, Prime Video, Apple TV+ and so on), so you can download them in one tap.
 All the work happens on the server (mars). The TV and the web pages only show the list and send your tap.
 
 ## Where you see it
 
 - **Home** (web, TV and laptop): a "New episodes" row. Your shows come first, then popular ones. Choosing a
   poster opens the New & popular page at that show.
-- **New & popular page**: "New & popular" in the TV and laptop menu, "New" on the web (`/nl/new`). Each show
+- **New & popular page**: "New & popular" in the TV and laptop menu, "New" on the web (`/nl/new`). At the
+  top are tabs: "All" and one per streaming service. The page remembers the last tab. Each show
   has a Download button ("Get S01E01"), "Other copies", "Seasons" and, if it's on the server, "Open show".
   "Seasons" lists every season; pick one to see its episodes (on the server, out, or coming on a date) and
   get any episode, or "Get whole season" once a season has finished. After a tap the button says "Downloading" and links to Downloads.
 
-## The two lists
+## The lists on the All tab
 
 **New episodes of your shows.** A show counts as "yours" when the server has files of it, one of you marked
 it as seen, or it is on someone's Watch later list. A show someone rated below 5 doesn't count. For each one
@@ -31,6 +33,24 @@ deleted after you saw it won't come back as "new".
 
 Shows that fit your taste move up the list; the rest follow TMDB's trending order.
 
+**Popular movies.** Films trending on TMDB this week, with the same rating, genre, language and taste bars.
+Left out: films one of you already marked as seen, and films out less than 30 days (those are usually
+only in cinemas, so there is no copy to get yet).
+
+## The streaming-service tabs
+
+Each tab shows "Shows on Netflix" and "Movies on Netflix" (and so on): the most popular titles TMDB lists
+on that service in your country, with the same rating, genre, language and taste bars. Shows start at
+S1E1 like popular shows; films you've seen are left out. Old titles count too, not only new ones.
+
+The country is `watch_region` (default `US`), because each country's Netflix has different titles. Set
+yours in `config.local.yaml` (or `homelab/config.yaml` on mars):
+
+```yaml
+new_episodes:
+  watch_region: GB
+```
+
 ## What the Download button gets
 
 Always one episode, the next one in watching order, so you can start watching while the rest come:
@@ -43,6 +63,9 @@ Always one episode, the next one in watching order, so you can start watching wh
   the latest season.
 
 A whole season is only downloaded when you choose "Get whole season" in the season list.
+
+**A film**: "Get movie" searches for "Title Year" and keeps copies whose name has the title and a year
+within one of the film's. If none is found it says so: films often show up once they're out to stream or buy.
 
 The server searches for that episode the same way the Download tab does and ranks copies with "Best match"
 (quality, how many people share it, sensible size). It drops copies of a different episode, a different show
@@ -72,10 +95,17 @@ Everything is in `new_episodes:` in `config.yaml`:
 | `skip_genres` | genres never shown in Popular | News, Talk, Reality, Soap, Kids |
 | `cache_hours` | how long TMDB answers are reused | 6 |
 | `list_minutes` | how long a built list is reused | 15 |
+| `movies_max` | cards in Popular movies | 18 |
+| `movie_min_days_out` | how long a trending film must be out | 30 |
+| `watch_region` | country for the service tabs (two letters) | US |
+| `provider_max` | shows and films per section on a service tab | 18 |
+| `providers` | the service tabs: key, name and TMDB watch-provider id | Netflix, Prime Video, Apple TV+, Disney+, Max, Hulu, Paramount+ |
+
+To add a service, add a line under `providers` with its TMDB id (TMDB's "watch providers" list has them).
 
 ## Files
 
-- `services/nl_new_episodes.py`: the lists, which episode to offer, and picking a copy.
-- `web/routes/nl_new.py`: `GET /api/nl/new-episodes`, `GET /api/nl/new-episodes/copies`,
+- `services/nl_new_episodes.py`: the lists, the service tabs, which episode to offer, and picking a copy.
+- `web/routes/nl_new.py`: `GET /api/nl/new-episodes` (`?provider=netflix` for a tab), `GET /api/nl/new-episodes/copies`,
   `GET /api/nl/new-episodes/show/{tmdb_id}/seasons`, `.../season/{n}`, `POST /api/nl/new-episodes/download`.
 - `tests/test_nl_new_episodes.py`.
