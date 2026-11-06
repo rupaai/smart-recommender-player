@@ -139,13 +139,13 @@ flowchart LR
 - **Pages:** Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
 - **Tests:** `tests/test_ranking.py`, `tests/test_disk_guard.py`, `tests/test_download_resume.py`, `tests/test_nl_downloads.py`.
 
-## New & popular (new episodes to download)
+## New & popular (new episodes and films to download)
 
 Guide: [guides/new-episodes.md](guides/new-episodes.md).
-- **What:** new episodes of your shows and popular shows still airing, each with a Download button that starts the best matching copy. All on the server; pages only show it.
+- **What:** new episodes of your shows, popular shows still airing, popular films, and a tab per streaming service (popular shows and films on Netflix, Prime Video...), each with a Download button that starts the best matching copy. Shows start at the next episode in watching order; "Seasons" picks any episode. All on the server; pages only show it.
 - **Files:** `services/nl_new_episodes.py` (lists, which episode to offer, matching copies), `web/routes/nl_new.py` (API).
 - **Pages:** `/nl/new`, `/nl/tv/new`, `/player/new` (`web/routes/nl_pages.py`, templates `templates/nl/new.html`, `templates/nl/tv/new.html`); drawn by `static/nl/new-episodes.js` (web, TV and laptop; started by `static/nl/new-web.js` or `tv.js`). The "New episodes" row on home is `NLNew.homeRow` in the same file. Styles in `nl.css` and `tv.css` (`*-new-*`). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
-- **Settings:** `new_episodes:` in `config.yaml`. Needs the TMDB key (free).
+- **Settings:** `new_episodes:` in `config.yaml`. The service tabs are `providers`, their country is `watch_region` (set yours in `config.local.yaml`). Needs the TMDB key (free).
 - **Tests:** `tests/test_nl_new_episodes.py`.
 
 ## Library and browsing (Northern Lights)
@@ -260,6 +260,7 @@ Guide: [guides/training.md](guides/training.md).
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
 | change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
+| change the streaming-service tabs or their country | `new_episodes.providers` and `watch_region` (country in `config.local.yaml`) |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |
 | change which files play untouched on the TV | `TV_PROFILE` in `services/device_profiles.py` |

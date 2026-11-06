@@ -18,6 +18,9 @@
 
   function offerPayload(card, copyId) {
     var o = card.offer || {};
+    if (card.kind === "movie") {
+      return copyId ? { tmdb_id: card.tmdb_id, kind: "movie", copy_id: copyId } : { tmdb_id: card.tmdb_id, kind: "movie" };
+    }
     var p = { tmdb_id: card.tmdb_id, season: o.season };
     if (o.episode) { p.episode = o.episode; }
     if (copyId) { p.copy_id = copyId; }
@@ -26,6 +29,7 @@
 
   function copiesUrl(card) {
     var o = card.offer || {};
+    if (card.kind === "movie") { return "/api/nl/new-episodes/copies?kind=movie&tmdb_id=" + encodeURIComponent(card.tmdb_id); }
     return "/api/nl/new-episodes/copies?tmdb_id=" + encodeURIComponent(card.tmdb_id) + "&season=" + encodeURIComponent(o.season) +
       (o.episode ? "&episode=" + encodeURIComponent(o.episode) : "");
   }
@@ -176,7 +180,7 @@
 
     function build(card, section) {
       var li = el("li", p + "-new-item");
-      li.id = "show-" + card.tmdb_id;
+      li.id = (card.kind === "movie" ? "movie-" : "show-") + card.tmdb_id;
       var art = el("div", p + "-new-art");
       NL.fillImage(art, [card.poster_url], card.title);
       li.appendChild(art);
@@ -259,12 +263,12 @@
         });
       });
       acts.appendChild(other);
-      var picker = seasonPicker(card, section, msg);
-      acts.appendChild(picker.button);
+      var picker = card.kind === "movie" ? null : seasonPicker(card, section, msg);
+      if (picker) { acts.appendChild(picker.button); }
       if (card.href) { acts.appendChild(link("Open show", "Open " + card.title, card.href, tv ? "tv-btn" : "nl-btn-quiet")); }
       main.appendChild(acts);
       main.appendChild(copiesBox);
-      main.appendChild(picker.box);
+      if (picker) { main.appendChild(picker.box); }
       li.appendChild(main);
       return li;
     }
@@ -283,30 +287,86 @@
         cards.forEach(function (c) { list.appendChild(build(c, id)); });
         box.appendChild(list);
       }
-      host.appendChild(box);
+      body.appendChild(box);
     }
 
-    NL.fetchJSON("/api/nl/new-episodes").then(function (data) {
-      if (!data.enabled) {
-        setStatus(data.note || "New & popular is turned off on the server.");
-        return;
-      }
-      setStatus(data.tmdb === false ? "TMDB isn't answering right now, so this list may be out of date." : "");
-      section("new-yours", "New episodes of your shows", "Shows you have, watched or saved, with an episode you don't have yet.",
-        data.yours || [], "Nothing new from your shows in the last few weeks.");
-      section("new-popular", "Popular right now", "Trending this week, still airing, well rated and your kind of show.",
-        data.popular || [], "No popular shows match right now.");
-      if (tv && global.NLFocus) {
-        var target = (location.hash && document.getElementById(location.hash.slice(1))) || null;
-        var btn = target && target.querySelector("[data-nl-focus]");
-        if (btn) { global.NLFocus.focus(btn); } else { global.NLFocus.start(); }
-      } else if (location.hash) {
-        var spot = document.getElementById(location.hash.slice(1));
-        if (spot) { spot.scrollIntoView(); }
-      }
-    }).catch(function () {
-      setStatus("Could not load new episodes. Is the app running?");
-    });
+    /* Tabs: All, then one per streaming service (the server's list). The chosen tab is remembered. */
+    var tabs = el("div", p + "-new-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Where to look");
+    if (tv) { tabs.setAttribute("data-nl-row", "new-tabs"); }
+    var body = el("div", p + "-new-body");
+    host.appendChild(tabs);
+    host.appendChild(body);
+    var current = "";
+    try { current = global.localStorage.getItem("nl.new.tab") || ""; } catch (e) { current = ""; }
+    var first = true;
+
+    function drawTabs(providers) {
+      tabs.textContent = "";
+      [{ key: "", name: "All" }].concat(providers || []).forEach(function (pv) {
+        var t = button(pv.name, pv.key ? "Popular on " + pv.name : "Everything", tv ? "tv-pill" : "nl-chip");
+        t.setAttribute("role", "tab");
+        t.setAttribute("aria-selected", String(pv.key === current));
+        t.setAttribute("aria-pressed", String(pv.key === current));
+        t.addEventListener("click", function () {
+          if (pv.key === current) { return; }
+          current = pv.key;
+          try { global.localStorage.setItem("nl.new.tab", current); } catch (e) { /* private mode */ }
+          load(t);
+        });
+        tabs.appendChild(t);
+      });
+    }
+
+    function load(focusTab) {
+      body.textContent = "";
+      setStatus("Loading…");
+      var url = "/api/nl/new-episodes" + (current ? "?provider=" + encodeURIComponent(current) : "");
+      NL.fetchJSON(url).then(function (data) {
+        if (!data.enabled) {
+          setStatus(data.note || "New & popular is turned off on the server.");
+          return;
+        }
+        drawTabs(data.providers);
+        setStatus(data.tmdb === false ? "TMDB isn't answering right now, so this list may be out of date." : "");
+        if (current) {
+          var where = data.provider + (data.region ? " (" + data.region + ")" : "");
+          section("new-shows", "Shows on " + data.provider, "Popular on " + where + ", well rated. Download starts at the first episode.",
+            data.shows || [], "No shows on " + data.provider + " match right now.");
+          section("new-movies", "Movies on " + data.provider, "Popular on " + where + ", well rated, ones you haven't seen.",
+            data.movies || [], "No films on " + data.provider + " match right now.");
+        } else {
+          section("new-yours", "New episodes of your shows", "Shows you have, watched or saved, with an episode you don't have yet.",
+            data.yours || [], "Nothing new from your shows in the last few weeks.");
+          section("new-popular", "Popular shows", "Trending this week, still airing, well rated and your kind of show.",
+            data.popular || [], "No popular shows match right now.");
+          section("new-movies", "Popular movies", "Trending this week, out a while, well rated, ones you haven't seen.",
+            data.movies || [], "No popular films match right now.");
+        }
+        if (tv && global.NLFocus) {
+          var target = (first && location.hash && document.getElementById(location.hash.slice(1))) || null;
+          var btn = target && target.querySelector("[data-nl-focus]");
+          var tab = tabs.querySelector('[aria-selected="true"]');
+          if (btn) { global.NLFocus.focus(btn); } else if (focusTab && tab) { global.NLFocus.focus(tab); } else { global.NLFocus.start(); }
+        } else if (first && location.hash) {
+          var spot = document.getElementById(location.hash.slice(1));
+          if (spot) { spot.scrollIntoView(); }
+        }
+        first = false;
+      }).catch(function (e) {
+        if (current && e.status === 404) {   // a tab that was removed from the settings
+          current = "";
+          try { global.localStorage.removeItem("nl.new.tab"); } catch (e2) { /* private mode */ }
+          load(false);
+          return;
+        }
+        setStatus("Could not load new episodes. Is the app running?");
+      });
+    }
+    // A link to one show (#show-123, from the home row) opens on All, where that show is.
+    if (location.hash) { current = ""; }
+    load(false);
   }
 
   /* The "New episodes" row on the home pages: posters that open the New & popular page at that show. Your shows

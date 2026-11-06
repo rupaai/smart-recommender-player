@@ -47,6 +47,20 @@ DEFAULTS: Dict[str, Any] = {
     "workers": 6,               # TMDB lookups at once
     "copies_max": 12,           # copies listed under "Choose another copy"
     "list_minutes": 15,         # a built page is reused this long per viewer
+    "movies_max": 18,           # cards in Popular movies (and per service)
+    "movie_min_days_out": 30,   # a trending film must have come out at least this long ago (cinema-only films have no copies)
+    "watch_region": "US",       # the country whose streaming catalogues the service tabs show (TMDB, two letters)
+    "provider_max": 18,         # cards per section on a service tab
+    # The service tabs: TMDB watch-provider ids. Names are what the tab says.
+    "providers": [
+        {"key": "netflix", "name": "Netflix", "id": 8},
+        {"key": "prime", "name": "Prime Video", "id": 9},
+        {"key": "apple", "name": "Apple TV+", "id": 350},
+        {"key": "disney", "name": "Disney+", "id": 337},
+        {"key": "max", "name": "Max", "id": 1899},
+        {"key": "hulu", "name": "Hulu", "id": 15},
+        {"key": "paramount", "name": "Paramount+", "id": 531},
+    ],
 }
 
 _SEASON_PACK_RE = re.compile(r"(?i)(?:\bs(\d{1,2})(?![\d]|\s*[-._ ]?\s*e\d)|\bseason[\s._-]*(\d{1,2})\b)")
@@ -246,6 +260,7 @@ def card_base(details: Dict[str, Any], media_item_id: Optional[int], in_library:
     first = parse_day(details.get("first_air_date"))
     networks = [n.get("name") for n in details.get("networks") or [] if n.get("name")]
     return {
+        "kind": "tv",
         "tmdb_id": int(details["id"]),
         "media_item_id": media_item_id,
         "title": details.get("name") or details.get("original_name") or "",
@@ -260,6 +275,48 @@ def card_base(details: Dict[str, Any], media_item_id: Optional[int], in_library:
         "in_library": in_library,
         "href": f"/nl/show/{media_item_id}" if (media_item_id and in_library) else None,
     }
+
+
+def movie_card(details: Dict[str, Any], media_item_id: Optional[int], today: date) -> Dict[str, Any]:
+    """A film's card: same fields as a show's, with a movie offer ("Get movie")."""
+    out_day = parse_day(details.get("release_date"))
+    genres = [g.get("name") for g in details.get("genres") or [] if g.get("name")]
+    runtime = details.get("runtime")
+    line = f"Out {nice_day(out_day, today)}" if out_day and (today - out_day).days < 120 else (str(out_day.year) if out_day else "")
+    if runtime:
+        line += f" · {runtime // 60} h {runtime % 60} min" if runtime >= 60 else f" · {runtime} min"
+    return {
+        "kind": "movie",
+        "tmdb_id": int(details["id"]),
+        "media_item_id": media_item_id,
+        "title": details.get("title") or details.get("original_title") or "",
+        "year": out_day.year if out_day else None,
+        "overview": details.get("overview") or "",
+        "rating": round(float(details.get("vote_average") or 0.0), 1),
+        "vote_count": int(details.get("vote_count") or 0),
+        "genres": genres,
+        "network": None,
+        "poster_url": f"{IMAGE_BASE}w342{details['poster_path']}" if details.get("poster_path") else None,
+        "backdrop_url": f"{IMAGE_BASE}w780{details['backdrop_path']}" if details.get("backdrop_path") else None,
+        "in_library": False,
+        "href": None,
+        "offer": {"kind": "movie", "season": None, "episode": None, "label": "Get movie", "status_line": line.strip(" ·")},
+    }
+
+
+def movie_copy_matches(name: str, title: str, year: Optional[int]) -> bool:
+    """Is this release the film: every title word before the year, the right year (a year either side for
+    festival vs release dates), and no episode tag."""
+    if _EPISODE_RE.search(name.lower()):
+        return False
+    m = re.search(r"(?<!\d)(19\d\d|20\d\d)(?!\d)", name)
+    head = name[: m.start()] if m else name
+    words = name_words(title)
+    if words and not words <= name_words(head):
+        return False
+    if year and m and abs(int(m.group(1)) - int(year)) > 1:
+        return False
+    return True
 
 
 def popular_order(cards: List[Dict[str, Any]], taste_weight: float) -> List[Dict[str, Any]]:
@@ -315,30 +372,51 @@ class NewEpisodes:
         self._copies: Dict[str, Dict[str, Any]] = {}
         self._built: Dict[Tuple[int, ...], Tuple[float, Dict[str, Any]]] = {}
         self._seasons: Dict[Tuple[int, int], Tuple[float, Dict[str, Any]]] = {}
+        self._lists: Dict[Any, Tuple[float, List[int]]] = {}
         self._lock = threading.Lock()
 
     # --- TMDB, cached ---------------------------------------------------------
     def _fresh(self, at: float) -> bool:
         return self.clock() - at < float(self.cfg["cache_hours"]) * 3600
 
-    def details(self, tmdb_id: int) -> Optional[Dict[str, Any]]:
+    def details(self, tmdb_id: int, kind: str = "tv") -> Optional[Dict[str, Any]]:
+        key: Any = int(tmdb_id) if kind == "tv" else ("movie", int(tmdb_id))
         with self._lock:
-            hit = self._details.get(int(tmdb_id))
+            hit = self._details.get(key)
         if hit and self._fresh(hit[0]):
             return hit[1]
-        data = self.tmdb_get(f"/tv/{int(tmdb_id)}")
+        data = self.tmdb_get(f"/{'tv' if kind == 'tv' else 'movie'}/{int(tmdb_id)}")
         if data is not None or not hit:
             with self._lock:
-                self._details[int(tmdb_id)] = (self.clock(), data)
+                self._details[key] = (self.clock(), data)
             return data
         return hit[1]   # TMDB down: the last answer is better than nothing
 
-    def _many(self, ids: Iterable[int]) -> Dict[int, Optional[Dict[str, Any]]]:
+    def _many(self, ids: Iterable[int], kind: str = "tv") -> Dict[int, Optional[Dict[str, Any]]]:
         ids = list(dict.fromkeys(int(i) for i in ids))
         if not ids:
             return {}
         with ThreadPoolExecutor(max_workers=max(1, int(self.cfg["workers"]))) as pool:
-            return dict(zip(ids, pool.map(self.details, ids)))
+            return dict(zip(ids, pool.map(lambda i: self.details(i, kind), ids)))
+
+    def _cached_list(self, path: str, params: Dict[str, Any], pages: int = 1) -> List[int]:
+        """TMDB ids from a list call (trending, discover), cached like the details."""
+        key = (path, tuple(sorted(params.items())), pages)
+        with self._lock:
+            hit = self._lists.get(key)
+        if hit and self._fresh(hit[0]):
+            return hit[1]
+        out: List[int] = []
+        for page in range(1, pages + 1):
+            data = self.tmdb_get(path, {**params, "page": page})
+            if not data:
+                break
+            out.extend(int(r["id"]) for r in data.get("results") or [] if r.get("id"))
+        if out:
+            with self._lock:
+                self._lists[key] = (self.clock(), list(dict.fromkeys(out)))
+            return self._lists[key][1]
+        return hit[1] if hit else []
 
     def trending_ids(self) -> List[int]:
         at, ids = self._trending
@@ -393,25 +471,41 @@ class NewEpisodes:
                 "AND season_number IS NOT NULL AND episode_number IS NOT NULL", (media_item_id,)).fetchall()
         return {(int(r[0]), int(r[1])) for r in rows}
 
-    def _catalogue_ids(self, tmdb_ids: List[int]) -> Dict[int, Tuple[int, bool]]:
+    def _catalogue_ids(self, tmdb_ids: List[int], kind: str = "tv") -> Dict[int, Tuple[int, bool]]:
         if not tmdb_ids:
             return {}
         marks = ",".join("?" * len(tmdb_ids))
         with self.db.get_connection() as conn:
             rows = conn.execute(
                 f"SELECT mi.tmdb_id, mi.id, EXISTS(SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id) "
-                f"FROM media_items mi WHERE mi.media_type = 'tv' AND mi.tmdb_id IN ({marks})", tmdb_ids).fetchall()
+                f"FROM media_items mi WHERE mi.media_type = ? AND mi.tmdb_id IN ({marks})",
+                ["tv" if kind == "tv" else "movie", *tmdb_ids]).fetchall()
         return {int(r[0]): (int(r[1]), bool(r[2])) for r in rows}
 
     # --- the lists ------------------------------------------------------------
-    def lists(self, profile_ids: List[int], fresh: bool = False) -> Dict[str, Any]:
-        """Both lists for these people, reused for `list_minutes` (a download clears it)."""
-        key = tuple(profile_ids)
+    def providers(self) -> List[Dict[str, Any]]:
+        """The service tabs (key and name), as configured."""
+        out = []
+        for p in self.cfg.get("providers") or []:
+            if isinstance(p, dict) and p.get("key") and p.get("id"):
+                out.append({"key": str(p["key"]), "name": str(p.get("name") or p["key"]), "id": int(p["id"])})
+        return out
+
+    def lists(self, profile_ids: List[int], fresh: bool = False, provider: Optional[str] = None) -> Dict[str, Any]:
+        """The lists for these people, reused for `list_minutes` (a download clears it). With no provider:
+        your shows, popular shows and popular movies. With a provider (a tab's key): what's popular on that
+        service, shows and movies."""
+        key = (tuple(profile_ids), provider or "")
         with self._lock:
             hit = self._built.get(key)
         if hit and not fresh and self.clock() - hit[0] < float(self.cfg["list_minutes"]) * 60:
             return hit[1]
-        out = self._build(profile_ids)
+        if provider:
+            out = self._build_provider(profile_ids, provider)
+        else:
+            out = self._build(profile_ids)
+        out["providers"] = [{"key": p["key"], "name": p["name"]} for p in self.providers()]
+        out["region"] = str(self.cfg.get("watch_region") or "")
         with self._lock:
             self._built[key] = (self.clock(), out)
         return out
@@ -420,10 +514,102 @@ class NewEpisodes:
         with self._lock:
             self._built.clear()
 
+    # --- shared filters -------------------------------------------------------
+    def _passes(self, d: Dict[str, Any]) -> bool:
+        """Well rated, enough votes, not a skipped genre, and through the foreign-title bar."""
+        cfg = self.cfg
+        if float(d.get("vote_average") or 0) < float(cfg["min_rating"]) or int(d.get("vote_count") or 0) < int(cfg["min_votes"]):
+            return False
+        skip = {str(g).lower() for g in cfg.get("skip_genres") or []}
+        if {str(g.get("name") or "").lower() for g in d.get("genres") or []} & skip:
+            return False
+        if self.foreign_gate and not self.foreign_gate({"original_language": d.get("original_language"),
+                                                        "rating": d.get("vote_average"), "vote_count": d.get("vote_count")}):
+            return False
+        return True
+
+    def _taste_filter(self, cards: List[Dict[str, Any]], profile_ids: List[int], kind: str, limit: int,
+                      fit_why: Optional[str]) -> List[Dict[str, Any]]:
+        """Drop what clearly doesn't fit your taste, order by taste and rank, keep `limit`."""
+        if self.taste and cards:
+            ids = [c["media_item_id"] for c in cards if c["media_item_id"]]
+            try:
+                scores = self.taste(ids, profile_ids) if ids else {}
+            except Exception as e:  # noqa: BLE001 - taste is a bonus; the list works without it
+                print(f"[NewEpisodes] taste scores failed ({e}); popularity order only.", flush=True)
+                scores = {}
+            floor = float(self.cfg["min_taste"])
+            kept = []
+            for c in cards:
+                sc = scores.get(c["media_item_id"]) if c["media_item_id"] else None
+                if sc is not None and sc < floor:
+                    continue
+                c["taste"] = None if sc is None else round(float(sc), 2)
+                if fit_why and sc is not None and sc > 0.15:
+                    c["why"] = fit_why
+                kept.append(c)
+            cards = kept
+        cards = popular_order(cards, float(self.cfg["taste_weight"]))[:limit]
+        for c in cards:
+            c.pop("_rank", None)
+        return cards
+
+    def _seen_movies(self, profile_ids: List[int]) -> Set[int]:
+        """TMDB ids of films one of these people saw, or that are on the server."""
+        marks = ",".join("?" * len(profile_ids)) or "NULL"
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT mi.tmdb_id FROM media_items mi WHERE mi.media_type = 'movie' AND mi.tmdb_id IS NOT NULL AND ("
+                f"EXISTS(SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id) OR "
+                f"EXISTS(SELECT 1 FROM watch_history wh WHERE wh.media_item_id = mi.id AND wh.status = 'seen' "
+                f"AND wh.profile_id IN ({marks})))", list(profile_ids)).fetchall()
+        return {int(r[0]) for r in rows}
+
+    def _movie_cards(self, tmdb_ids: List[int], profile_ids: List[int], why: str, min_days: int) -> List[Dict[str, Any]]:
+        today = self.today()
+        seen = self._seen_movies(profile_ids)
+        ids = [t for t in tmdb_ids if t not in seen]
+        details = self._many(ids, "movie")
+        known = self._catalogue_ids(ids, "movie")
+        cards = []
+        for rank, tmdb_id in enumerate(ids):
+            d = details.get(tmdb_id)
+            if not d or not self._passes(d):
+                continue
+            out_day = parse_day(d.get("release_date"))
+            if not out_day or (today - out_day).days < int(min_days):
+                continue
+            card = movie_card(d, known.get(tmdb_id, (None, False))[0], today)
+            card.update(why=why, _rank=rank, taste=None)
+            cards.append(card)
+        return cards
+
+    def _show_cards(self, tmdb_ids: List[int], profile_ids: List[int], why: str, recent_days: int,
+                    skip: Set[int]) -> List[Dict[str, Any]]:
+        today = self.today()
+        ids = [t for t in tmdb_ids if t not in skip]
+        details = self._many(ids)
+        known = self._catalogue_ids(ids)
+        cards = []
+        for rank, tmdb_id in enumerate(ids):
+            d = details.get(tmdb_id)
+            if not d or not self._passes(d):
+                continue
+            item_id, in_lib = known.get(tmdb_id, (None, False))
+            have = self.had_episodes(item_id) if item_id else set()
+            offer = latest_offer(d, have, today, recent_days, "continue" if have else "beginning")
+            if not offer:
+                continue
+            card = card_base(d, item_id, in_lib)
+            card.update(offer=offer, why=why, _rank=rank, taste=None)
+            cards.append(card)
+        return cards
+
+    # --- the lists ------------------------------------------------------------
     def _build(self, profile_ids: List[int]) -> Dict[str, Any]:
         cfg = self.cfg
         if not cfg.get("enabled", True):
-            return {"enabled": False, "yours": [], "popular": [], "tmdb": True}
+            return {"enabled": False, "yours": [], "popular": [], "movies": [], "tmdb": True}
         today = self.today()
         mine = self.your_shows(profile_ids)
         trending = self.trending_ids()
@@ -447,50 +633,33 @@ class NewEpisodes:
                 yours.append(card)
         yours.sort(key=lambda c: c["offer"]["latest"]["air_date"], reverse=True)
 
-        skip = {str(g).lower() for g in cfg.get("skip_genres") or []}
-        known = self._catalogue_ids([t for t in trending if t not in mine_tmdb])
-        popular: List[Dict[str, Any]] = []
-        for rank, tmdb_id in enumerate(t for t in trending if t not in mine_tmdb):
-            d = details.get(tmdb_id)
-            if not d:
-                continue
-            if float(d.get("vote_average") or 0) < float(cfg["min_rating"]) or int(d.get("vote_count") or 0) < int(cfg["min_votes"]):
-                continue
-            genres = {str(g.get("name") or "").lower() for g in d.get("genres") or []}
-            if genres & skip:
-                continue
-            if self.foreign_gate and not self.foreign_gate({"original_language": d.get("original_language"),
-                                                            "rating": d.get("vote_average"), "vote_count": d.get("vote_count")}):
-                continue
-            offer = latest_offer(d, set(), today, int(cfg["recent_days"]), "beginning")
-            if not offer:
-                continue
-            item_id, in_lib = known.get(tmdb_id, (None, False))
-            card = card_base(d, item_id, in_lib)
-            card.update(offer=offer, why="Trending this week", _rank=rank, taste=None)
-            popular.append(card)
-        if self.taste and popular:
-            ids = [c["media_item_id"] for c in popular if c["media_item_id"]]
-            try:
-                scores = self.taste(ids, profile_ids) if ids else {}
-            except Exception as e:  # noqa: BLE001 - taste is a bonus; the list works without it
-                print(f"[NewEpisodes] taste scores failed ({e}); trending order only.", flush=True)
-                scores = {}
-            floor = float(cfg["min_taste"])
-            kept = []
-            for c in popular:
-                s = scores.get(c["media_item_id"]) if c["media_item_id"] else None
-                if s is not None and s < floor:
-                    continue
-                c["taste"] = None if s is None else round(float(s), 2)
-                if s is not None and s > 0.15:
-                    c["why"] = "Trending, and your kind of show"
-                kept.append(c)
-            popular = kept
-        popular = popular_order(popular, float(cfg["taste_weight"]))[: int(cfg["popular_max"])]
-        for c in popular:
-            c.pop("_rank", None)
-        return {"enabled": True, "yours": yours, "popular": popular, "tmdb": tmdb_ok}
+        popular = self._show_cards(trending, profile_ids, "Trending this week", int(cfg["recent_days"]), mine_tmdb)
+        popular = self._taste_filter(popular, profile_ids, "tv", int(cfg["popular_max"]), "Trending, and your kind of show")
+        movie_ids = self._cached_list("/trending/movie/week", {}, int(cfg["popular_pages"]))
+        movies = self._movie_cards(movie_ids, profile_ids, "Trending this week", int(cfg["movie_min_days_out"]))
+        movies = self._taste_filter(movies, profile_ids, "movie", int(cfg["movies_max"]), "Trending, and your kind of film")
+        return {"enabled": True, "yours": yours, "popular": popular, "movies": movies, "tmdb": tmdb_ok}
+
+    def _build_provider(self, profile_ids: List[int], key: str) -> Dict[str, Any]:
+        """Popular shows and films on one streaming service in `watch_region` (TMDB discover)."""
+        cfg = self.cfg
+        prov = next((p for p in self.providers() if p["key"] == key), None)
+        if prov is None:
+            raise LookupError("There is no tab for that service.")
+        if not cfg.get("enabled", True):
+            return {"enabled": False, "provider": prov["name"], "shows": [], "movies": [], "tmdb": True}
+        params = {"with_watch_providers": prov["id"], "watch_region": str(cfg.get("watch_region") or "US"),
+                  "sort_by": "popularity.desc", "vote_average.gte": cfg["min_rating"], "vote_count.gte": cfg["min_votes"]}
+        show_ids = self._cached_list("/discover/tv", params, int(cfg["popular_pages"]))
+        movie_ids = self._cached_list("/discover/movie", params, int(cfg["popular_pages"]))
+        why = f"Popular on {prov['name']}"
+        # Any aired show counts here (not only ones with a new episode): it's what's on the service.
+        shows = self._show_cards(show_ids, profile_ids, why, 365 * 100, set())
+        shows = self._taste_filter(shows, profile_ids, "tv", int(cfg["provider_max"]), f"{why}, and your kind of show")
+        movies = self._movie_cards(movie_ids, profile_ids, why, 0)
+        movies = self._taste_filter(movies, profile_ids, "movie", int(cfg["provider_max"]), f"{why}, and your kind of film")
+        return {"enabled": True, "provider": prov["name"], "shows": shows, "movies": movies,
+                "tmdb": bool(show_ids or movie_ids)}
 
     # --- the season picker ----------------------------------------------------
     def _have_for(self, tmdb_id: int) -> Set[Tuple[int, int]]:
@@ -527,21 +696,32 @@ class NewEpisodes:
                 and any(not e["have"] for e in aired)}
 
     # --- downloading ----------------------------------------------------------
-    def _title(self, tmdb_id: int) -> str:
-        d = self.details(tmdb_id)
+    def _title(self, tmdb_id: int, kind: str = "tv") -> str:
+        d = self.details(tmdb_id, kind)
         if not d:
-            raise LookupError("TMDB doesn't know that show (or TMDB can't be reached right now).")
-        return d.get("name") or d.get("original_name") or ""
+            what = "show" if kind == "tv" else "film"
+            raise LookupError(f"TMDB doesn't know that {what} (or TMDB can't be reached right now).")
+        return (d.get("name") or d.get("original_name") or "") if kind == "tv" else (d.get("title") or d.get("original_title") or "")
 
-    def copies(self, tmdb_id: int, season: int, episode: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Copies of this episode (or season) of this show, best first. Each has a `copy_id`; the magnet
-        link stays here."""
+    def copies(self, tmdb_id: int, season: Optional[int] = None, episode: Optional[int] = None,
+               kind: str = "tv") -> List[Dict[str, Any]]:
+        """Copies of this episode (or season) of this show, or of this film, best first. Each has a
+        `copy_id`; the magnet link stays here."""
         if self.searcher is None:
             raise RuntimeError("Downloading isn't set up on this server.")
-        title = self._title(tmdb_id)
-        query = f"{title} {episode_code(season, episode)}"
-        results = self.searcher.search(query, media_type="tv", sort="best") or []
-        matched = [r for r in results if r.get("magnet") and copy_matches(r.get("name") or "", title, season, episode)]
+        title = self._title(tmdb_id, kind)
+        if kind == "movie":
+            d = self.details(tmdb_id, "movie") or {}
+            day = parse_day(d.get("release_date"))
+            year = day.year if day else None
+            results = self.searcher.search(f"{title} {year or ''}".strip(), media_type="movie", sort="best") or []
+            matched = [r for r in results if r.get("magnet") and movie_copy_matches(r.get("name") or "", title, year)]
+        else:
+            if not season:
+                raise LookupError("Which season?")
+            query = f"{title} {episode_code(season, episode)}"
+            results = self.searcher.search(query, media_type="tv", sort="best") or []
+            matched = [r for r in results if r.get("magnet") and copy_matches(r.get("name") or "", title, season, episode)]
         out = []
         now = self.clock()
         with self._lock:
@@ -549,45 +729,45 @@ class NewEpisodes:
                 del self._copies[key]
             for r in matched[: int(self.cfg["copies_max"])]:
                 copy_id = uuid.uuid4().hex[:16]
-                self._copies[copy_id] = {"at": now, "magnet": r["magnet"], "name": r.get("name") or "",
+                self._copies[copy_id] = {"at": now, "magnet": r["magnet"], "name": r.get("name") or "", "kind": kind,
                                          "tmdb_id": int(tmdb_id), "season": season, "episode": episode}
                 out.append({"copy_id": copy_id, "name": r.get("name") or "", "quality": r.get("quality"),
                             "size": r.get("size_display") or "", "seeds": int(r.get("seeds") or 0),
                             "score": r.get("score")})
         return out
 
-    def catalogue_item(self, tmdb_id: int) -> int:
-        """Our id for the show, adding it to the catalogue from TMDB when it isn't there yet."""
+    def catalogue_item(self, tmdb_id: int, kind: str = "tv") -> int:
+        """Our id for the show or film, adding it to the catalogue from TMDB when it isn't there yet."""
         from services.catalogue_search import tmdb_details_to_row
-        found = self._catalogue_ids([int(tmdb_id)]).get(int(tmdb_id))
+        found = self._catalogue_ids([int(tmdb_id)], kind).get(int(tmdb_id))
         if found:
             return found[0]
-        d = self.details(tmdb_id)
+        d = self.details(tmdb_id, kind)
         if not d:
-            raise LookupError("TMDB doesn't know that show (or TMDB can't be reached right now).")
-        self.db.upsert_catalogue_items([tmdb_details_to_row(d, "tv")])
-        found = self._catalogue_ids([int(tmdb_id)]).get(int(tmdb_id))
+            raise LookupError("TMDB doesn't know that title (or TMDB can't be reached right now).")
+        self.db.upsert_catalogue_items([tmdb_details_to_row(d, kind)])
+        found = self._catalogue_ids([int(tmdb_id)], kind).get(int(tmdb_id))
         if not found:
-            raise LookupError("Could not add the show to the catalogue.")
+            raise LookupError("Could not add the title to the catalogue.")
         return found[0]
 
-    def pick(self, tmdb_id: int, season: int, episode: Optional[int] = None,
-             copy_id: Optional[str] = None) -> Dict[str, Any]:
-        """The copy to download: the chosen one, else the best match. Returns magnet, show title, our id."""
-        chosen = None
+    def pick(self, tmdb_id: int, season: Optional[int] = None, episode: Optional[int] = None,
+             copy_id: Optional[str] = None, kind: str = "tv") -> Dict[str, Any]:
+        """The copy to download: the chosen one, else the best match. Returns magnet, title, our id, kind."""
         if copy_id:
             with self._lock:
                 chosen = self._copies.get(copy_id)
-            if not chosen or chosen["tmdb_id"] != int(tmdb_id):
+            if not chosen or chosen["tmdb_id"] != int(tmdb_id) or chosen.get("kind", "tv") != kind:
                 raise LookupError("That copy is no longer in the list. Open the copies again.")
-            title = self._title(tmdb_id)
         else:
-            found = self.copies(tmdb_id, season, episode)
+            found = self.copies(tmdb_id, season, episode, kind)
             if not found:
+                if kind == "movie":
+                    raise LookupError("No copy of this film found yet. Films often show up once they're out to stream or buy.")
                 what = f"episode {episode_code(season, episode)}" if episode else f"season {season}"
                 raise LookupError(f"No copy of {what} found yet. New episodes often show up a few hours after they air.")
             with self._lock:
                 chosen = self._copies[found[0]["copy_id"]]
-            title = self._title(tmdb_id)
-        item_id = self.catalogue_item(tmdb_id)
-        return {"magnet": chosen["magnet"], "release": chosen["name"], "title": title, "media_item_id": item_id}
+        title = self._title(tmdb_id, kind)
+        item_id = self.catalogue_item(tmdb_id, kind)
+        return {"magnet": chosen["magnet"], "release": chosen["name"], "title": title, "media_item_id": item_id, "kind": kind}

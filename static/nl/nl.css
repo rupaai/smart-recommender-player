@@ -415,3 +415,5 @@ a.nl-health-part:hover { text-decoration-color: currentColor; }
 .nl-new-episodes { display: grid; gap: 8px; margin-top: 10px; }
 .nl-new-ep-row { display: flex; align-items: center; gap: 10px; }
 .nl-new-ep-state { flex: none; min-width: 72px; color: var(--text-2); font-size: 0.85rem; font-weight: 600; }
+.nl-new-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 12px; scrollbar-width: none; }
+.nl-new-tabs::-webkit-scrollbar { display: none; }
