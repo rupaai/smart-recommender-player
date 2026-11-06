@@ -77,6 +77,14 @@ class FakeTMDB:
             return None
         if path == "/trending/tv/week":
             return {"results": [{"id": i} for i in TRENDING]} if (params or {}).get("page") == 1 else {"results": []}
+        if path.startswith("/tv/") and "/season/" in path:
+            tid, n = int(path.split("/")[2]), int(path.split("/")[4])
+            if tid != 500 or n not in (1, 2):
+                return None
+            eps = 3 if n == 1 else 8
+            return {"name": f"Season {n}", "episodes": [
+                {"episode_number": e, "name": f"Ep {e}", "air_date": day(-30 + e) if n == 1 else day(-3 + e), "runtime": 50}
+                for e in range(1, eps + 1)]}
         if path.startswith("/tv/"):
             return SHOWS.get(int(path.split("/")[2]))
         return None
@@ -126,12 +134,23 @@ def test_pure():
     check("airing season: the first missing episode", o and o["kind"] == "episode" and o["season"] == 2 and o["episode"] == 2, o)
     check("missing episodes listed", o and o["missing"] == [2, 3], o)
     check("status line says what came out, the next one and how many are new",
-          o and o["status_line"] == "S02E03 out 3 Nov · next 10 Nov · 2 new for you", o and o["status_line"])
+          o and o["status_line"] == "S02E03 out 3 Nov · next 10 Nov · 2 to watch", o and o["status_line"])
     check("nothing when you have them all", ne.latest_offer(SHOWS[500], {(2, 1), (2, 2), (2, 3)}, TODAY, 45) is None)
     check("nothing when the latest episode is old", ne.latest_offer(SHOWS[501], set(), TODAY, 45) is None)
     o = ne.latest_offer(SHOWS[600], set(), TODAY, 45)
-    check("finished season, several missing: the whole season", o and o["kind"] == "season" and o["episode"] is None
-          and o["label"] == "Get season 3" and o["status_line"] == "Season 3 finished 26 Oct", o)
+    check("finished season, watched elsewhere: its first episode, never a whole season by default",
+          o and o["kind"] == "episode" and o["season"] == 3 and o["episode"] == 1 and o["label"] == "Get S03E01"
+          and o["status_line"] == "Season 3 finished 26 Oct · 8 to watch", o)
+    o = ne.latest_offer(SHOWS[600], set(), TODAY, 45, "beginning")
+    check("a show you never had starts from S1E1, even when it is on season 3",
+          o and (o["season"], o["episode"]) == (1, 1) and o["status_line"] == "Season 3 finished 26 Oct · start from S01E01"
+          and o["to_get"] == 24, o)
+    o = ne.latest_offer(SHOWS[500], {(1, 1), (1, 3), (2, 1)}, TODAY, 45, "continue")
+    check("with files: the first gap in watching order (S01E02 before S02E02)", o and (o["season"], o["episode"]) == (1, 2), o)
+    o = ne.latest_offer(SHOWS[500], {(2, 1)}, TODAY, 45, "continue")
+    check("with files from season 2 only: on from there, not back to S1E1", o and (o["season"], o["episode"]) == (2, 2), o)
+    check("aired episodes in order, latest season only up to the last aired one",
+          ne.aired_episodes(SHOWS[500]) == [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3)], ne.aired_episodes(SHOWS[500]))
     o = ne.latest_offer(SHOWS[600], {(3, e) for e in range(1, 8)}, TODAY, 45)
     check("finished season, one missing: that episode", o and o["kind"] == "episode" and o["episode"] == 8, o)
     check("no air date or a future one: nothing",
@@ -210,8 +229,9 @@ def run(tmp):
     check("Sigma offers S02E02 and links to its show page",
           yours["Sigma"]["offer"]["label"] == "Get S02E02" and yours["Sigma"]["href"] == f"/nl/show/{sigma}"
           and yours["Sigma"]["in_library"], yours["Sigma"])
-    check("a show without files has no show page link and offers the whole finished season",
-          yours["Later Show"]["href"] is None and yours["Later Show"]["offer"]["kind"] == "season", yours["Later Show"])
+    check("a Watch later show without files has no show page link and starts from S1E1",
+          yours["Later Show"]["href"] is None and yours["Later Show"]["offer"]["label"] == "Get S01E01"
+          and yours["Later Show"]["why"] == "On your Watch later list", yours["Later Show"])
     check("newest first", [c["title"] for c in data["yours"]] == ["Sigma", "Later Show"])
 
     print("popular right now")
@@ -222,6 +242,8 @@ def run(tmp):
     check("a good taste fit ranks first and says why", titles[0] == "Just Right"
           and data["popular"][0]["why"] == "Trending, and your kind of show", data["popular"][0])
     check("taste asked for the viewer", taste_calls and taste_calls[0][1] == [profile], taste_calls)
+    bright = [c for c in data["popular"] if c["title"] == "The Bright Shore"][0]
+    check("a popular show on season 3 offers S01E01", bright["offer"]["label"] == "Get S01E01", bright["offer"])
     check("TMDB images, no keys", data["popular"][0]["poster_url"].startswith("https://image.tmdb.org/t/p/w342/"))
     check("no internal fields leak", all("_rank" not in c for c in data["popular"]))
 
@@ -294,6 +316,21 @@ def run(tmp):
     r = client.post("/api/nl/new-episodes/download", json={"tmdb_id": 500, "season": 0})
     check("bad numbers are refused", r.status_code == 422, r.text)
 
+    print("the season picker")
+    r = client.get("/api/nl/new-episodes/show/500/seasons")
+    seasons = r.json().get("seasons") or []
+    check("seasons with aired and had counts", r.status_code == 200 and [(x["season"], x["aired"], x["have"]) for x in seasons]
+          == [(1, 3, 3), (2, 3, 1)], seasons)
+    r = client.get("/api/nl/new-episodes/show/500/season/2")
+    eps = r.json().get("episodes") or []
+    check("a season's episodes say aired and had", r.status_code == 200 and len(eps) == 8 and eps[0]["have"] and not eps[1]["have"]
+          and eps[2]["aired"] and not eps[3]["aired"] and eps[1]["code"] == "S02E02", eps[:4])
+    check("an unfinished season can't be fetched whole", r.json().get("can_get_season") is False, r.json().get("can_get_season"))
+    r = client.get("/api/nl/new-episodes/show/500/season/1")
+    check("a finished season you have all of can't be fetched again", r.json().get("can_get_season") is False)
+    check("an unknown season is a plain 404", client.get("/api/nl/new-episodes/show/500/season/9").status_code == 404)
+    check("an unknown show is a plain 404", client.get("/api/nl/new-episodes/show/999999/seasons").status_code == 404)
+
     print("the pages")
     for url in ("/nl/new", "/nl/tv/new", "/player/new"):
         r = client.get(url)
@@ -318,6 +355,9 @@ def test_static():
     check("new-episodes.js: never handles a magnet link, only copy_id", "magnet" not in js and "copy_id" in js)
     check("new-episodes.js: buttons and copies are remote-focusable rows on the TV",
           'setAttribute("data-nl-focus", "")' in js and '"data-nl-row", "new-"' in js and '"data-nl-row", "copies-"' in js)
+    check("new-episodes.js: a season picker with its own focus rows on the TV",
+          "/seasons" in js and "/season/" in js and '"data-nl-row", "seasons-"' in js and '"data-nl-row", "ep-"' in js
+          and "Get whole season" in js)
     check("tv.js starts the page and the home row", 'page === "new"' in tvjs and "NLNew.mount" in tvjs and "NLNew.homeRow" in tvjs)
     check("home.js has the New episodes row", "NLNew.homeRow" in home)
     tvhome = open(os.path.join(ROOT, "templates/nl/tv/home.html"), encoding="utf-8").read()

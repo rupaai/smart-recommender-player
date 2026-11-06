@@ -10,8 +10,9 @@ Two lists, both built on the server (mars) so the TV pages only draw them:
   genre (news, talk, reality...), and that fit your taste (Wishmatch's taste score, when the show is in the
   tagged catalogue).
 
-Each card offers one download: the whole season once it has finished airing, else the first episode you are
-missing. The Download button asks the server to find copies ("Best match" ranking, same as the Download
+Each card offers one download, the next episode in watching order: from S1E1 for a show you never had,
+on from where your files are for one you have, the latest season for one you watched elsewhere. The season
+picker lists every season and episode, so you can get any episode, or a whole finished season, yourself. The Download button asks the server to find copies ("Best match" ranking, same as the Download
 tab), drop the ones for another episode or show, and start the best one. Copies are kept here and only a
 short `copy_id` goes to the page: magnet links never leave the server.
 
@@ -98,47 +99,118 @@ def season_episode_count(details: Dict[str, Any], season: int) -> Optional[int]:
     return None
 
 
-def latest_offer(details: Dict[str, Any], have: Set[Tuple[int, int]], today: date, recent_days: int) -> Optional[Dict[str, Any]]:
-    """What to offer for a show: None when nothing came out recently or you have it all.
-
-    `have` is the (season, episode) pairs the library has (or had). The latest season is the one TMDB's
-    last aired episode belongs to. A season that finished airing is offered whole when two or more of its
-    episodes are missing; otherwise the first missing episode is offered."""
+def aired_episodes(details: Dict[str, Any], today: Optional[date] = None) -> List[Tuple[int, int]]:
+    """Every (season, episode) that has aired, in order: whole seasons before the latest one, and the
+    latest season up to TMDB's last aired episode. Specials (season 0) are left out."""
     last = details.get("last_episode_to_air") or {}
-    aired = parse_day(last.get("air_date"))
+    last_season = int(last.get("season_number") or 0)
+    upto = int(last.get("episode_number") or 0)
+    out: List[Tuple[int, int]] = []
+    for s in sorted(details.get("seasons") or [], key=lambda x: int(x.get("season_number") or 0)):
+        n = int(s.get("season_number") or 0)
+        if n < 1 or n > last_season:
+            continue
+        count = upto if n == last_season else int(s.get("episode_count") or 0)
+        out.extend((n, e) for e in range(1, count + 1))
+    if not out and last_season >= 1:
+        out = [(last_season, e) for e in range(1, upto + 1)]
+    return out
+
+
+START_MODES = ("beginning", "continue", "latest")
+
+
+def next_in_order(aired: List[Tuple[int, int]], have: Set[Tuple[int, int]], start: str) -> List[Tuple[int, int]]:
+    """The aired episodes still to get, in watching order.
+
+    beginning: from S1E1 (a show you have never had).
+    continue:  from the first episode you ever had onwards (you have files, so watch on from there).
+    latest:    the latest season only (you watched it somewhere else and have no files)."""
+    if start == "continue" and have:
+        first_had = min(have)
+        todo = [x for x in aired if x >= first_had and x not in have]
+    elif start == "latest" and aired:
+        season = aired[-1][0]
+        todo = [x for x in aired if x[0] == season and x not in have]
+    else:
+        todo = [x for x in aired if x not in have]
+    return todo
+
+
+def latest_offer(details: Dict[str, Any], have: Set[Tuple[int, int]], today: date, recent_days: int,
+                 start: str = "latest") -> Optional[Dict[str, Any]]:
+    """What to offer for a show: None when nothing came out recently or there is nothing to get.
+
+    `have` is the (season, episode) pairs the library has (or had). The offer is always one episode, the
+    next one in watching order (see next_in_order), so you can start watching while the rest come. A whole
+    season is only downloaded when you pick it in the season list."""
+    last = details.get("last_episode_to_air") or {}
+    aired_day = parse_day(last.get("air_date"))
     season = int(last.get("season_number") or 0)
     upto = int(last.get("episode_number") or 0)
-    if not aired or season < 1 or upto < 1 or (today - aired).days > int(recent_days) or aired > today:
+    if not aired_day or season < 1 or upto < 1 or (today - aired_day).days > int(recent_days) or aired_day > today:
         return None
-    missing = [e for e in range(1, upto + 1) if (season, e) not in have]
-    if not missing:
+    todo = next_in_order(aired_episodes(details), have, start)
+    if not todo:
         return None
     nxt = details.get("next_episode_to_air") or {}
     next_day = parse_day(nxt.get("air_date"))
     count = season_episode_count(details, season)
     finished = (not nxt or int(nxt.get("season_number") or 0) != season) and (count is None or upto >= count)
-    whole = finished and len(missing) >= 2
-    first = missing[0]
+    first_s, first_e = todo[0]
     out: Dict[str, Any] = {
-        "season": season,
-        "episode": None if whole else first,
-        "kind": "season" if whole else "episode",
-        "label": f"Get season {season}" if whole else f"Get {episode_code(season, first)}",
-        "missing": missing,
-        "latest": {"season": season, "episode": upto, "name": last.get("name") or "", "air_date": str(aired)},
+        "season": first_s,
+        "episode": first_e,
+        "kind": "episode",
+        "start": start,
+        "label": f"Get {episode_code(first_s, first_e)}",
+        "missing": [e for s, e in todo if s == season],
+        "to_get": len(todo),
+        "latest": {"season": season, "episode": upto, "name": last.get("name") or "", "air_date": str(aired_day)},
         "season_finished": finished,
         "next": ({"season": int(nxt.get("season_number") or 0), "episode": int(nxt.get("episode_number") or 0),
                   "air_date": str(next_day)} if next_day else None),
     }
     if finished:
-        line = f"Season {season} finished {nice_day(aired, today)}"
+        line = f"Season {season} finished {nice_day(aired_day, today)}"
     else:
-        line = f"{episode_code(season, upto)} out {nice_day(aired, today)}"
+        line = f"{episode_code(season, upto)} out {nice_day(aired_day, today)}"
         if next_day:
             line += f" · next {nice_day(next_day, today)}"
-    if len(missing) > 1 and not whole:
-        line += f" · {len(missing)} new for you"
+    if start == "beginning" and (first_s, first_e) != (season, upto):
+        line += f" · start from {episode_code(first_s, first_e)}"
+    elif len(todo) > 1:
+        line += f" · {len(todo)} to watch"
     out["status_line"] = line
+    return out
+
+
+def season_list(details: Dict[str, Any], have: Set[Tuple[int, int]]) -> List[Dict[str, Any]]:
+    """The show's seasons for the season picker: how many episodes aired, how many you have."""
+    aired = aired_episodes(details)
+    out = []
+    for s in sorted(details.get("seasons") or [], key=lambda x: int(x.get("season_number") or 0)):
+        n = int(s.get("season_number") or 0)
+        if n < 1:
+            continue
+        on_air = sum(1 for x in aired if x[0] == n)
+        out.append({"season": n, "name": s.get("name") or f"Season {n}", "episodes": int(s.get("episode_count") or 0),
+                    "aired": on_air, "have": sum(1 for x in have if x[0] == n),
+                    "air_date": s.get("air_date"), "finished": on_air > 0 and on_air >= int(s.get("episode_count") or 0)})
+    return out
+
+
+def episode_list(season_data: Dict[str, Any], season: int, have: Set[Tuple[int, int]], today: date) -> List[Dict[str, Any]]:
+    """One season's episodes for the picker: name, air date, aired yet, already had."""
+    out = []
+    for ep in season_data.get("episodes") or []:
+        n = int(ep.get("episode_number") or 0)
+        if n < 1:
+            continue
+        day = parse_day(ep.get("air_date"))
+        out.append({"season": season, "episode": n, "code": episode_code(season, n), "name": ep.get("name") or "",
+                    "air_date": str(day) if day else None, "when": nice_day(day, today), "aired": bool(day and day <= today),
+                    "have": (season, n) in have, "runtime": ep.get("runtime")})
     return out
 
 
@@ -242,6 +314,7 @@ class NewEpisodes:
         self._trending: Tuple[float, List[int]] = (0.0, [])
         self._copies: Dict[str, Dict[str, Any]] = {}
         self._built: Dict[Tuple[int, ...], Tuple[float, Dict[str, Any]]] = {}
+        self._seasons: Dict[Tuple[int, int], Tuple[float, Dict[str, Any]]] = {}
         self._lock = threading.Lock()
 
     # --- TMDB, cached ---------------------------------------------------------
@@ -290,6 +363,8 @@ class NewEpisodes:
         sql = f"""
             SELECT mi.id, mi.tmdb_id, mi.title,
                    EXISTS(SELECT 1 FROM media_sources ms WHERE ms.media_item_id = mi.id) AS in_library,
+                   EXISTS(SELECT 1 FROM watch_history wh WHERE wh.media_item_id = mi.id AND wh.status = 'seen'
+                          AND wh.profile_id IN ({marks})) AS seen,
                    MAX(COALESCE((SELECT MAX(ms.created_at) FROM media_sources ms WHERE ms.media_item_id = mi.id), ''),
                        COALESCE((SELECT MAX(wh.watched_at) FROM watch_history wh WHERE wh.media_item_id = mi.id
                                  AND wh.profile_id IN ({marks})), ''),
@@ -307,7 +382,7 @@ class NewEpisodes:
             ORDER BY active_at DESC
             LIMIT ?
         """
-        params = [*profile_ids] * 5 + [floor, int(self.cfg["your_shows_max"])]
+        params = [*profile_ids] * 6 + [floor, int(self.cfg["your_shows_max"])]
         with self.db.get_connection() as conn:
             return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -362,10 +437,13 @@ class NewEpisodes:
             d = details.get(int(row["tmdb_id"]))
             if not d:
                 continue
-            offer = latest_offer(d, self.had_episodes(row["id"]), today, int(cfg["recent_days"]))
+            have = self.had_episodes(row["id"])
+            start = "continue" if have else ("latest" if row.get("seen") else "beginning")
+            offer = latest_offer(d, have, today, int(cfg["recent_days"]), start)
             if offer:
                 card = card_base(d, row["id"], bool(row["in_library"]))
-                card.update(offer=offer, why="You watch this" if not row["in_library"] else "On your server")
+                card.update(offer=offer, why="On your server" if row["in_library"] else
+                            ("You watch this" if row.get("seen") else "On your Watch later list"))
                 yours.append(card)
         yours.sort(key=lambda c: c["offer"]["latest"]["air_date"], reverse=True)
 
@@ -384,7 +462,7 @@ class NewEpisodes:
             if self.foreign_gate and not self.foreign_gate({"original_language": d.get("original_language"),
                                                             "rating": d.get("vote_average"), "vote_count": d.get("vote_count")}):
                 continue
-            offer = latest_offer(d, set(), today, int(cfg["recent_days"]))
+            offer = latest_offer(d, set(), today, int(cfg["recent_days"]), "beginning")
             if not offer:
                 continue
             item_id, in_lib = known.get(tmdb_id, (None, False))
@@ -413,6 +491,40 @@ class NewEpisodes:
         for c in popular:
             c.pop("_rank", None)
         return {"enabled": True, "yours": yours, "popular": popular, "tmdb": tmdb_ok}
+
+    # --- the season picker ----------------------------------------------------
+    def _have_for(self, tmdb_id: int) -> Set[Tuple[int, int]]:
+        found = self._catalogue_ids([int(tmdb_id)]).get(int(tmdb_id))
+        return self.had_episodes(found[0]) if found else set()
+
+    def seasons(self, tmdb_id: int) -> Dict[str, Any]:
+        """The show's seasons (aired and had counts) so you can pick one yourself."""
+        d = self.details(tmdb_id)
+        if not d:
+            raise LookupError("TMDB doesn't know that show (or TMDB can't be reached right now).")
+        return {"tmdb_id": int(tmdb_id), "title": d.get("name") or "", "seasons": season_list(d, self._have_for(tmdb_id))}
+
+    def season(self, tmdb_id: int, season: int) -> Dict[str, Any]:
+        """One season's episodes; each aired one you don't have can be downloaded on its own."""
+        key = (int(tmdb_id), int(season))
+        with self._lock:
+            hit = self._seasons.get(key)
+        if hit and self._fresh(hit[0]):
+            data = hit[1]
+        else:
+            data = self.tmdb_get(f"/tv/{int(tmdb_id)}/season/{int(season)}")
+            if data is None and hit:
+                data = hit[1]
+            elif data is not None:
+                with self._lock:
+                    self._seasons[key] = (self.clock(), data)
+        if not data:
+            raise LookupError("TMDB doesn't have that season (or TMDB can't be reached right now).")
+        episodes = episode_list(data, int(season), self._have_for(tmdb_id), self.today())
+        aired = [e for e in episodes if e["aired"]]
+        return {"tmdb_id": int(tmdb_id), "season": int(season), "name": data.get("name") or f"Season {season}",
+                "episodes": episodes, "can_get_season": bool(aired) and len(aired) == len(episodes)
+                and any(not e["have"] for e in aired)}
 
     # --- downloading ----------------------------------------------------------
     def _title(self, tmdb_id: int) -> str:

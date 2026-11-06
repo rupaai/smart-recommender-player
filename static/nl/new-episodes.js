@@ -77,6 +77,103 @@
       announce.textContent = msg.textContent;
     }
 
+    /* "Seasons": every season of the show; pick one to see its episodes and get any of them (or the whole
+     * season once it has finished). The server says what aired and what you already have. */
+    function seasonPicker(card, section, msg) {
+      var box = el("div", p + "-new-seasons");
+      box.hidden = true;
+      var chips = el("div", p + "-new-season-chips");
+      if (tv) { chips.setAttribute("data-nl-row", "seasons-" + section + "-" + card.tmdb_id); }
+      var eps = el("ul", p + "-new-episodes");
+      box.appendChild(chips);
+      box.appendChild(eps);
+      var btn = button("Seasons", "Choose a season of " + card.title, tv ? "tv-btn" : "nl-btn-quiet");
+
+      function getButton(label, aria, payload) {
+        var b = button(label, aria, tv ? "tv-btn" : "nl-btn-quiet");
+        b.addEventListener("click", function () {
+          b.disabled = true;
+          b.textContent = "Finding a copy…";
+          post("/api/nl/new-episodes/download", payload).then(function (res) {
+            b.textContent = "Downloading";
+            msg.className = p + "-new-msg is-ok";
+            msg.textContent = "Started: " + (res.release || card.title) + ". ";
+            msg.appendChild(link("See Downloads", "See downloads", downloadsHref, p + "-new-msg-link"));
+          }).catch(function (e) { failed(b, label, msg, e); });
+        });
+        return b;
+      }
+
+      function showSeason(n, chip) {
+        Array.prototype.forEach.call(chips.children, function (c) { c.setAttribute("aria-pressed", String(c === chip)); });
+        eps.textContent = "";
+        eps.appendChild(el("li", p + "-new-copy-empty", "Loading season " + n + "…"));
+        NL.fetchJSON("/api/nl/new-episodes/show/" + encodeURIComponent(card.tmdb_id) + "/season/" + encodeURIComponent(n)).then(function (data) {
+          eps.textContent = "";
+          if (data.can_get_season) {
+            var whole = el("li", p + "-new-ep-row");
+            if (tv) { whole.setAttribute("data-nl-row", "season-all-" + card.tmdb_id); }
+            whole.appendChild(getButton("Get whole season", "Download all of season " + n + " of " + card.title,
+              { tmdb_id: card.tmdb_id, season: n }));
+            whole.appendChild(el("span", p + "-new-copy-meta", "One download with every episode. Slower to start."));
+            eps.appendChild(whole);
+          }
+          (data.episodes || []).forEach(function (e) {
+            var row = el("li", p + "-new-ep-row");
+            if (tv) { row.setAttribute("data-nl-row", "ep-" + card.tmdb_id + "-" + e.code); }
+            if (e.have) {
+              row.appendChild(el("span", p + "-new-ep-state", "On server"));
+            } else if (e.aired) {
+              row.appendChild(getButton("Get", "Download " + e.code + " of " + card.title, { tmdb_id: card.tmdb_id, season: e.season, episode: e.episode }));
+            } else {
+              row.appendChild(el("span", p + "-new-ep-state", e.when ? "Out " + e.when : "Not out yet"));
+            }
+            var text = el("div", p + "-new-copy-text");
+            text.appendChild(el("div", p + "-new-copy-name", e.code + (e.name ? " · " + e.name : "")));
+            if (e.aired && e.when) { text.appendChild(el("div", p + "-new-copy-meta", "Out " + e.when)); }
+            row.appendChild(text);
+            eps.appendChild(row);
+          });
+          if (tv && global.NLFocus) {
+            var first = eps.querySelector("[data-nl-focus]");
+            if (first) { global.NLFocus.focus(first); }
+          }
+        }).catch(function (e) {
+          eps.textContent = "";
+          eps.appendChild(el("li", p + "-new-copy-empty", e.message || "Could not load that season."));
+        });
+      }
+
+      btn.addEventListener("click", function () {
+        if (!box.hidden) { box.hidden = true; btn.textContent = "Seasons"; return; }
+        btn.disabled = true;
+        NL.fetchJSON("/api/nl/new-episodes/show/" + encodeURIComponent(card.tmdb_id) + "/seasons").then(function (data) {
+          btn.disabled = false;
+          btn.textContent = "Hide seasons";
+          chips.textContent = "";
+          eps.textContent = "";
+          (data.seasons || []).forEach(function (x) {
+            var label = "Season " + x.season;
+            var chip = button(label, label + ", " + x.aired + " of " + x.episodes + " out, " + x.have + " on the server",
+              tv ? "tv-pill" : "nl-chip");
+            chip.setAttribute("aria-pressed", "false");
+            chip.addEventListener("click", function () { showSeason(x.season, chip); });
+            chips.appendChild(chip);
+          });
+          box.hidden = false;
+          if (tv && global.NLFocus) {
+            var firstChip = chips.querySelector("[data-nl-focus]");
+            if (firstChip) { global.NLFocus.focus(firstChip); }
+          }
+        }).catch(function (e) {
+          btn.disabled = false;
+          msg.className = p + "-new-msg is-bad";
+          msg.textContent = e.message || "Could not load the seasons.";
+        });
+      });
+      return { button: btn, box: box };
+    }
+
     function build(card, section) {
       var li = el("li", p + "-new-item");
       li.id = "show-" + card.tmdb_id;
@@ -90,8 +187,8 @@
       main.appendChild(el("p", p + "-new-line", o.status_line || ""));
       var meta = [card.why, card.network, card.rating ? "TMDB " + card.rating : ""].filter(Boolean).join(" · ");
       main.appendChild(el("p", p + "-new-meta", meta));
-      if (o.latest && o.latest.name && o.kind === "episode") {
-        main.appendChild(el("p", p + "-new-ep", "Latest: " + o.latest.name));
+      if (o.latest && o.latest.name) {
+        main.appendChild(el("p", p + "-new-ep", "Latest: " + "S" + o.latest.season + " · E" + o.latest.episode + " · " + o.latest.name));
       }
       if (!tv && card.overview) { main.appendChild(el("p", p + "-new-overview", card.overview)); }
       var msg = el("p", p + "-new-msg", "");
@@ -162,9 +259,12 @@
         });
       });
       acts.appendChild(other);
+      var picker = seasonPicker(card, section, msg);
+      acts.appendChild(picker.button);
       if (card.href) { acts.appendChild(link("Open show", "Open " + card.title, card.href, tv ? "tv-btn" : "nl-btn-quiet")); }
       main.appendChild(acts);
       main.appendChild(copiesBox);
+      main.appendChild(picker.box);
       li.appendChild(main);
       return li;
     }
@@ -220,8 +320,7 @@
       if (!data.enabled || !cards.length) { sectionEl.hidden = true; return false; }
       cards.forEach(function (c) {
         var o = c.offer || {};
-        var badge = c.downloading ? "Downloading" : (o.kind === "season" ? "Season " + o.season
-          : "S" + o.latest.season + " · E" + o.latest.episode + " new");
+        var badge = c.downloading ? "Downloading" : "S" + o.latest.season + " · E" + o.latest.episode + " new";
         listEl.appendChild(build({
           id: null, media_type: "tv", title: c.title, year: c.year, poster_url: c.poster_url,
           badge: badge, href: root + "new#show-" + c.tmdb_id
