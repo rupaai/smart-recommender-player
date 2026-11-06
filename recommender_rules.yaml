@@ -364,6 +364,8 @@ wishmatch:
     answer_weight: 0.5        # an answer counts half as much as a word you typed
     model_wording: true       # the Ollama model words the question; a fixed sentence if it's slow
     wording_timeout_seconds: 6  # a search waits this long for a new wording; each wording is remembered
+    wordings_file: wishmatch_wordings.json  # the model's wordings, kept across restarts (next to the database)
+    preword_at_start: true    # at server start, word every mood-dial question not worded yet (once per model)
   # The wish reader: an open-weight model in Ollama turns the typed wish into the
   # words above; the word lookup below stays as its fallback (slow, missing or
   # confused model = lookup only). OLLAMA_URL picks the server (Homelab sets
@@ -378,6 +380,8 @@ wishmatch:
     keep_alive: 1h            # Ollama unloads the model after this long without a search (Labiba 2026-10-27; ~2.5 GB RAM while loaded)
     skip_when_understood: true  # the word lookup understood every word: answer now, the model reads it in the background for next time
     answers_file: wishmatch_wishes.json  # the model's readings, kept across restarts (next to the database)
+    warm_at_start: true       # at server start, load the model and let it read its fixed instructions once,
+                              # so the first new wish doesn't pay for that (see docs/guides/wishmatch.md)
     threads: 4                # of mars's 6 cores, so Jellyfin keeps room
     max_tokens: 80
     avoid_groups: [flags]     # the model may only rule out content warnings ("the dog can't die")

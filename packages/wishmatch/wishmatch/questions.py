@@ -28,6 +28,21 @@ def _spread(values: List[float]) -> float:
     return math.sqrt(sum((v - mean) ** 2 for v in values) / len(values))
 
 
+def trait_words(ends: Dict[str, Any]) -> tuple:
+    """The two words a dial question offers: the first word of each end ("calm", "intense")."""
+    return str(ends.get("low", "")).split(",")[0].strip(), str(ends.get("high", "")).split(",")[0].strip()
+
+
+def trait_choices(vocab: Vocabulary) -> List[tuple]:
+    """Every dial question as (about, [low word, high word]), as word_question gets them. The set is
+    small and fixed, so these can be worded ahead of time (at server start)."""
+    out = []
+    for ends in vocab.traits.values():
+        low, high = trait_words(ends)
+        out.append((f"{low} or {high}", [low, high]))
+    return out
+
+
 def trait_question(picks: List[Pick], wish: Wish, vocab: Vocabulary, cfg: Dict[str, Any],
                    skip: Set[str]) -> Optional[Dict[str, Any]]:
     best = None
@@ -48,8 +63,7 @@ def trait_question(picks: List[Pick], wish: Wish, vocab: Vocabulary, cfg: Dict[s
     if best is None or best[0] < float(cfg["min_spread"]):
         return None
     spread, trait, ends = best
-    low_word = str(ends.get("low", "")).split(",")[0].strip()
-    high_word = str(ends.get("high", "")).split(",")[0].strip()
+    low_word, high_word = trait_words(ends)
     lows = [p for p in picks if p.item.traits.get(trait, 0.5) <= 0.35]
     highs = [p for p in picks if p.item.traits.get(trait, 0.5) >= 0.65]
     return {

@@ -97,6 +97,7 @@ flowchart LR
 - **Settings:** `wishmatch:` in `recommender_rules.yaml` (weights, candidate counts, film/show mix, the wish-reader model and its wait time, questions).
 - **Word list:** `services/vibe_vocab.py` (mood dials and feeling words) plus `wishmatch.lexicon` and `wishmatch.genre_hints` in `recommender_rules.yaml`. A word that does nothing goes there.
 - **Today's picks** (from what you watched lately, nothing typed): `services/wishmatch_movies/daily.py` (`DailyPicks`), the core's `packages/wishmatch/wishmatch/recent.py` (turns recent titles into a wish), route `GET /api/nl/daily-picks` in `web/routes/nl_picks.py`. Settings `wishmatch.daily_picks` and `wishmatch.recent`. Kept per day in `daily_picks.json` next to the database. Test `tests/test_wishmatch_daily.py`. Home row "Picked for you today" (web, TV, laptop): `static/nl/daily-picks.js` (`NLDaily.homeRow`, started by `home.js` and `tv.js`; styles `*-daily-*` in `nl.css` / `tv.css`). "Get it": `POST /api/nl/daily-picks/download` finds the best copy with `NewEpisodes.pick` (kind "movie", same as films on New & popular) and starts it. Test `tests/test_nl_daily_row.py`.
+- **Speed:** model answers kept in `wishmatch_wishes.json` and `wishmatch_wordings.json` next to the database; warm-up at server start (`WishmatchMovies.warm`, status in `GET /api/rec/status`); time it with `utils/time_wishmatch.py <server>`.
 - **Taste profiles:** `utils/wishmatch_profiles.py` (made at Train time); read or edit them at `GET/PUT /api/rec/movies/profile/{person}`.
 - **Tests:** `packages/wishmatch/tests/` (run by `tests/test_wishmatch_core.py`), `tests/test_wishmatch_movies.py`, `tests/test_wishmatch_crowd.py`, `tests/test_wishmatch_profiles.py`, `tests/test_compare_engines.py`.
 - **Remove it:** delete `packages/wishmatch/`, `services/wishmatch_movies/`, the `wishmatch:` section, and set `engine: legacy`.
@@ -148,6 +149,7 @@ Guide: [guides/new-episodes.md](guides/new-episodes.md).
 - **Pages:** `/nl/new`, `/nl/tv/new`, `/player/new` (`web/routes/nl_pages.py`, templates `templates/nl/new.html`, `templates/nl/tv/new.html`); drawn by `static/nl/new-episodes.js` (web, TV and laptop; started by `static/nl/new-web.js` or `tv.js`). The "New episodes" row on home is `NLNew.homeRow` in the same file. Styles in `nl.css` and `tv.css` (`*-new-*`). Downloads start through `start_download()` in `web/routes/torrents.py`, same as the Download tab.
 - **Settings:** `new_episodes:` in `config.yaml`. The service tabs are `providers`, their country is `watch_region` (set yours in `config.local.yaml`). Needs the TMDB key (free).
 - **Tests:** `tests/test_nl_new_episodes.py`.
+- **By themselves:** `services/nl_auto_episodes.py` keeps the next episodes of the shows you watch ready, one at a time in order (job `start_auto_episodes` in `server.py`, `auto_episodes_once` in `web/routes/nl_new.py`, last run at `GET /api/nl/auto-episodes`). Settings `auto_episodes:` in `config.yaml` (off) and `homelab/config.yaml` (on in prod). Tests `tests/test_nl_auto_episodes.py`.
 
 ## Library and browsing (Northern Lights)
 
@@ -253,6 +255,7 @@ Guide: [guides/training.md](guides/training.md).
 | change how far back today's picks look | `wishmatch.daily_picks.days` in `recommender_rules.yaml` |
 | make picks better known / more obscure | `wishmatch.candidates.known` and `min_popularity` |
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
+| load the model at server start / word questions ahead | `wishmatch.wish_reader.warm_at_start`, `wishmatch.questions.preword_at_start` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
 | delete a film or show by hand | "Delete from server" on its page (web or TV) |
 | let poorly rated titles into Wishmatch by default | `wishmatch.default_min_rating` (IMDb score; the "Any rating" chip does it per search) |
@@ -262,6 +265,7 @@ Guide: [guides/training.md](guides/training.md).
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
 | change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
+| keep more or fewer episodes ready, or stop auto-downloading episodes | `auto_episodes.episodes_ahead` / `enabled` in `homelab/config.yaml` |
 | change the streaming-service tabs or their country | `new_episodes.providers` and `watch_region` (country in `config.local.yaml`) |
 | change the TV look | `static/nl/tv/tv.css` |
 | change the player controls | `static/nl/player.js` (logic in `player-extras.js`) |

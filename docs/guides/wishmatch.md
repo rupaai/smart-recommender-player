@@ -35,7 +35,17 @@ Two readers turn your typed words into that vocabulary:
   - when the lookup understood every word, the search doesn't wait for the model,
   - a search waits at most `wait_seconds` (8); a slower answer is kept for "Show more",
   - every answer is saved (`wishmatch_wishes.json`), so the same wish is instant next time,
-  - the model stays loaded for an hour after a search (about 2.5 GB of memory).
+  - the model stays loaded for an hour after a search (about 2.5 GB of memory),
+  - every call starts with the same fixed instructions (the list of mood words). That list is
+    most of what the model has to read, and Ollama remembers the start of the last prompt, so
+    a new wish only costs the model reading the few new words. Question wording uses the same
+    start, so it doesn't push the list out of the model's memory,
+  - at server start (on mars only), the app loads the model, words every mood-dial question
+    once (kept in `wishmatch_wordings.json`) and reads one throwaway wish
+    (`wish_reader.warm_at_start`, `questions.preword_at_start`). `GET /api/rec/status` shows how it went.
+
+To time it: `uv run python utils/time_wishmatch.py http://<server>:<port>` runs a few known wishes,
+new wishes and question searches and prints the seconds for each (free; no admin token).
 
 A word that does nothing is fixed by adding it to `wishmatch.lexicon`, not by changing code.
 
@@ -128,6 +138,7 @@ profiles, about 1 cent per 100 titles for tags), and only when you ask for it.
 | care more about your taste than the wish | `wishmatch.weights.taste` up, `match` down |
 | fewer or no questions | `wishmatch.questions.max` |
 | wait less for the AI reader | `wishmatch.wish_reader.wait_seconds` |
+| skip loading the AI at server start | `wishmatch.wish_reader.warm_at_start: false` |
 | let the partner count more when alone | `wishmatch.people.other_weight` |
 | look further back for today's picks | `wishmatch.daily_picks.days` |
 | let older watches count more | `wishmatch.recent.half_life_days` |

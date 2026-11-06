@@ -74,6 +74,28 @@ Progress shows on the Downloads screen as usual. The links to the copies never l
 
 If no copy is found yet, it says so: new episodes often turn up a few hours after they air.
 
+## New episodes by themselves
+
+On mars, every 3 hours, the server looks at each show you're watching: it has files on the server, and
+one of you watched it (or a new file came) in the last 60 days. It keeps the next 3 unwatched episodes
+ready, counted after the last episode the one of you furthest along has watched.
+
+It gets them **one episode at a time, in order** (S02E01, then S02E02...). It never takes a season pack,
+because a pack only shows up when every episode is in; a single episode shows up as soon as it's done.
+A show with a download still running waits for it. The usual disk limits apply (500 GB, 20 GB free).
+
+To see what the last look did per show: `GET /api/nl/auto-episodes`.
+
+Settings, in `auto_episodes:` (`homelab/config.yaml` for mars):
+
+| Setting | What it does | Default |
+|---|---|---|
+| `enabled` | on or off (mars: on) | off |
+| `check_hours` | how often mars looks | 3 |
+| `episodes_ahead` | unwatched episodes kept ready per show | 3 |
+| `active_days` | how long a show counts as "being watched" | 60 |
+| `shows_per_run` | most downloads started in one look | 10 |
+
 ## Cost
 
 Free. It uses TMDB (free) and the torrent search you already have. No paid AI.
@@ -109,3 +131,4 @@ To add a service, add a line under `providers` with its TMDB id (TMDB's "watch p
 - `web/routes/nl_new.py`: `GET /api/nl/new-episodes` (`?provider=netflix` for a tab), `GET /api/nl/new-episodes/copies`,
   `GET /api/nl/new-episodes/show/{tmdb_id}/seasons`, `.../season/{n}`, `POST /api/nl/new-episodes/download`.
 - `tests/test_nl_new_episodes.py`.
+- `services/nl_auto_episodes.py`: new episodes by themselves; `tests/test_nl_auto_episodes.py`.

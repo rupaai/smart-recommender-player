@@ -26,6 +26,7 @@ from services.jellyfin_playback import JellyfinPlayback
 from services.jellyfin_service import JellyfinService
 from services.media_cleanup import MediaCleanup
 from services.nl_delete import LibraryDelete
+from services.nl_auto_episodes import AutoEpisodes, ready_after
 from services.nl_new_episodes import NewEpisodes, wishmatch_taste
 from services.nl_browse import NLBrowse
 from services.nl_cast import (
@@ -178,6 +179,32 @@ _tv_gate = foreign_gate(RULES, "tv")
 nl_new_episodes = NewEpisodes(
     db, _nl_tmdb, config, taste=_new_episodes_taste, searcher=torrent_searcher,
     foreign_gate=lambda row: passes_foreign_gate(row, "tv", _tv_gate),
+)
+
+
+def _episodes_ready(item_id):
+    """Unwatched episode files of a show for the person furthest along (Jellyfin played marks), or None
+    when Jellyfin can't say. One person (or none configured): the default Jellyfin user."""
+    users = [p.jellyfin_user_id for p in nl_people.people] or [None]
+    counts = []
+    for user in users:
+        with jellyfin_playback.as_user(user):
+            show = nl_browse.show(item_id)
+        if not show or not show.get("jellyfin"):
+            return None
+        counts.append(ready_after([e for s in show["seasons"] for e in s["episodes"]]))
+    return min(counts) if counts else None
+
+
+def _shows_downloading():
+    from web.routes.nl_new import _downloading_ids  # the route module imports this one
+    return _downloading_ids()
+
+
+# New episodes that download by themselves, in order (services/nl_auto_episodes.py, `auto_episodes:`).
+nl_auto_episodes = AutoEpisodes(
+    nl_new_episodes, _episodes_ready, _shows_downloading,
+    lambda: [p.profile_id for p in nl_people.people if p.profile_id] or [1], config,
 )
 
 

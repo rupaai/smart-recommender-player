@@ -27,6 +27,7 @@ class OllamaClient:
         self.think = think          # False: models that "think out loud" first (Qwen 3) answer straight away
         self.last_error: Optional[str] = None
         self.last_seconds: Optional[float] = None
+        self.last_timing: Optional[Dict[str, Any]] = None   # where the last answer's time went (Ollama's own counts)
         self._pulling = False
 
     def _post(self, path: str, body: Dict[str, Any], timeout: float) -> Dict[str, Any]:
@@ -53,12 +54,24 @@ class OllamaClient:
         try:
             out = self._post("/api/generate", body, self.timeout)
             self.last_error = None
+            self.last_timing = self.timing(out)
             return str(out.get("response") or "")
         except (urllib.error.URLError, OSError, ValueError) as e:
             self.last_error = f"{type(e).__name__}: {e}"
             return None
         finally:
             self.last_seconds = round(time.time() - start, 2)
+
+    @staticmethod
+    def timing(out: Dict[str, Any]) -> Dict[str, Any]:
+        """Ollama's own counts for one answer, in seconds: loading the model, reading the prompt
+        (only the part it didn't already have in memory), and writing the answer."""
+        def secs(key: str) -> Optional[float]:
+            v = out.get(key)
+            return round(float(v) / 1e9, 2) if isinstance(v, (int, float)) else None
+        return {"load_seconds": secs("load_duration"), "read_tokens": out.get("prompt_eval_count"),
+                "read_seconds": secs("prompt_eval_duration"), "write_tokens": out.get("eval_count"),
+                "write_seconds": secs("eval_duration")}
 
     def status(self) -> Dict[str, Any]:
         """Whether Ollama answers and has the model."""
@@ -69,7 +82,7 @@ class OllamaClient:
         names = {m.get("name") for m in tags.get("models") or []} | {m.get("model") for m in tags.get("models") or []}
         has = self.model in names or f"{self.model}:latest" in names
         return {"reachable": True, "model": self.model, "has_model": has, "pulling": self._pulling,
-                "last_seconds": self.last_seconds, "last_error": self.last_error}
+                "last_seconds": self.last_seconds, "last_timing": self.last_timing, "last_error": self.last_error}
 
     def ensure_model(self, background: bool = True) -> None:
         """Ask Ollama to download the model if it doesn't have it (once; a download is free but large)."""
