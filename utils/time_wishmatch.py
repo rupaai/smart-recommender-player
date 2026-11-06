@@ -83,7 +83,8 @@ def main() -> None:
     for r in rows:
         print(f"{r['case']:<16} {r['seconds']:>6.2f} s  {r['text']:<{width}}  ({r['source']})")
     _, status = call(base, "/api/rec/status")
-    print("model's last answer took:", ((status.get("movies") or {}).get("wish_reader") or {}).get("last_seconds"), "s")
+    reader = (status.get("movies") or {}).get("wish_reader") or {}
+    print("model's last answer took:", reader.get("last_seconds"), "s", "| where the time went:", json.dumps(reader.get("last_timing")))
 
 
 if __name__ == "__main__":

@@ -816,6 +816,14 @@ def test_trait_choices_match_the_dial_questions():
         assert about == f"{low} or {high}" and options == [low, high]
 
 
+def test_ollama_timing_reads_its_counts():
+    from wishmatch import OllamaClient
+    t = OllamaClient.timing({"load_duration": 2_000_000_000, "prompt_eval_count": 12, "prompt_eval_duration": 500_000_000,
+                             "eval_count": 20, "eval_duration": 3_250_000_000})
+    assert t == {"load_seconds": 2.0, "read_tokens": 12, "read_seconds": 0.5, "write_tokens": 20, "write_seconds": 3.25}
+    assert OllamaClient.timing({})["read_seconds"] is None
+
+
 def test_ollama_client_fails_quietly_without_a_server():
     from wishmatch import OllamaClient
     c = OllamaClient("http://127.0.0.1:9", "tiny", timeout=0.5)
