@@ -109,6 +109,19 @@ new_episodes:
   skip_genres: [News, Talk, Reality, Soap, Kids]
   cache_hours: 6           # TMDB answers are reused this long
   list_minutes: 15         # a built page is reused this long per viewer
+  movies_max: 18           # cards in "Popular movies"
+  movie_min_days_out: 30   # a trending film must be out this many days (cinema-only films have no copies yet)
+  watch_region: US         # country for the streaming-service tabs (two letters, e.g. GB, DE, BD). Set yours in config.local.yaml
+  provider_max: 18         # shows and films per section on a service tab
+  # The streaming-service tabs. id is TMDB's watch-provider id; name is what the tab says.
+  providers:
+    - {key: netflix, name: Netflix, id: 8}
+    - {key: prime, name: Prime Video, id: 9}
+    - {key: apple, name: Apple TV+, id: 350}
+    - {key: disney, name: Disney+, id: 337}
+    - {key: max, name: Max, id: 1899}
+    - {key: hulu, name: Hulu, id: 15}
+    - {key: paramount, name: Paramount+, id: 531}
 
 # New episodes that download by themselves (services/nl_auto_episodes.py): for each show you're watching,
 # mars keeps the next few episodes ready, fetching them one at a time in order. Off here; on for mars.

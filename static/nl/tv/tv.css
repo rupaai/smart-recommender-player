@@ -321,3 +321,11 @@ html.laptop .tv-card:hover .tv-details { display: flex; }
 .tv-new-copy-text { min-width: 0; }
 .tv-new-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80rem; }
 .tv-new-copy-meta, .tv-new-copy-empty { color: var(--text-2); }
+.tv-new-seasons { padding: 1rem 0.5rem 0; }
+.tv-new-season-chips { display: flex; flex-wrap: wrap; gap: 1rem; }
+.tv-new-season-chips .tv-pill[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.tv-new-episodes { display: grid; gap: 0.75rem; margin-top: 1rem; }
+.tv-new-ep-row { display: flex; align-items: center; gap: 1.5rem; }
+.tv-new-ep-state { flex: none; min-width: 9rem; color: var(--text-2); font-weight: 700; }
+.tv-new-tabs { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.5rem var(--side) 1rem; }
+.tv-new-tabs .tv-pill[aria-selected="true"] { background: var(--surface-2); color: var(--text); }
