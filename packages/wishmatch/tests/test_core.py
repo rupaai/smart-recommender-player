@@ -885,6 +885,27 @@ def test_together_pushes_down_what_one_person_has_seen():
     alone = Wishmatch(SeenAdapter(rules=rules)).recommend(Request(people=[1, 2], kinds=["movie"]))
     assert [p.item.id for p in alone["picks"]][-1] != "m0"     # alone: the adapter's filter's job, no penalty here
 
+
+def test_recent_wish_keeps_what_recent_items_agree_on():
+    from wishmatch import closest, wish_from_recent
+    settings = merged({})
+    a = Item("a", "movie", traits={"energy": 0.2, "humour": 0.9, "tension": 0.1}, tags={"cozy", "witty"})
+    b = Item("b", "movie", traits={"energy": 0.25, "humour": 0.1, "tension": 0.15}, tags={"cozy", "silly"})
+    c = Item("c", "movie", traits={"energy": 0.9, "tension": 0.9, "gore": 0.9}, tags={"tense", "eerie", "cozy"})
+    wish = wish_from_recent([(a, 1, 0.8), (b, 3, None), (c, 2, -0.9)], settings)
+    assert set(wish.traits) == {"energy", "tension"}, wish.traits     # humour: a and b disagree
+    assert abs(wish.traits["energy"] - 0.22) < 0.03
+    assert wish.tags == {"cozy", "witty"}, wish.tags                  # cozy on both; witty on the loved one
+    assert {"cozy"} in wish.tag_sets and len(wish.tag_sets) == 2
+    assert wish.avoid_tags == {"tense", "eerie"}                     # the disliked one's, minus the liked ones'
+    assert wish.source == "recent" and not wish.is_empty()
+    assert wish_from_recent([(c, 1, -1.0)], settings).is_empty()      # only dislikes: nothing to go on
+    old = wish_from_recent([(a, 0, None), (b, 200, None)], settings)  # a 200-day-old watch hardly counts
+    assert "witty" in old.tags and "silly" not in old.tags, old.tags
+    pick = Item("p", "movie", traits={"energy": 0.2, "humour": 0.85}, tags={"witty", "cozy"})
+    assert closest(pick, [b, a, c]) == "a"
+    assert closest(pick, []) is None
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
     tests.sort(key=lambda p: p[1].__code__.co_firstlineno)

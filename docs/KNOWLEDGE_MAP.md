@@ -96,6 +96,7 @@ flowchart LR
 - **Film/TV part** (`services/wishmatch_movies/`): `adapter.py` turns catalogue rows into items, `service.py` (`WishmatchMovies`), `session.py` the questions pop-up.
 - **Settings:** `wishmatch:` in `recommender_rules.yaml` (weights, candidate counts, film/show mix, the wish-reader model and its wait time, questions).
 - **Word list:** `services/vibe_vocab.py` (mood dials and feeling words) plus `wishmatch.lexicon` and `wishmatch.genre_hints` in `recommender_rules.yaml`. A word that does nothing goes there.
+- **Today's picks** (from what you watched lately, nothing typed): `services/wishmatch_movies/daily.py` (`DailyPicks`), the core's `packages/wishmatch/wishmatch/recent.py` (turns recent titles into a wish), route `GET /api/nl/daily-picks` in `web/routes/nl_picks.py`. Settings `wishmatch.daily_picks` and `wishmatch.recent`. Kept per day in `daily_picks.json` next to the database. Test `tests/test_wishmatch_daily.py`.
 - **Taste profiles:** `utils/wishmatch_profiles.py` (made at Train time); read or edit them at `GET/PUT /api/rec/movies/profile/{person}`.
 - **Tests:** `packages/wishmatch/tests/` (run by `tests/test_wishmatch_core.py`), `tests/test_wishmatch_movies.py`, `tests/test_wishmatch_crowd.py`, `tests/test_wishmatch_profiles.py`, `tests/test_compare_engines.py`.
 - **Remove it:** delete `packages/wishmatch/`, `services/wishmatch_movies/`, the `wishmatch:` section, and set `engine: legacy`.
@@ -249,6 +250,7 @@ Guide: [guides/training.md](guides/training.md).
 | switch recommender | `recommender.engine` (`wishmatch` or `legacy`) |
 | make a typed word work in Wishmatch | `wishmatch.lexicon` or `wishmatch.genre_hints` in `recommender_rules.yaml` |
 | change films vs shows share | `wishmatch.mix` in `recommender_rules.yaml` |
+| change how far back today's picks look | `wishmatch.daily_picks.days` in `recommender_rules.yaml` |
 | make picks better known / more obscure | `wishmatch.candidates.known` and `min_popularity` |
 | wait less for the wish reader | `wishmatch.wish_reader.wait_seconds` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |

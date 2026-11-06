@@ -132,3 +132,16 @@ async def nl_veto_clear(item_id: int, request: Request, kind: str = Query("never
         return await asyncio.to_thread(state.nl_choose.unveto, viewer, item_id, kind, person)
     except PicksError as e:
         raise _picks_error(e) from e
+
+
+@router.get("/api/nl/daily-picks")
+async def nl_daily_picks(request: Request, fresh: bool = False) -> Dict[str, Any]:
+    """Today's films from what the viewer watched lately (both of you: what either watched, both tastes).
+    Each card has `why` ("Because you watched X"). Made once a day on the server; `fresh=1` makes it again."""
+    viewer = _nl_viewer_or_default(request)
+    people = list(viewer.profile_ids) or [1]   # no people configured: the first rating profile
+    together = len(people) > 1
+    if not together:
+        others = [p for p in state.wishmatch_movies.adapter.people() if p not in people]
+        people = people + others
+    return await asyncio.to_thread(state.daily_picks.today_list, people, together, fresh)
