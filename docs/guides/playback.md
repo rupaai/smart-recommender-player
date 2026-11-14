@@ -46,6 +46,10 @@ Android video player) plays it, with the extra pieces needed for remuxes:
   to pull them out. Size, background, position and delay settings work on all of them.
 - **Buffering:** the TV keeps about 15 seconds ahead in memory for a 92 Mbps remux (the TV
   has only 1.8 GB of memory). The home Wi-Fi measured 294 Mbps, plenty for that.
+- **Skip back:** the TV also keeps what was just played in memory, as much as its free memory
+  allows when the film starts: about 10 seconds of a 92 Mbps remux, up to a minute of a lighter
+  film (`bufferPlan()` in `PlaybackLogic.kt`, sized by the file's bitrate). A skip back inside
+  that is instant; further back has to load again. Playback info shows it as "Kept for skip back".
 
 If Jellyfin says the TV can't take the original (rare), the player says why and offers
 **Play a converted copy (lower quality)**. It never converts without asking.
@@ -89,6 +93,7 @@ menu) showing whether it plays the original, the decoder, dropped frames, buffer
 | a "Play a converted copy" button | Jellyfin can't send the original to this screen; the reason is on the card |
 | a subtitle stuck on "(loading)" | a picture subtitle file on the TV (see above) |
 | stutter on a huge file | check Playback info: buffer and bandwidth |
+| skip back slow on the TV | check Playback info: "Kept for skip back" (nothing = the TV was short of memory) |
 
 ## Where it lives
 

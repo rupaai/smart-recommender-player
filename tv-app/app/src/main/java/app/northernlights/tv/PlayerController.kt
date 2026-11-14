@@ -73,6 +73,7 @@ class PlayerController(
     private var bandwidthMbps = 0.0
     private var videoDecoder = ""
     private var statsSource = "original"
+    private var backBufferSeconds = 0
 
     val isActive: Boolean get() = player != null
 
@@ -183,6 +184,7 @@ class PlayerController(
             bandwidthMbps = bandwidthMbps,
             bufferedAheadSeconds = p.totalBufferedDuration.coerceAtLeast(0L) / 1000.0,
             lastSeekMs = seekTimer.lastMs,
+            backBufferSeconds = backBufferSeconds,
         )
     }
 
@@ -293,7 +295,8 @@ class PlayerController(
             .setDataSourceFactory(
                 if (req.kind == "file") PlaybackCache.directDataSourceFactory(activity) else PlaybackCache.dataSourceFactory(activity)
             )
-        val plan = bufferPlan(Runtime.getRuntime().maxMemory(), availableMemoryBytes())
+        val plan = bufferPlan(Runtime.getRuntime().maxMemory(), availableMemoryBytes(), req.bitrateKbps)
+        backBufferSeconds = plan.backBufferMs / 1000
         val exo = ExoPlayer.Builder(activity, NlRenderersFactory(activity, subtitleLook))
             .setMediaSourceFactory(mediaSourceFactory)
             .setAudioAttributes(
@@ -304,8 +307,8 @@ class PlayerController(
                 true,
             )
             .setHandleAudioBecomingNoisy(true)
-            // Start (and restart after a seek) with 1 s buffered instead of Media3's 2.5 s / 5 s, and keep the last
-            // 10 s in memory when the TV has room (a skip back then needs no download).
+            // Start (and restart after a seek) with 1 s buffered instead of Media3's 2.5 s / 5 s, and keep what was
+            // just played in memory as far as the TV has room (a skip back then needs no download, see bufferPlan).
             .setLoadControl(
                 DefaultLoadControl.Builder()
                     .setBufferDurationsMs(

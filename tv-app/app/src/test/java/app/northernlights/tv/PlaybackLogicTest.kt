@@ -15,13 +15,33 @@ class PlaybackLogicTest {
     }
 
     @Test
-    fun backBufferOnlyWhenMemoryAllows() {
+    fun backBufferFollowsMemoryAndBitrate() {
         val mb = 1024L * 1024L
-        // This TV with largeHeap: 384 MB cap, about 390 MB free before the buffer fills.
-        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES + BACK_BUFFER_BYTES, BACK_BUFFER_MS), bufferPlan(384 * mb, 390 * mb))
-        // Without largeHeap (192 MB) or with little free memory, Media3's defaults and no back buffer.
-        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES, 0), bufferPlan(192 * mb, 390 * mb))
-        assertEquals(BufferPlan(DEFAULT_BUFFER_BYTES, 0), bufferPlan(384 * mb, 150 * mb))
+        // Plenty of room, bitrate unknown: the full 128 MB, about 10 s of a 100 Mbps remux (as before).
+        val roomy = bufferPlan(384 * mb, 390 * mb)
+        assertEquals(DEFAULT_BUFFER_BYTES + BACK_BUFFER_BYTES, roomy.targetBytes)
+        assertEquals(9_663, roomy.backBufferMs)
+        // A 92 Mbps remux in the same room keeps a little over 10 s.
+        assertEquals(10_503, bufferPlan(384 * mb, 390 * mb, 92_000).backBufferMs)
+        // This TV on a tight night (about 200 MB free): no longer nothing, a smaller back buffer.
+        val tight = bufferPlan(384 * mb, 200 * mb, 92_000)
+        assertEquals(DEFAULT_BUFFER_BYTES + 104 * mb.toInt(), tight.targetBytes)
+        assertTrue(tight.backBufferMs in 8_000..9_000)
+        // A 15 Mbps film keeps the longest back buffer, a minute, and only the memory that minute needs.
+        val light = bufferPlan(384 * mb, 390 * mb, 15_000)
+        assertEquals(MAX_BACK_BUFFER_MS, light.backBufferMs)
+        assertTrue(light.targetBytes < DEFAULT_BUFFER_BYTES + BACK_BUFFER_BYTES)
+        assertTrue(light.targetBytes - DEFAULT_BUFFER_BYTES >= 60 * 15_000 / 8 * 1000)
+    }
+
+    @Test
+    fun noBackBufferWithoutRoom() {
+        val mb = 1024L * 1024L
+        val none = BufferPlan(DEFAULT_BUFFER_BYTES, 0)
+        assertEquals(none, bufferPlan(192 * mb, 390 * mb)) // no largeHeap: 70% of 192 MB is all forward buffer
+        assertEquals(none, bufferPlan(384 * mb, 110 * mb)) // under the 96 MB margin plus 24 MB
+        // Room for a few MB only of a very heavy file: under 3 s is not worth it.
+        assertEquals(none, bufferPlan(384 * mb, 125 * mb, 300_000))
     }
 
     @Test
