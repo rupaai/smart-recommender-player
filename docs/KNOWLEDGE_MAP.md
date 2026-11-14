@@ -139,8 +139,15 @@ flowchart LR
 - **Files:** `services/torrent_service.py` (search, download, filing), `services/torrent_ranking.py` ("Best match"), `services/disk_guard.py` (space limits), `services/nl_downloads.py` (states, Retry, restart). Routes `web/routes/torrents.py`, `web/routes/nl_admin.py`.
 - **Settings:** `torrent:` (download folder, `max_media_gb`, `min_free_gb`, ports), `torrent_ranking:` (quality points, size bands; `best_pick:` decent seeders for the one-tap copy). Prowlarr address and key are env/secrets.
 - **Best pick** (the copy one-tap Download takes on New & popular, Today's picks and new episodes by themselves): `best_pick_order()` in `services/torrent_ranking.py`, used by `NewEpisodes.copies()` in `services/nl_new_episodes.py`. Best quality with decent seeders, bigger file first within a quality.
-- **Pages:** Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
+- **Pages:** Get it (below) in the player app; the old Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
 - **Tests:** `tests/test_ranking.py`, `tests/test_disk_guard.py`, `tests/test_download_resume.py`, `tests/test_nl_downloads.py`.
+
+## Get it (search a title, all seasons on one page, choose a copy)
+
+- **What:** the place to start a download in the player app (web, TV, laptop). Search shows real TMDB titles with their year; you pick one, so files are filed under that title. A show is one page with every season (out, on the server, missing), "Get season", "Choose a copy" (best pick first) and single episodes. "Find a copy" links and TV search results that aren't on the server open it. All on the server; pages only show it. Free (TMDB).
+- **Files:** `services/nl_get_it.py` (`GetIt`: search, title page, `get_href`), routes `web/routes/nl_get.py` (`/api/nl/get/search`, `/api/nl/get/{kind}/{tmdb_id}`, `/api/nl/get/item/{id}`). Copies and the download are New & popular's (`/api/nl/new-episodes/copies`, `/download`).
+- **Pages:** `/nl/get`, `/nl/tv/get`, `/player/get` (`web/routes/nl_pages.py`; templates `templates/nl/get.html`, `templates/nl/tv/get.html`); drawn by `static/nl/get-it.js` (started by `static/nl/get-web.js` or `tv.js`). Styles `*-get-*` in `nl.css` and `tv.css`.
+- **Tests:** `tests/test_nl_get_it.py`.
 
 ## New & popular (new episodes and films to download)
 

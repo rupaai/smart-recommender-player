@@ -303,8 +303,9 @@ def run(tmp):
           and res[0]["href"] == f"/nl/title/{ids['Alpha']}" and res[0]["kind"] == "movie" and res[0]["download_href"] is None, res[:1])
     r = client.get("/api/nl/search", params={"q": "gamma"})
     res = r.json()["results"]
-    check("a catalogue-only title is Not in library yet and links to the Download tab",
-          res[0]["label"] == "Not in library yet" and not res[0]["ready"] and res[0]["href"] is None and res[0]["download_href"] == "/#direct", res)
+    check("a catalogue-only title is Not in library yet and links to Get it",
+          res[0]["label"] == "Not in library yet" and not res[0]["ready"] and res[0]["href"] is None
+          and res[0]["download_href"] == f"/nl/get?item={res[0]['id']}", res)
     r = client.get("/api/nl/search", params={"q": "sigma"})
     check("shows are found and link to the show page", r.json()["results"][0]["kind"] == "show"
           and r.json()["results"][0]["href"] == f"/nl/show/{ids['Sigma']}", r.text[:200])

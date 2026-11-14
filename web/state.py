@@ -28,6 +28,7 @@ from services.media_cleanup import MediaCleanup
 from services.nl_delete import LibraryDelete
 from services.nl_auto_episodes import AutoEpisodes, ready_after
 from services.nl_new_episodes import NewEpisodes, wishmatch_taste
+from services.nl_get_it import GetIt
 from services.nl_browse import NLBrowse
 from services.nl_cast import (
     CastConfig,
@@ -180,6 +181,10 @@ nl_new_episodes = NewEpisodes(
     db, _nl_tmdb, config, taste=_new_episodes_taste, searcher=torrent_searcher,
     foreign_gate=lambda row: passes_foreign_gate(row, "tv", _tv_gate),
 )
+
+
+# Northern Lights "Get it" (services/nl_get_it.py): search a title, every season on one page, pick a copy.
+nl_get_it = GetIt(nl_new_episodes)
 
 
 def _episodes_ready(item_id):

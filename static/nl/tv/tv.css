@@ -335,3 +335,45 @@ html.laptop .tv-card:hover .tv-details { display: flex; }
 .tv-new-ep-state { flex: none; min-width: 9rem; color: var(--text-2); font-weight: 700; }
 .tv-new-tabs { display: flex; flex-wrap: wrap; gap: 1rem; padding: 0.5rem var(--side) 1rem; }
 .tv-new-tabs .tv-pill[aria-selected="true"] { background: var(--surface-2); color: var(--text); }
+
+/* ---- Get it (static/nl/get-it.js): search a title, every season on one page, pick a copy */
+.tv-get { padding: 1.5rem var(--side) 3rem; }
+.tv-get-search { display: grid; gap: 1rem; }
+.tv-get-search-row, .tv-get-kinds, .tv-get-actions { display: flex; flex-wrap: wrap; gap: 1.25rem; padding: 0.5rem; }
+.tv-get-input { flex: 1; min-width: 20rem; max-width: 70rem; height: 5rem; padding: 0 2.25rem; border-radius: 1.25rem; border: 0.125rem solid var(--line);
+  background: rgba(8, 11, 20, 0.6); color: var(--text); font: inherit; font-size: 1.9rem; font-weight: 600; }
+.tv-get-input:focus { border-color: transparent; box-shadow: var(--focus); }
+.tv-get-kinds .tv-pill[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.tv-get-results, .tv-get-seasons { display: grid; gap: 1rem; margin-top: 1.25rem; }
+.tv-get-result { padding: 0.25rem 0.5rem; }
+.tv-get-result-link { display: flex; align-items: center; gap: 1.75rem; padding: 1rem 1.25rem; border-radius: 1.25rem; background: var(--fill); text-decoration: none; color: var(--text); }
+.tv-get-result-link:focus { box-shadow: var(--focus); background: var(--surface); }
+.tv-get-art { flex: none; width: 6.5rem; aspect-ratio: 2 / 3; border-radius: 0.75rem; overflow: hidden; background: var(--surface-2); }
+.tv-get-art img, .tv-get-head-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tv-get-result-text { flex: 1; min-width: 0; }
+.tv-get-result-title { font-size: 1.75rem; font-weight: 700; }
+.tv-get-result-meta, .tv-get-meta, .tv-get-copy-meta, .tv-get-empty, .tv-get-note { color: var(--text-2); }
+.tv-get-pill { flex: none; font-weight: 700; padding: 0.4rem 1.1rem; border-radius: 999px; background: var(--surface-2); color: var(--text-2); }
+.tv-get-pill.is-here { color: var(--ready); }
+.tv-get-pill.is-part { color: var(--warn); }
+.tv-get-head { display: flex; gap: 2.5rem; margin-bottom: 1rem; }
+.tv-get-head-art { flex: none; width: 13rem; aspect-ratio: 2 / 3; border-radius: 1rem; overflow: hidden; background: var(--surface-2); }
+.tv-get-head-text { min-width: 0; display: grid; gap: 0.6rem; align-content: start; }
+.tv-get-title { margin: 0; font-size: 3rem; }
+.tv-get-h2 { font-size: 2rem; margin: 1.5rem 0 0; }
+.tv-get-season { padding: 1.25rem 1rem; border-top: 0.1rem solid var(--line); display: grid; gap: 0.5rem; }
+.tv-get-season-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1.5rem; padding: 0 0.5rem; }
+.tv-get-season-title { margin: 0; font-size: 1.9rem; }
+.tv-get-copies, .tv-get-episodes { display: grid; gap: 0.75rem; padding: 0.75rem 0.5rem 0; }
+.tv-get-copy, .tv-get-ep { display: flex; align-items: center; gap: 1.5rem; }
+.tv-get-copy.is-best { padding: 0.75rem; border-radius: 1rem; background: var(--fill); }
+.tv-get-copy.is-thin .tv-get-copy-meta { color: var(--warn); }
+.tv-get-copy-text { min-width: 0; }
+.tv-get-copy-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 80rem; }
+.tv-get-badge { font-size: 1rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ready); }
+.tv-get-ep-state { flex: none; min-width: 9rem; color: var(--text-2); font-weight: 700; }
+.tv-get-msg { margin: 0 0.5rem; font-weight: 700; }
+.tv-get-msg:empty { display: none; }
+.tv-get-msg.is-ok { color: var(--ready); }
+.tv-get-msg.is-bad { color: var(--bad); }
+.tv-get-msg-link { text-decoration: underline; }
