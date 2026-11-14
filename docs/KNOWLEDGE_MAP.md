@@ -137,7 +137,8 @@ flowchart LR
 
 - **What:** search Prowlarr, YTS and Apibay; rank the copies; download; file into Jellyfin's folders.
 - **Files:** `services/torrent_service.py` (search, download, filing), `services/torrent_ranking.py` ("Best match"), `services/disk_guard.py` (space limits), `services/nl_downloads.py` (states, Retry, restart). Routes `web/routes/torrents.py`, `web/routes/nl_admin.py`.
-- **Settings:** `torrent:` (download folder, `max_media_gb`, `min_free_gb`, ports), `torrent_ranking:` (quality points, size bands). Prowlarr address and key are env/secrets.
+- **Settings:** `torrent:` (download folder, `max_media_gb`, `min_free_gb`, ports), `torrent_ranking:` (quality points, size bands; `best_pick:` decent seeders for the one-tap copy). Prowlarr address and key are env/secrets.
+- **Best pick** (the copy one-tap Download takes on New & popular, Today's picks and new episodes by themselves): `best_pick_order()` in `services/torrent_ranking.py`, used by `NewEpisodes.copies()` in `services/nl_new_episodes.py`. Best quality with decent seeders, bigger file first within a quality.
 - **Pages:** Download tab in `static/app.js`; `static/nl/downloads.js` (phone and TV).
 - **Tests:** `tests/test_ranking.py`, `tests/test_disk_guard.py`, `tests/test_download_resume.py`, `tests/test_nl_downloads.py`.
 
@@ -264,6 +265,7 @@ Guide: [guides/training.md](guides/training.md).
 | turn real watched cleanup on or off | `media_cleanup.dry_run` in `homelab/config.yaml` |
 | clean up what only one of us watched | `media_cleanup.watched_by: any` (`all` = both of us) |
 | change "Best match" download ranking | `torrent_ranking:` in the config |
+| change how many seeders the one-tap "best pick" copy needs | `torrent_ranking.best_pick` (`min_seeders`, `per_gb`) in the config |
 | change which new episodes and popular shows are listed | `new_episodes:` in `config.yaml` |
 | keep more or fewer episodes ready, or stop auto-downloading episodes | `auto_episodes.episodes_ahead` / `enabled` in `homelab/config.yaml` |
 | change the streaming-service tabs or their country | `new_episodes.providers` and `watch_region` (country in `config.local.yaml`) |

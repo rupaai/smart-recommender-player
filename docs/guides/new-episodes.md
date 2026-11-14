@@ -67,9 +67,13 @@ A whole season is only downloaded when you choose "Get whole season" in the seas
 **A film**: "Get movie" searches for "Title Year" and keeps copies whose name has the title and a year
 within one of the film's. If none is found it says so: films often show up once they're out to stream or buy.
 
-The server searches for that episode the same way the Download tab does and ranks copies with "Best match"
-(quality, how many people share it, sensible size). It drops copies of a different episode, a different show
-or several seasons at once, then starts the best one. "Choose another copy" shows the full list.
+The server searches for that episode the same way the Download tab does. It drops copies of a different
+episode, a different show or several seasons at once, then puts the **best pick** first: the best quality
+that still has decent seeders (at least 10, plus 1 for every 4 GB, so an 80 GB remux needs 30). Among copies
+of the same quality the bigger file goes first (a remux beats a smaller encode), and a copy far too small for
+its quality (often a fake) goes last. If no copy has decent seeders, "Best match" order is used. One tap starts
+the best pick; "Other copies" shows the full list, with "Best pick" and "few for this size" marked. Change the
+numbers in `torrent_ranking.best_pick` in `config.yaml`.
 Progress shows on the Downloads screen as usual. The links to the copies never leave the server.
 
 If no copy is found yet, it says so: new episodes often turn up a few hours after they air.

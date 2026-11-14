@@ -10,7 +10,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services.torrent_ranking import (  # noqa: E402
+    best_pick_order,
     classify_release,
+    decent_seeders,
     load_ranking_config,
     query_scope,
     rank_results,
@@ -81,6 +83,32 @@ check("episode search: episodes first", episode[0].startswith("The Bear S02E06")
 packs = rank_results([dict(x) for x in tv], "The Bear S02", "tv", cfg)
 p1080 = next(x for x in packs if x["name"].endswith("1080p WEB-DL"))
 check("pack flagged with episodes and per-episode size", p1080["is_pack"] and p1080["episodes"] == 10 and p1080["per_episode_bytes"] == int(14 * GB / 10))
+
+print("Best pick (best quality that still has decent seeders)")
+check("decent seeders grow with size", decent_seeders(int(2 * GB), cfg) == 11 and decent_seeders(int(80 * GB), cfg) == 30)
+films = [
+    r("webdl1080", "1080p", 6.4, 140),
+    r("remux_thin", "2160p", 118, 6),        # best quality, but 6 people will never finish 118 GB
+    r("remux_ok", "2160p", 80, 45),          # big but well shared: the one she'd take by hand
+    r("webdl4k", "2160p", 18.5, 85),
+    r("fake4k", "2160p", 1.0, 400),          # far too small for 4K
+    r("720_big", "720p", 1.3, 900),
+]
+picked = best_pick_order([dict(x) for x in films], "movie", cfg)
+names = [x["name"] for x in picked]
+check("well shared 4K remux is the best pick, not pushed down for being big", names[0] == "remux_ok", names)
+check("only the first is marked best pick", picked[0]["best_pick"] and not any(x["best_pick"] for x in picked[1:]))
+check("4K before 1080p before 720p among well shared", names.index("webdl4k") < names.index("webdl1080") < names.index("720_big"), names)
+check("a far-too-small 4K comes after every normal-sized well shared copy", names.index("fake4k") > names.index("720_big"), names)
+check("thin remux is last and flagged", names[-1] == "remux_thin" and picked[-1]["seeds_ok"] is False, names)
+nobody = best_pick_order([dict(r("a", "2160p", 40, 3)), dict(r("b", "1080p", 10, 8))], "movie", cfg)
+check("nothing decent: falls back to Best match order and still picks one", nobody[0]["best_pick"] and nobody[0]["name"] == "b",
+      [x["name"] for x in nobody])
+strict = load_ranking_config({"torrent_ranking": {"best_pick": {"min_seeders": 100}}})
+check("min_seeders comes from the config", best_pick_order([dict(x) for x in films], "movie", strict)[0]["name"] == "webdl1080")
+packs = best_pick_order([dict(r("Show S03 2160p", "2160p", 41, 64)), dict(r("Show S03 1080p", "1080p", 15.8, 240))], "tv", cfg)
+check("season packs: 4K pack with 64 seeders wins", packs[0]["name"] == "Show S03 2160p" and packs[0]["is_pack"])
+check("empty list is fine", best_pick_order([], "movie", cfg) == [])
 
 print("Config overrides")
 cfg2 = load_ranking_config({"torrent_ranking": {"quality_points": {"720p": 99}, "seeders": {"per_gb": 0}}})

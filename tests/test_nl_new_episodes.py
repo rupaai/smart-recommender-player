@@ -346,6 +346,25 @@ def run(tmp):
     check("copies never carry a magnet link", "magnet" not in r.text)
     check("the search asked for the episode as a show", searcher.queries[-1] == ("Sigma S02E02", "tv", "best"), searcher.queries[-1])
 
+    # Best pick: the best quality that still has decent seeders goes first, so one tap takes it.
+    real_search = searcher.search
+    gb = 1024 ** 3
+
+    def picky_search(query, media_type="movie", sort=None, sort_by_size=True):
+        rows = [("Sigma.S02E02.1080p.WEB-DL", "1080p", 2, 300, 90),
+                ("Sigma.S02E02.2160p.REMUX", "2160p", 12, 3, 40),     # best quality, but 3 people sharing
+                ("Sigma.S02E02.2160p.WEB-DL", "2160p", 6, 40, 70)]
+        return [{"name": n, "quality": q, "size_bytes": int(g * gb), "size_display": f"{g} GB", "seeds": sd, "score": sc,
+                 "magnet": f"magnet:?xt=urn:btih:{700 + i:040d}&dn={n}"} for i, (n, q, g, sd, sc) in enumerate(rows)]
+
+    searcher.search = picky_search
+    copies = client.get("/api/nl/new-episodes/copies", params={"tmdb_id": 500, "season": 2, "episode": 2}).json()["copies"]
+    check("best pick: well shared 4K first, thin remux last", [c["name"] for c in copies] ==
+          ["Sigma.S02E02.2160p.WEB-DL", "Sigma.S02E02.1080p.WEB-DL", "Sigma.S02E02.2160p.REMUX"], copies)
+    check("best pick is flagged, few sharing is flagged", copies[0]["best_pick"] and copies[0]["seeds_ok"]
+          and not copies[2]["seeds_ok"] and not copies[1]["best_pick"], copies)
+    searcher.search = real_search
+
     started = []
 
     async def fake_download(magnet, download_id, movie_id, title, media_type="movie"):
