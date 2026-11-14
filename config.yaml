@@ -93,6 +93,9 @@ torrent_ranking:
     480p: [0.1, 0.8]
   scope_mismatch_multiplier: 0.5  # season pack when you searched an episode, or the reverse
   episodes_per_season: 10         # assumed when a pack's name doesn't say
+  best_pick:              # the copy one-tap Download takes: best quality that still has decent seeders
+    min_seeders: 10       # decent = at least min_seeders + per_gb x size in GB
+    per_gb: 0.25          # (an 80 GB remux needs 30 seeders, a 2 GB episode 11)
 
 # Northern Lights "New & popular" (services/nl_new_episodes.py): new episodes of your shows and popular
 # shows still airing, with one-tap download. Uses TMDB only (free). Every key is optional.

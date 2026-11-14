@@ -29,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+from services.torrent_ranking import best_pick_order, load_ranking_config
+
 IMAGE_BASE = "https://image.tmdb.org/t/p/"
 
 DEFAULTS: Dict[str, Any] = {
@@ -362,6 +364,7 @@ class NewEpisodes:
         self.db = db
         self.tmdb_get = tmdb_get
         self.cfg = settings_from(config)
+        self.ranking_cfg = load_ranking_config(config)
         self.taste = taste
         self.searcher = searcher
         self.foreign_gate = foreign_gate
@@ -722,6 +725,8 @@ class NewEpisodes:
             query = f"{title} {episode_code(season, episode)}"
             results = self.searcher.search(query, media_type="tv", sort="best") or []
             matched = [r for r in results if r.get("magnet") and copy_matches(r.get("name") or "", title, season, episode)]
+        # Best pick first (best quality with decent seeders), so a one-tap Download takes it.
+        matched = best_pick_order(matched, "movie" if kind == "movie" else "tv", self.ranking_cfg)
         out = []
         now = self.clock()
         with self._lock:
@@ -732,8 +737,10 @@ class NewEpisodes:
                 self._copies[copy_id] = {"at": now, "magnet": r["magnet"], "name": r.get("name") or "", "kind": kind,
                                          "tmdb_id": int(tmdb_id), "season": season, "episode": episode}
                 out.append({"copy_id": copy_id, "name": r.get("name") or "", "quality": r.get("quality"),
-                            "size": r.get("size_display") or "", "seeds": int(r.get("seeds") or 0),
-                            "score": r.get("score")})
+                            "size": r.get("size_display") or "", "size_bytes": int(r.get("size_bytes") or 0),
+                            "seeds": int(r.get("seeds") or 0), "score": r.get("score"),
+                            "seeds_ok": bool(r.get("seeds_ok")), "best_pick": bool(r.get("best_pick")),
+                            "is_pack": bool(r.get("is_pack"))})
         return out
 
     def catalogue_item(self, tmdb_id: int, kind: str = "tv") -> int:

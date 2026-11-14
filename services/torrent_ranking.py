@@ -34,6 +34,9 @@ DEFAULTS: Dict[str, Any] = {
     "scope_mismatch_multiplier": 0.5,
     # TV: episodes assumed per season when the name doesn't say.
     "episodes_per_season": 10,
+    # "Best pick" (the copy a one-tap Download takes): the best quality that still has decent seeders.
+    # Decent = at least min_seeders + per_gb x size in GB, so a big file needs more people sharing it.
+    "best_pick": {"min_seeders": 10, "per_gb": 0.25},
 }
 
 
@@ -105,10 +108,12 @@ def score_result(
 
     bands = cfg["episode_size_bands_gb" if media_type == "tv" else "movie_size_bands_gb"]
     fit = 1.0
+    too_small = False
     band = bands.get(quality)
     if band and size_gb > 0:
         per_item = size_gb / episodes
-        if per_item < band[0] or per_item > band[1]:
+        too_small = per_item < band[0]
+        if too_small or per_item > band[1]:
             fit = cfg["size_fit_penalty"]
 
     scope_mult = 1.0
@@ -122,7 +127,39 @@ def score_result(
         "is_pack": kind == "pack",
         "episodes": episodes if kind == "pack" else None,
         "per_episode_bytes": int(result["size_bytes"] / episodes) if kind == "pack" and result.get("size_bytes") else None,
+        "too_small": too_small,
     }
+
+
+def decent_seeders(size_bytes: Optional[int], cfg: Dict[str, Any]) -> int:
+    """Seeders a copy this size needs to count as "decent" for the best pick."""
+    bp = cfg.get("best_pick") or DEFAULTS["best_pick"]
+    return int(math.ceil(float(bp.get("min_seeders", 10)) + float(bp.get("per_gb", 0)) * (size_bytes or 0) / GB))
+
+
+def best_pick_order(results: List[Dict[str, Any]], media_type: str, cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Copies in "best pick" order: those with decent seeders first, best quality first among them
+    (a copy far too small for its quality, often a fake, after all the others), then the
+    bigger file (a remux beats an encode of the same resolution), then most seeders. Big files are never pushed down for being big. Copies without decent seeders follow in
+    "Best match" order. Marks each copy `seeds_ok` and the first one `best_pick`. Scores the copies
+    first when they have no score yet."""
+    points = cfg["quality_points"]
+    for r in results:
+        if "score" not in r or "too_small" not in r:
+            r.update(score_result(r, media_type, "any", cfg))
+        r["seeds_ok"] = int(r.get("seeds") or 0) >= decent_seeders(r.get("size_bytes"), cfg)
+        r["best_pick"] = False
+
+    def key(r: Dict[str, Any]) -> Tuple:
+        if r["seeds_ok"]:
+            q = points.get(r.get("quality") or "HD", points.get("HD", 45))
+            return (0, 1 if r.get("too_small") else 0, -q, -(r.get("size_bytes") or 0), -(r.get("seeds") or 0))
+        return (1, 0, -(r.get("score") or 0), 0, -(r.get("seeds") or 0))
+
+    ordered = sorted(results, key=key)
+    if ordered:
+        ordered[0]["best_pick"] = True
+    return ordered
 
 
 def rank_results(

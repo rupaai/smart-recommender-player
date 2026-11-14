@@ -34,8 +34,11 @@
       (o.episode ? "&episode=" + encodeURIComponent(o.episode) : "");
   }
 
+  // "Best pick" is the copy one tap takes (best quality with decent seeders); "few sharing" warns that a
+  // copy may be slow or never finish (the server's seeds_ok, torrent_ranking.best_pick in the config).
   function copyLine(c) {
-    return [c.quality, c.size, c.seeds + " sharing"].filter(Boolean).join(" · ");
+    return [c.best_pick ? "Best pick" : "", c.quality, c.is_pack ? "season pack" : "", c.size,
+      c.seeds + (c.seeds_ok === false ? " sharing, few for this size" : " sharing")].filter(Boolean).join(" · ");
   }
 
   function mount(host, opts) {
