@@ -543,9 +543,9 @@ class PlayerController(
         )
         view.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * scale)
         view.setBottomPaddingFraction(
-            SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION + RAISE_STEP_FRACTION * raise
+            SubtitleView.DEFAULT_BOTTOM_PADDING_FRACTION + subtitleLift(raise)
         )
-        subtitleLook.setStyle(scale / MEDIUM_SCALE, RAISE_STEP_FRACTION * raise, background)
+        subtitleLook.setStyle(scale / MEDIUM_SCALE, subtitleLift(raise), background)
     }
 
     /** Bridge v7: subtitle delay in seconds, positive = later. For this stream only; start() sets it back to 0. */
@@ -651,7 +651,6 @@ class PlayerController(
         private const val SEEK_PROGRESS_MS = 200L
         private const val SUB_ID_PREFIX = SIDE_LOADED_SUBTITLE_PREFIX
         private const val MEDIUM_SCALE = 1.15f
-        private const val RAISE_STEP_FRACTION = 0.07f // each "raise" step lifts the lines by 7% of the screen height
         private const val START_BUFFER_MS = 1_000
         // Buffered before playback resumes after a seek or a stall. The network measured 294 Mbps against a 92 Mbps film,
         // so 1 s is quickly refilled and a jump starts about a second sooner. Other buffer sizes are Media3's.
