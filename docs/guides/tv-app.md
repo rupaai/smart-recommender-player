@@ -73,7 +73,7 @@ change `BASE` in `UpdateCheck.kt` to your own repository's release address.
 | `MainActivity.kt` | the WebView that shows the pages |
 | `NativeBridge.kt` | the calls the page can make (play, seek, tracks, stats...) |
 | `PlayerController.kt` | the Media3 player; refresh-rate matching |
-| `PlaybackLogic.kt` | buffer sizes, finding the right audio and subtitle track |
+| `PlaybackLogic.kt` | buffer sizes (forward, and the skip-back memory sized by bitrate), finding the right audio and subtitle track |
 | `NlRenderersFactory.kt`, `AudioDownmix.kt` | lossless sound, surround to stereo |
 | `SubtitleLook.kt` | subtitle size, position, background and delay |
 | `VideoSupport.kt` | Dolby Vision profile 7 |

@@ -143,6 +143,9 @@ const pass = X.infoLines({ source: "converted", audioPath: "passthrough", lastSe
 check("info: passthrough and converted copy and no jump yet", pass[0].indexOf("Converted copy") === 0
   && pass.indexOf("Sound: sent to speakers untouched") >= 0 && pass.indexOf("Last jump: none yet") >= 0, pass);
 check("info: 6 decoded channels", X.infoLines({ audioPath: "decoded", audioChannels: 6 }).indexOf("Sound: decoded on the TV, 6 channels out") >= 0);
+check("info: seconds kept for a skip back", X.infoLines({ backBufferSeconds: 10 }).indexOf("Kept for skip back: last 10 s") >= 0);
+check("info: no skip-back memory says why", X.infoLines({ backBufferSeconds: 0 }).indexOf("Kept for skip back: nothing (the TV is short of memory)") >= 0);
+check("info: older app without the field shows no skip-back line", !X.infoLines({}).some((l) => l.indexOf("Kept for skip back") === 0));
 check("info: empty stats still give lines", X.infoLines(null).length >= 3);
 
 // ---- "Ends at" above the seek bar

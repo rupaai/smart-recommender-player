@@ -17,22 +17,47 @@ private const val MB = 1024L * 1024L
 /** Media3's own memory buffer: 2000 + 200 segments of 64 KB (video + audio), about 15 s of a 92 Mbps remux. */
 const val DEFAULT_BUFFER_BYTES = 2_200 * 65_536
 
-/** Extra room for the back buffer: about 10 s of a 100 Mbps remux (lighter films keep 10 s in less). */
+/** Most memory the back buffer may take: about 10 s of a 100 Mbps remux, a minute of a lighter film. */
 const val BACK_BUFFER_BYTES = 128 * 1024 * 1024
-const val BACK_BUFFER_MS = 10_000
+
+/** Below this much spare memory a back buffer holds too little to help, so none is kept. */
+const val MIN_BACK_BUFFER_BYTES = 24 * 1024 * 1024
+
+/** The longest back buffer kept, even for a light film. */
+const val MAX_BACK_BUFFER_MS = 60_000
+
+/** A back buffer shorter than this is not worth the memory. */
+const val MIN_BACK_BUFFER_MS = 3_000
+
+/** Bitrate assumed when the server did not say: a heavy remux, so the back buffer never takes more than planned. */
+const val ASSUMED_BITRATE_KBPS = 100_000
+
+/** Free memory left for the rest of the TV however much the back buffer could use. */
+private const val MEMORY_MARGIN_BYTES = 96 * MB
 
 /** How much the player may hold in memory: [targetBytes] in all, of which the last [backBufferMs] already played. */
 data class BufferPlan(val targetBytes: Int, val backBufferMs: Int)
 
 /**
- * Keeps the last 10 s in memory (instant skip back) only when the app's heap cap ([maxHeapBytes], 384 MB with
- * largeHeap) and the TV's free memory at the start of playback ([availBytes]) both have room for it; the forward
- * buffer stays the size Media3 picks. Never more than 70% of the heap, so the rest of the app keeps its share.
+ * Keeps what was just played in memory, so a skip back needs no new download. The forward buffer stays the size
+ * Media3 picks; the back buffer gets what is left of the app's heap cap ([maxHeapBytes], 384 MB with largeHeap; never
+ * more than 70% of it) and of the TV's free memory at the start of playback ([availBytes], minus a margin), up to
+ * [BACK_BUFFER_BYTES]. Its length follows the file's bitrate ([bitrateKbps], 0 when unknown): the same memory holds
+ * 10 s of a 92 Mbps remux or a minute of a 15 Mbps film. Before, the back buffer was all or nothing (10 s only when
+ * 224 MB were free), and this TV is often just under that, so a skip back was quick on some nights and slow on others.
  */
-fun bufferPlan(maxHeapBytes: Long, availBytes: Long): BufferPlan {
-    val withBack = DEFAULT_BUFFER_BYTES.toLong() + BACK_BUFFER_BYTES
-    val fits = withBack <= maxHeapBytes * 7 / 10 && availBytes >= BACK_BUFFER_BYTES + 96 * MB
-    return if (fits) BufferPlan(withBack.toInt(), BACK_BUFFER_MS) else BufferPlan(DEFAULT_BUFFER_BYTES, 0)
+fun bufferPlan(maxHeapBytes: Long, availBytes: Long, bitrateKbps: Int = 0): BufferPlan {
+    val none = BufferPlan(DEFAULT_BUFFER_BYTES, 0)
+    val room = minOf(BACK_BUFFER_BYTES.toLong(), maxHeapBytes * 7 / 10 - DEFAULT_BUFFER_BYTES, availBytes - MEMORY_MARGIN_BYTES)
+    if (room < MIN_BACK_BUFFER_BYTES) return none
+    val kbps = (if (bitrateKbps > 0) bitrateKbps else ASSUMED_BITRATE_KBPS).toLong()
+    // kbps is bits per millisecond. A tenth stays spare: the back buffer starts at the keyframe before its edge.
+    val fitMs = room * 8 / kbps * 9 / 10
+    if (fitMs < MIN_BACK_BUFFER_MS) return none
+    if (fitMs <= MAX_BACK_BUFFER_MS) return BufferPlan((DEFAULT_BUFFER_BYTES + room).toInt(), fitMs.toInt())
+    // A light film: its minute needs less than the room, so only that much is added.
+    val needed = MAX_BACK_BUFFER_MS * kbps / 8 * 10 / 9
+    return BufferPlan((DEFAULT_BUFFER_BYTES + needed).toInt(), MAX_BACK_BUFFER_MS)
 }
 
 /** Id prefix of the text tracks the page asks Media3 to side-load (see PlayerController). */
@@ -185,6 +210,8 @@ data class PlaybackStats(
     val bandwidthMbps: Double = 0.0,
     val bufferedAheadSeconds: Double = 0.0,
     val lastSeekMs: Long = -1,
+    /** Seconds already played that stay in memory for a skip back (0 = none, the TV had no room). */
+    val backBufferSeconds: Int = 0,
 ) {
     fun toJson(memoryMb: Int): String = JSONObject()
         .put("source", source)
@@ -199,6 +226,7 @@ data class PlaybackStats(
         .put("bandwidthMbps", bandwidthMbps)
         .put("bufferedAheadSeconds", bufferedAheadSeconds)
         .put("lastSeekMs", lastSeekMs)
+        .put("backBufferSeconds", backBufferSeconds)
         .put("memoryMb", memoryMb)
         .toString()
 }

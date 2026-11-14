@@ -115,6 +115,8 @@
     if (sound) { lines.push("Sound: " + sound); }
     var jump = num(st.lastSeekMs);
     lines.push("Last jump: " + (jump === null || jump < 0 ? "none yet" : (Math.round(jump / 100) / 10) + " s"));
+    var back = num(st.backBufferSeconds);
+    if (back !== null) { lines.push("Kept for skip back: " + (back > 0 ? "last " + Math.round(back) + " s" : "nothing (the TV is short of memory)")); }
     lines.push("Dropped frames: " + (num(st.droppedFrames) || 0));
     var ahead = num(st.bufferedAheadSeconds);
     lines.push("Loaded ahead: " + (ahead === null ? 0 : Math.round(ahead)) + " s");
