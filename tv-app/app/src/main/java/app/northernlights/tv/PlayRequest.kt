@@ -30,6 +30,8 @@ data class PlayRequest(
     val audioOrder: Int,
     val subtitleIndex: Int,
     val nextUpLabel: String?,
+    /** The file's bitrate in kbps from the server (0 = unknown); sizes the back buffer (see bufferPlan). */
+    val bitrateKbps: Int = 0,
 ) {
     companion object {
         /**
@@ -96,6 +98,7 @@ data class PlayRequest(
                 audioOrder = if (o.isNull("audioOrder")) -1 else o.optInt("audioOrder", -1),
                 subtitleIndex = o.optInt("subtitleIndex", -1),
                 nextUpLabel = next,
+                bitrateKbps = o.optInt("bitrateKbps", 0).coerceIn(0, 1_000_000),
             )
         }
     }

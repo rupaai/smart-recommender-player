@@ -375,7 +375,8 @@
    *
    *   NorthernLightsNative.play(json)      json = {url, kind, startSeconds, title, subtitle, skipSeconds,
    *       audioTracks:[{index,label,language,isDefault}], subtitleTracks:[{index,label,language,url,kind}],
-   *       audioIndex, subtitleIndex, nextUp: null | {label}}. url and subtitle urls are absolute
+   *       audioIndex, subtitleIndex, nextUp: null | {label}, bitrateKbps (the file's bitrate, 0 = unknown; sizes the
+   *       app's skip-back memory; older apps ignore it)}. url and subtitle urls are absolute
    *       (our /nl/jf/... proxy, never Jellyfin). Calling play again replaces the current stream
    *       (audio change, or a picture subtitle: the page re-fetches and plays again at startSeconds).
    *   NorthernLightsNative.pause() / resume()
@@ -391,7 +392,8 @@
    *   NorthernLightsNative.stats()          (version 6) JSON string for the info panel: {source: original|converted,
    *                                         videoDecoder, width, height, hdr, droppedFrames, audioLabel, audioPath:
    *                                         passthrough|decoded|"", audioChannels, bandwidthMbps, bufferedAheadSeconds,
-   *                                         lastSeekMs (-1 = none yet), memoryMb}
+   *                                         lastSeekMs (-1 = none yet), memoryMb, backBufferSeconds (newer apps: seconds
+   *                                         kept for a skip back, 0 = none)}
    *   (version 6) play() subtitleTracks entries of kind "embedded" carry order = the track's position among the file's own
    *                                         subtitle streams; setSubtitle(index) selects it and Media3 draws it (no url)
    *   NorthernLightsNative.stop()           leave the native player (page teardown)
@@ -578,6 +580,7 @@
         title: n.title || "",
         subtitle: n.subtitle || "",
         skipSeconds: n.skipSeconds || 10,
+        bitrateKbps: n.bitrateKbps > 0 ? Math.round(n.bitrateKbps) : 0,
         audioTracks: (n.audioTracks || []).map(function (t) {
           return { index: t.index, label: t.label || "", language: t.language || "", isDefault: !!t.is_default };
         }),

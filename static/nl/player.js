@@ -1150,6 +1150,8 @@
       title: stream.title || "",
       subtitle: epEl.hidden ? "" : epEl.textContent,
       skipSeconds: S.skip,
+      // The file's bitrate: the TV app sizes what it keeps in memory for a skip back by it.
+      bitrateKbps: (stream.quality && stream.quality.source_kbps) || 0,
       audioTracks: stream.audio_tracks || [],
       subtitleTracks: stream.subtitle_tracks || [],
       audioIndex: stream.audio_index,
