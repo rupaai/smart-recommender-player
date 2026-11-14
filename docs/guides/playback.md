@@ -93,6 +93,7 @@ menu) showing whether it plays the original, the decoder, dropped frames, buffer
 | a "Play a converted copy" button | Jellyfin can't send the original to this screen; the reason is on the card |
 | a subtitle stuck on "(loading)" | a picture subtitle file on the TV (see above) |
 | stutter on a huge file | check Playback info: buffer and bandwidth |
+| subtitles too low or too high | Position steps: TV `subtitleLift()` in tv-app `PlaybackLogic.kt` (11%, 15%, 19% of the screen height); web `CUE_LINES` in `static/nl/player-core.js` (2, 3, 4 lines up) |
 | skip back slow on the TV | check Playback info: "Kept for skip back" (nothing = the TV was short of memory) |
 
 ## Where it lives

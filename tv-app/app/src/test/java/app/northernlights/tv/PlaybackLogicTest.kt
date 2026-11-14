@@ -45,6 +45,15 @@ class PlaybackLogicTest {
     }
 
     @Test
+    fun subtitlePositionSteps() {
+        assertEquals(0.03f, subtitleLift(0), 0.0001f) // Normal sits a little above Media3's place
+        assertEquals(0.07f, subtitleLift(1), 0.0001f)
+        assertEquals(0.11f, subtitleLift(2), 0.0001f) // High is lower than the old 14%
+        assertEquals(0.11f, subtitleLift(9), 0.0001f)
+        assertEquals(0.03f, subtitleLift(-1), 0.0001f)
+    }
+
+    @Test
     fun sideLoadedIdsAreRecognised() {
         assertTrue(isSideLoadedSubtitleId("nlsub3"))
         assertTrue(isSideLoadedSubtitleId("1:nlsub3"))

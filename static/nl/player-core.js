@@ -111,7 +111,9 @@
     var cueLevel = 0;         // 0 normal, 1 raised, 2 high (P15)
     var styleEl = null;
     var volumeProbe = null;   // can the page set the volume? (see canSetVolume)
-    var CUE_LINES = [null, -3, -6];   // cue.line: negative counts lines up from the bottom
+    // cue.line: negative counts lines up from the bottom. Normal was the browser's own (the last line) and too low,
+    // High 6 lines up and too high (Labiba, 2026-11-14): now 2, 3 and 4 lines up.
+    var CUE_LINES = [-2, -3, -4];
     var CUE_SIZES = { S: 90, M: 115, L: 150, XL: 200 };   // percent of the browser's default cue size
 
     function emit(name, detail) {

@@ -91,12 +91,12 @@ check("a ::cue rule is generated with the size and the shadow",
 check("raised puts shown cues 3 lines up from the bottom", b.track.cues.every((c) => c.line === -3 && c.snapToLines === true), b.track.cues);
 p.setSubtitleStyle({ size: "S", background: "box", raise: 2 });
 check("the same style element is reused; box has a dark background", env.styleEls.length === 1 && /rgba\(0, 0, 0, 0\.72\)/.test(env.styleEls[0].textContent) && /90%/.test(env.styleEls[0].textContent));
-check("high is 6 lines", b.track.cues.every((c) => c.line === -6));
+check("high is 4 lines", b.track.cues.every((c) => c.line === -4));
 p.setSubtitleStyle({ size: "M", background: "none", raise: 0 });
-check("normal position goes back to auto", b.track.cues.every((c) => c.line === "auto"), b.track.cues);
+check("normal is 2 lines up, a little above the bottom", b.track.cues.every((c) => c.line === -2 && c.snapToLines === true), b.track.cues);
 check("none: no background and no shadow", /background-color: transparent; text-shadow: none;/.test(env.styleEls[0].textContent));
 p.setSubtitleStyle({ size: "bogus", background: "bogus", raise: 99 });
-check("bad values fall back to M, box and the highest line", /115%/.test(env.styleEls[0].textContent) && b.track.cues.every((c) => c.line === -6));
+check("bad values fall back to M, box and the highest line", /115%/.test(env.styleEls[0].textContent) && b.track.cues.every((c) => c.line === -4));
 
 // the TV adapter
 function nativeCore(version) {

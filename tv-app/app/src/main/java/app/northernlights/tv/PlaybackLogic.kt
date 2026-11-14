@@ -145,6 +145,13 @@ fun padPictureBox(box: CueBox, bitmapWidth: Int, bitmapHeight: Int, padPx: Int):
 }
 
 /**
+ * How far above Media3's own place the subtitles sit, as a fraction of the screen height, for the Position setting
+ * (0 Normal, 1 Raised, 2 High). Labiba (2026-11-14): Normal was too low and High too high, with 7% steps from Media3's
+ * place. Now Normal is 3% up and each step adds 4%: the bottom edge at 11%, 15% and 19% of the screen height.
+ */
+fun subtitleLift(raise: Int): Float = 0.03f + 0.04f * raise.coerceIn(0, 2)
+
+/**
  * Text subtitles that carry their own line position (ASS/SSA always do) ignore the view's bottom padding, so the
  * Position setting lifts them here: a line in the lower half of the screen moves up by [raise]; lines placed near
  * the top (signs, songs) stay where they are.
