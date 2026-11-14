@@ -308,6 +308,45 @@ def subtitle_label(stream: Dict[str, Any]) -> str:
     return " \u00b7 ".join(parts)
 
 
+_TEXT_SUB_CODECS = {"subrip": "SRT", "srt": "SRT", "ass": "ASS", "ssa": "SSA", "webvtt": "WebVTT", "vtt": "WebVTT",
+                    "mov_text": "Text", "text": "Text"}
+
+
+def _title_hint(stream: Dict[str, Any], label: str) -> str:
+    """The stream's own title ("Full", "Signs & Songs", "English SDH") when it says more than the label already does."""
+    title = " ".join((stream.get("Title") or "").split())[:40]
+    if not title:
+        return ""
+    words = set(re.findall(r"[a-z]+", title.lower()))
+    known = set(re.findall(r"[a-z]+", label.lower())) | {"subtitle", "subtitles", "sub", "subs"}
+    return title if words - known else ""
+
+
+def _name_duplicates(subs: list, streams: Dict[int, Dict[str, Any]]) -> None:
+    """Two subtitles named the same ("English", "English") can't be told apart in the menu (Labiba, 2026-11-14:
+    L.A. Confidential). Tracks that share a name get what tells them apart: the stream's own title, "downloaded"
+    for a file next to the film, or the format; a number if they are still the same."""
+    def groups():
+        by: Dict[str, list] = {}
+        for t in subs:
+            by.setdefault(t["label"], []).append(t)
+        return [g for g in by.values() if len(g) > 1]
+
+    for group in groups():
+        for t in group:
+            st = streams.get(t["index"], {})
+            hint = _title_hint(st, t["label"])
+            if not hint and t.get("is_external"):
+                hint = "downloaded"
+            if not hint and not t.get("picture"):
+                hint = _TEXT_SUB_CODECS.get((t.get("codec") or "").lower(), "")
+            if hint:
+                t["label"] += " \u00b7 " + hint
+    for group in groups():
+        for n, t in enumerate(group[1:], start=2):
+            t["label"] += f" ({n})"
+
+
 _SUB_EXT = re.compile(r"Stream\.[A-Za-z0-9]+$")
 
 
@@ -369,6 +408,7 @@ def extract_tracks(media_source: Dict[str, Any], jf_id: str, source_id: str, emb
             else:
                 track["url"] = None if image else _subtitle_url(st, jf_id, source_id)
             subs.append(track)
+    _name_duplicates(subs, {st.get("Index"): st for st in media_source.get("MediaStreams") or [] if st.get("Type") == "Subtitle"})
     return {"audio_tracks": audio, "subtitle_tracks": subs}
 
 

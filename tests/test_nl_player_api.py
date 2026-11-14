@@ -187,6 +187,24 @@ def run(tmp):
           srt[0]["url"] == "/nl/jf/Videos/jf1/ms1/Subtitles/3/0/Stream.vtt", srt[0]["url"])
     check("an ASS DeliveryUrl becomes .vtt and keeps its other query parameters",
           srt[1]["url"] == "/nl/jf/Videos/jf1/ms1/Subtitles/6/0/Stream.vtt?CopyTimestamps=true", srt[1]["url"])
+    # Two subtitles that would both read "English" (L.A. Confidential, 2026-11-14) get told apart.
+    twin = jp.extract_tracks({"MediaStreams": [
+        {"Index": 3, "Type": "Subtitle", "Codec": "subrip", "Language": "eng"},
+        {"Index": 4, "Type": "Subtitle", "Codec": "subrip", "Language": "eng", "Title": "English"},
+        {"Index": 5, "Type": "Subtitle", "Codec": "pgssub", "Language": "eng", "Title": "Commentary"},
+        {"Index": 6, "Type": "Subtitle", "Codec": "pgssub", "Language": "eng"},
+        {"Index": 7, "Type": "Subtitle", "Codec": "subrip", "Language": "eng", "IsExternal": True},
+        {"Index": 8, "Type": "Subtitle", "Codec": "ass", "Language": "fre", "Title": "Signs & Songs"},
+        {"Index": 9, "Type": "Subtitle", "Codec": "ass", "Language": "fre", "Title": "Full"},
+        {"Index": 10, "Type": "Subtitle", "Codec": "subrip", "Language": "spa"}]}, "jf1", "ms1")["subtitle_tracks"]
+    names = [t["label"] for t in twin]
+    check("every subtitle name is different", len(set(names)) == len(names), names)
+    check("a title that only repeats the language adds nothing; same format gets a number",
+          names[0] == "English · SRT" and names[1] == "English · SRT (2)", names)
+    check("a picture subtitle shows its own title", names[2] == "English · PGS · Commentary" and names[3] == "English · PGS", names)
+    check("a downloaded file says so", names[4] == "English · downloaded", names)
+    check("titles tell apart signs and full", names[5] == "French · Signs & Songs" and names[6] == "French · Full", names)
+    check("a name used once stays short", names[7] == "Spanish", names)
     check("seconds_to_ticks", jp.seconds_to_ticks(1) == 10_000_000 and jp.seconds_to_ticks(42.5) == 425_000_000
           and jp.seconds_to_ticks(-3) == 0)
 
