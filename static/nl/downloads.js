@@ -177,7 +177,7 @@
           delete rows[k];
         }
       });
-      empty.textContent = "No downloads right now. Search for a title that isn't in the library yet and choose Find a copy to start one.";
+      empty.textContent = "No downloads right now. Use Get it to find a film or show and start one.";
       empty.hidden = downloads.length > 0;
       setStatus("");
       if (tv && refocus) {

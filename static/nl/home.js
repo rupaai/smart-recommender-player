@@ -34,7 +34,7 @@
     any = fill("nl-shows", "nl-shows-list", data.shows, hideable) || any;
     document.getElementById("nl-movies-all").textContent = "See all " + (data.movies_total || "");
     document.getElementById("nl-shows-all").textContent = "See all " + (data.shows_total || "");
-    NL.setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
+    NL.setStatus(any ? "" : "Nothing on the shelf yet. Find something to download in Get it.");
   }).catch(function () {
     NL.setStatus("Could not load the library. Is the app running?");
   });

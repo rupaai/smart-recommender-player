@@ -24,6 +24,7 @@
     if (!href) { return href; }
     if (href.indexOf("/nl/title/") === 0) { return root + "title/" + href.slice("/nl/title/".length); }
     if (href.indexOf("/nl/show/") === 0) { return root + "show/" + href.slice("/nl/show/".length); }
+    if (href.indexOf("/nl/get") === 0) { return root + "get" + href.slice("/nl/get".length); }
     if (href.indexOf("/nl/play/") === 0) {
       if (root === "/player/") { return "/player/play/" + href.slice("/nl/play/".length); }
       return href + (href.indexOf("?") < 0 ? "?" : "&") + "tv=1";
@@ -218,7 +219,7 @@
       }
       any = fillLibrary(r[1], r[2], unwatchedOn, data) || any;
       placeRowHint();
-      setStatus(any ? "" : "Nothing on the shelf yet. Add something from the Download tab of the main app.");
+      setStatus(any ? "" : "Nothing on the shelf yet. Find something to download in Get it.");
       window.NLFocus.start();
     }).catch(function () {
       setStatus("Could not load the library. Is the app running?");
@@ -701,10 +702,11 @@
 
   function resultCard(r) {
     var ready = r.ready && r.href;
+    var getIt = !ready && r.download_href;   // not here yet: opens Get it for this title
     var li = el("li", "tv-item");
-    var a = el(ready ? "a" : "div", "tv-card" + (ready ? "" : " is-away"));
-    if (ready) {
-      a.href = tvHref(r.href);
+    var a = el(ready || getIt ? "a" : "div", "tv-card" + (ready ? "" : " is-away"));
+    if (ready || getIt) {
+      a.href = tvHref(ready ? r.href : r.download_href);
       a.setAttribute("data-nl-focus", "");
     }
     var art = el("div", "tv-art tv-poster");
@@ -715,7 +717,7 @@
     a.appendChild(el("div", "tv-name", r.title));
     var sub = r.kind === "episode" ? r.subtitle : [r.kind === "show" ? "Show" : "Movie", r.year].filter(Boolean).join(" · ");
     a.appendChild(el("div", "tv-meta", sub));
-    a.setAttribute("aria-label", r.title + ", " + r.label);
+    a.setAttribute("aria-label", r.title + ", " + r.label + (getIt ? ", open Get it to download" : ""));
     li.appendChild(a);
     return li;
   }
@@ -1061,6 +1063,14 @@
     window.NLNew.mount(document.getElementById("tv-new"), { tv: true, href: tvHref, status: setStatus, downloads: ROOT + "downloads" });
   }
 
+  /* ----------------------------------------------------------- get it */
+
+  function initGet() {
+    window.NLFocus.remember(false);
+    window.NLGet.mount(document.getElementById("tv-get"), { tv: true, href: tvHref, status: setStatus,
+      downloads: ROOT + "downloads", self: ROOT + "get" });
+  }
+
   /* ------------------------------------------------------------------ init */
 
   if (page === "home") { initHome(); }
@@ -1073,4 +1083,5 @@
   else if (page === "choose") { initChoose(); }
   else if (page === "downloads") { initDownloads(); }
   else if (page === "new") { initNew(); }
+  else if (page === "get") { initGet(); }
 })();

@@ -37,7 +37,7 @@
     if (!c.ready && c.download_href) {
       var find = NL.el("a", "nl-find", "Find a copy");
       find.href = c.download_href;
-      find.setAttribute("aria-label", "Find a copy of " + c.title + " in the Download tab");
+      find.setAttribute("aria-label", "Find a copy of " + c.title + "");
       body.appendChild(find);
     }
     if (window.NLWatch) { body.appendChild(window.NLWatch.interestControl(c.id)); }

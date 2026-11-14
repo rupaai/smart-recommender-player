@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+from services.nl_get_it import get_href
 from services.nl_people import Person, Viewer
 
 STATES = ("yes", "maybe", "pass")
@@ -453,7 +454,7 @@ class NLPicks:
                 "genres": [g.strip() for g in str(e.get("genres") or "").split(",") if g.strip()],
                 "ready": ready,
                 "href": f"/nl/{'show' if is_show else 'title'}/{e['media_item_id']}" if ready else None,
-                "download_href": None if ready else "/#direct",
+                "download_href": None if ready else get_href(e["media_item_id"]),
                 "personal": bool(e["personal"]),
                 "added_by": [ctx.names.get(a["profile_id"], a["name"]) for a in e["added_by"]],
                 "interest": interest_view(ctx, states),

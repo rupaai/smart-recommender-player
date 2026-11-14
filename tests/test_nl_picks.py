@@ -359,7 +359,8 @@ def run(tmp):
     wl = client.get("/api/nl/watchlist").json()
     check("no filter: everything, including a show and a title not in the library", {i["id"] for i in wl["items"]} == {alpha, delta, epsilon, sigma, gamma}, [i["id"] for i in wl["items"]])
     g = next(i for i in wl["items"] if i["id"] == gamma)
-    check("a title not in the library says so and points to the Download tab", g["ready"] is False and g["href"] is None and g["download_href"] == "/#direct", g)
+    check("a title not in the library says so and points to Get it", g["ready"] is False and g["href"] is None
+          and g["download_href"] == f"/nl/get?item={g['id']}", g)
     s = next(i for i in wl["items"] if i["id"] == sigma)
     check("a show links to its page", s["href"] == f"/nl/show/{sigma}" and s["runtime"] is None, s)
     check("your yes sorts first", wl["items"][0]["id"] == alpha, [i["id"] for i in wl["items"]])

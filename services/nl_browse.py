@@ -19,6 +19,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from services.nl_get_it import get_href
 from services.title_scores import card_scores
 from services.jellyfin_playback import (
     PROXY_PREFIX,
@@ -33,7 +34,6 @@ NEW_MAX = 6          # at most this many "New" badges per list (a first scan mus
 HOME_ROW = 18
 RECENT_ROW = 18        # Recently Added / Recently Watched on the home page
 PLAYED_FETCH = 2000    # how many played items to read from Jellyfin (newest first) per person
-DOWNLOAD_HREF = "/#direct"   # the existing app's Download tab (static/app.js switchTab('direct'))
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -639,7 +639,7 @@ class NLBrowse:
                 "ready": ready,
                 "label": "Ready" if ready else "Not in library yet",
                 "href": f"/nl/{'show' if is_show else 'title'}/{r['id']}" if ready else None,
-                "download_href": None if ready else DOWNLOAD_HREF,
+                "download_href": None if ready else get_href(r["id"]),
             })
         results.sort(key=lambda x: not x["ready"])  # stable: relevance is kept inside each group
         episodes = self._search_episodes(query)

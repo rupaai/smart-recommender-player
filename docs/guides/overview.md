@@ -69,9 +69,10 @@ Next to each title it keeps:
 3. **Wishmatch** reads the wish, picks about 2,000 well-known candidates, maybe asks one or
    two questions ("silly or witty?"), and ranks them by how well they fit the wish and your
    tastes. See [Wishmatch](wishmatch.md).
-4. **Getting it.** If you don't have the title yet, the Download page searches, ranks the
-   copies ("Best match": quality, how many people share it, sensible size) and downloads it
-   into the media folder in Jellyfin's naming, then tells Jellyfin to look.
+4. **Getting it.** If you don't have the title yet, the Get it page (web, TV and laptop) finds
+   the title, shows every season of a show on one page, and puts the best pick first: the best
+   quality that still has decent seeders. You can choose another copy. It downloads into the
+   media folder in Jellyfin's naming, then tells Jellyfin to look.
 5. **Playing.** The player asks the server how to play the file on this screen. The TV gets
    the original file untouched. See [Playback](playback.md).
 6. **Afterwards.** "How was it?" asks each person for a verdict. That feeds the next picks.

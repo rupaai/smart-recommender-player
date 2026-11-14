@@ -173,7 +173,7 @@
     if (!ready && r.download_href) {
       var dl = el("a", "nl-find", "Find a copy");
       dl.href = r.download_href;
-      dl.setAttribute("aria-label", "Find a copy of " + r.title + " in the Download tab");
+      dl.setAttribute("aria-label", "Find a copy of " + r.title + "");
       row.appendChild(dl);
     }
     // M6: add a movie or show to the watchlist from the search results, ready or not.
