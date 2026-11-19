@@ -66,6 +66,29 @@ If Jellyfin says the TV can't take the original (rare), the player says why and 
 - **Phone / browser** (`/nl/`): may convert, within the quality cap set on the me page.
 - **Chromecast:** gets a signed, short-lived link to the stream.
 
+## Save for offline (trips)
+
+For when streaming from the server would be slow, like abroad. On a film or show page (phone,
+laptop, or the laptop player `/player`), press **Save for offline**. The panel lists what it saves:
+
+- the **original file**, untouched (same quality as at home; a remux can be 80 GB, so the panel says
+  the total and warns when it is big), and
+- the **subtitle files** next to it. Subtitles inside the video file come along anyway.
+
+Each file is its own download; **Save all** starts them one after another (the browser may ask to
+allow several downloads). A show saves the season on screen. Files are named "Title (Year).mkv" or
+"Show - S01E02.mkv", and subtitles get the same name plus their language ("Title (Year).en.srt"), so
+the player picks them up.
+
+Play them in **VLC** (free, Mac, iPhone, Android) or **IINA** (free, Mac). A browser can't play most
+MKV files by itself. Download at home before you go: away from home the server is only reachable
+over Tailscale, and the home internet's upload speed sets how fast it goes. A broken download can
+continue where it stopped (the server answers range requests).
+
+Only files the catalogue knows, inside the Movies and Shows folders, are ever sent
+(`services/nl_offline.py`, same folder rule as "Delete from server"). Watching offline is not
+reported back, so mark it watched in the app when you're home.
+
 ## Audio and subtitle choice
 
 - Each person sets preferred audio and subtitle languages and the subtitle look (me page).

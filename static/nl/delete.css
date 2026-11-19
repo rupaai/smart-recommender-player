@@ -27,3 +27,16 @@
 .nld-tv .nld-btn:focus { outline: none; transform: scale(1.05); box-shadow: 0 0 0 0.35rem #7fe0b4; }
 
 @media (prefers-reduced-motion: reduce) { .nld-tv .nld-btn:focus { transform: none; } }
+/* "Save for offline" (static/nl/offline.js) uses the same panel. */
+.nlo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; }
+.nlo-list:empty { display: none; }
+.nlo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 0; border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.nlo-name { flex: 1 1 auto; font-weight: 700; }
+.nlo-save { display: inline-flex; align-items: center; text-decoration: none; }
+.nlo-subs { flex-basis: 100%; font-size: 0.85rem; color: #cfccd6; }
+.nlo-sub { color: #7fe0b4; }
+.nlo-help { font-size: 0.85rem; }
+.nld-tv .nlo-list { gap: 1rem; }
+.nld-tv .nlo-row { gap: 0.75rem 1.5rem; padding: 1rem 0; border-top-width: 0.1rem; }
+.nld-tv .nlo-name { font-size: 1.75rem; }
+.nld-tv .nlo-subs, .nld-tv .nlo-help { font-size: 1.4rem; }

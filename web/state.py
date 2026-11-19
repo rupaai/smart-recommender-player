@@ -26,6 +26,7 @@ from services.jellyfin_playback import JellyfinPlayback
 from services.jellyfin_service import JellyfinService
 from services.media_cleanup import MediaCleanup
 from services.nl_delete import LibraryDelete
+from services.nl_offline import OfflineCopies
 from services.nl_auto_episodes import AutoEpisodes, ready_after
 from services.nl_new_episodes import NewEpisodes, wishmatch_taste
 from services.nl_get_it import GetIt
@@ -240,6 +241,8 @@ title_scores = TitleScores(config, db_path)
 
 # "Delete from server" on the title and show pages (services/nl_delete.py): same folders, same file rules.
 library_delete = LibraryDelete(db, [jellyfin_service.movie_dir, jellyfin_service.tv_dir], _jellyfin_rescan)
+# "Save for offline" on the title and show pages (services/nl_offline.py): same folders, files only read.
+offline_copies = OfflineCopies(db, [jellyfin_service.movie_dir, jellyfin_service.tv_dir])
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the repo root
