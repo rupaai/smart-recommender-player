@@ -9,6 +9,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 
 from services import nl_reactions, nl_together
 from services.jellyfin_playback import (
@@ -185,6 +186,36 @@ async def nl_delete(item_id: int, body: NLDeleteBody) -> Dict[str, Any]:
     if not data:
         raise HTTPException(status_code=404, detail="That isn't in the library.")
     return data
+
+
+@router.get("/api/nl/offline/{item_id}")
+async def nl_offline_list(item_id: int, season: Optional[int] = None) -> Dict[str, Any]:
+    """What "Save for offline" can save for a movie, a whole show or one season: each video with its size,
+    download link and subtitle files. Changes nothing."""
+    data = await asyncio.to_thread(state.offline_copies.list, item_id, season)
+    if not data:
+        raise HTTPException(status_code=404, detail="That isn't in the library.")
+    return data
+
+
+def _offline_file(found: Optional[Any]) -> FileResponse:
+    if not found:
+        raise HTTPException(status_code=404, detail="That file isn't on the server.")
+    path, name = found
+    # The original file, untouched. Starlette answers Range requests, so a broken download can go on.
+    return FileResponse(path, filename=name, content_disposition_type="attachment")
+
+
+@router.get("/api/nl/offline/file/{source_id}")
+async def nl_offline_file(source_id: int) -> FileResponse:
+    """The original video file of one movie or episode, as a download with a plain name."""
+    return _offline_file(await asyncio.to_thread(state.offline_copies.video, source_id))
+
+
+@router.get("/api/nl/offline/subtitle/{source_id}/{n}")
+async def nl_offline_subtitle(source_id: int, n: int) -> FileResponse:
+    """The n-th subtitle file beside a video, named to match the saved video so players load it."""
+    return _offline_file(await asyncio.to_thread(state.offline_copies.subtitle, source_id, n))
 
 
 @router.get("/api/nl/title/{item_id}/extras")

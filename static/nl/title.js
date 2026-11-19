@@ -103,6 +103,10 @@
         }
       }));
     }
+    if (window.NLOffline) {
+      // Save the original file (and its subtitles) to this phone or laptop, to watch without the server.
+      actions.appendChild(window.NLOffline.button({ itemId: t.id, title: t.title, isShow: t.media_type === "tv" }));
+    }
     if (window.NLDelete) {
       // Delete the file from the server for everyone (after a confirmation), then back to Home.
       actions.appendChild(window.NLDelete.button({

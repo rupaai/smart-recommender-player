@@ -19,6 +19,7 @@
   /* The phone pages' links, pointed at this app's pages (root: /nl/tv/ on the TV, /player/ on a laptop).
    * On the TV the play links get tv=1 (remote-friendly player); the laptop player is its own page. */
   var ROOT = body.getAttribute("data-root") || "/nl/tv/";
+  var LAPTOP = ROOT === "/player/";   // the laptop player reuses these pages
 
   function mapHref(href, root) {
     if (!href) { return href; }
@@ -385,6 +386,10 @@
         }
       }));
     }
+    if (window.NLOffline && LAPTOP) {
+      // Laptop player only (the TV stays at home): save the original file and subtitles to this laptop.
+      actions.appendChild(window.NLOffline.button({ itemId: t.id, title: t.title, isShow: t.media_type === "tv", className: "tv-btn", focusable: true, big: true }));
+    }
     if (window.NLDelete) {
       // Delete the file from the server for everyone (after a confirmation), then back to Home.
       actions.appendChild(window.NLDelete.button({
@@ -627,6 +632,10 @@
     var pact = window.NLCouple ? pactSwitch() : null;
     if (pact) { actions.appendChild(pact); }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title, "tv-btn")); }
+    if (window.NLOffline && LAPTOP) {
+      // Laptop player only: save the season on screen to this laptop.
+      actions.appendChild(window.NLOffline.button({ itemId: s.id, title: s.title, isShow: true, season: function () { return curSeason; }, className: "tv-btn", focusable: true, big: true }));
+    }
     if (window.NLDelete) {
       // Delete the season on screen or the whole show from the server (after a confirmation).
       actions.appendChild(window.NLDelete.button({

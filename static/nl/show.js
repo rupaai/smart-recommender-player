@@ -174,6 +174,10 @@
       actions.appendChild(n);
     }
     if (window.NLWatch) { actions.appendChild(window.NLWatch.fullControl(s.id, s.title)); }
+    if (window.NLOffline) {
+      // Save this season's episodes (original files and subtitles) to this phone or laptop.
+      actions.appendChild(window.NLOffline.button({ itemId: s.id, title: s.title, isShow: true, season: function () { return season; } }));
+    }
     if (window.NLDelete) {
       // Delete this season or the whole show from the server (after a confirmation).
       actions.appendChild(window.NLDelete.button({

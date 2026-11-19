@@ -187,6 +187,13 @@ Guide: [guides/tv-app.md](guides/tv-app.md).
 
 - Reuses the TV pages with laptop controls. Pages in `web/routes/nl_pages.py` (`/player/...`); laptop profile in `services/device_profiles.py`; the laptop's stream is Jellyfin's `main.m3u8`, never the master list with its h264 SDR choice (`original_picture_playlist` in `services/jellyfin_playback.py`). The "converting" note (none for a repackage, "Original picture. Only the ... sound is converted" for sound only) is `describe_conversion()` in `services/nl_picture.py`. Tests: `tests/test_nl_laptop.py`, `tests/test_nl_laptop_quality.py`, `tests/test_nl_settings.py` (notes).
 
+## Save for offline (watch without the server)
+
+Guide: [guides/playback.md](guides/playback.md#save-for-offline-trips).
+- **What:** a "Save for offline" button on title and show pages (phone and laptop web pages, laptop player; not the TV). It downloads the original file (no conversion) and its subtitle files to the device, named "Title (Year).mkv" / "Show - S01E02.mkv" with matching subtitle names, to play later in VLC or IINA. A show saves the season on screen. Nothing changes on the server. Free.
+- **Files:** `services/nl_offline.py` (`OfflineCopies`: what can be saved, file names, folder check), routes in `web/routes/nl_library.py` (`GET /api/nl/offline/{id}`, `/api/nl/offline/file/{source_id}`, `/api/nl/offline/subtitle/{source_id}/{n}`), page `static/nl/offline.js` (panel, "Save all"; started by `title.js`, `show.js`, `static/nl/tv/tv.js` on `/player` only), styles `nlo-*` in `static/nl/delete.css`.
+- **Tests:** `tests/test_nl_offline.py`.
+
 ## Casting and the phone keyboard
 
 - **Chromecast:** `services/nl_cast.py` (signed stream links), `static/nl/cast.js` (sender), `cast-receiver.js` (receiver). Setting `northern_lights.cast_base_url`. Notes: `docs/casting.md`.
@@ -266,6 +273,7 @@ Guide: [guides/training.md](guides/training.md).
 | load the model at server start / word questions ahead | `wishmatch.wish_reader.warm_at_start`, `wishmatch.questions.preword_at_start` |
 | change the disk cap | `torrent.max_media_gb` in `homelab/config.yaml` |
 | delete a film or show by hand | "Delete from server" on its page (web or TV) |
+| save a film or season to watch without the server (travel) | "Save for offline" on its page (phone, laptop or `/player`) |
 | let poorly rated titles into Wishmatch by default | `wishmatch.default_min_rating` (IMDb score; the "Any rating" chip does it per search) |
 | weigh Rotten Tomatoes more or less | `wishmatch.rt_weight` |
 | change how many OMDb lookups a day | `title_scores.omdb_per_day` in `homelab/config.yaml` (free key: 1,000) |
